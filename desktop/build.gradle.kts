@@ -51,9 +51,22 @@ dependencies {
     implementation("uk.co.caprica:vlcj:4.12.1")
 }
 
+// Headless smoke test for the ported data layer — see Probe.kt.
+tasks.register<JavaExec>("probe") {
+    group = "verification"
+    description = "Browse and search YouTube Music from the command line."
+    mainClass.set("com.music.bitchord.desktop.ProbeKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    jvmArgs("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
+    (project.findProperty("probeQuery") as String?)?.let { args(it) }
+}
+
 compose.desktop {
     application {
         mainClass = "com.music.bitchord.desktop.MainKt"
+        // Without this the JVM prints the console's codepage and the Chinese
+        // in the log comes out as mojibake once redirected to a file.
+        jvmArgs += listOf("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "BitChord"
