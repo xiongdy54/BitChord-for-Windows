@@ -49,6 +49,9 @@ dependencies {
 
     // ---- Playback: libvlc, needs VLC installed on the machine ----
     implementation("uk.co.caprica:vlcj:4.12.1")
+    // vlcj logs through SLF4J; without a provider its warnings — including the
+    // ones that explain a refused stream — go nowhere.
+    implementation("org.slf4j:slf4j-simple:2.0.17")
 }
 
 // Headless smoke test for the ported data layer — see Probe.kt.
@@ -59,6 +62,7 @@ tasks.register<JavaExec>("probe") {
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
     (project.findProperty("probeQuery") as String?)?.let { args(it) }
+    if (project.findProperty("probePlay") == "true") jvmArgs("-Dbitchord.probePlay=true")
 }
 
 compose.desktop {
@@ -67,6 +71,10 @@ compose.desktop {
         // Without this the JVM prints the console's codepage and the Chinese
         // in the log comes out as mojibake once redirected to a file.
         jvmArgs += listOf("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
+        // Debug hooks — see Main.kt for what they do and how to use them.
+        listOf("bitchord.probeQuery", "bitchord.probeAutoplay", "bitchord.autoExitMs").forEach { key ->
+            (project.findProperty(key) as String?)?.let { jvmArgs += "-D$key=$it" }
+        }
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "BitChord"
