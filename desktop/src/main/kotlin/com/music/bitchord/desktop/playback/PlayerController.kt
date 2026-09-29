@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop.playback
 
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +75,31 @@ class PlayerController(private val scope: CoroutineScope) {
                     _loading.value = false
                     _status.value = "resolve failed: ${error.message ?: error.javaClass.simpleName}"
                 }
+        }
+    }
+
+    /**
+     * Plays what a collection card stands for.
+     *
+     * The signed-out home feed hands back playlists, not tracks — every card on
+     * it carries a browseId and no videoId — so a tap has to ask the collection
+     * what it holds before there is anything to play. Upstream opens the
+     * collection's page instead; this is the same two steps without that screen.
+     */
+    fun playCollection(browseId: String, label: String) {
+        _status.value = "opening $label…"
+        _loading.value = true
+        scope.launch {
+            val songs = withContext(Dispatchers.IO) {
+                YtMusicRepository.browseSongs(browseId).getOrNull()?.songs.orEmpty()
+            }
+            _loading.value = false
+            val first = songs.firstOrNull()
+            if (first == null) {
+                _status.value = "nothing playable in $label"
+            } else {
+                play(first)
+            }
         }
     }
 

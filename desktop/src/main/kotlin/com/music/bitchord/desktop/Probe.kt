@@ -50,14 +50,32 @@ private suspend fun probe(args: Array<String>) {
             feed.shelves.take(6).forEach { shelf ->
                 println("  【${shelf.title}】 ${shelf.items.size} items")
                 shelf.items.take(3).forEach { item ->
+                    // The two id fields decide what a click can do: a videoId plays,
+                    // a browseId opens a collection — and the home feed's cards are
+                    // mostly collections.
                     println("     - ${item.title} · ${item.subtitle}")
+                    println("       videoId=${item.videoId} browseId=${item.browseId}")
                 }
             }
         }
         .onFailure { println("home failed: ${it.javaClass.simpleName}: ${it.message}") }
 
     println()
-    println("── search: $query ────────────────────")
+    println("── collection from the home feed ─────")
+    val collection = YtMusicRepository.home().getOrNull()?.shelves
+        ?.firstNotNullOfOrNull { shelf -> shelf.items.firstOrNull { it.browseId != null } }
+    if (collection?.browseId == null) {
+        println("no collection on the feed to open")
+    } else {
+        println("browseId=${collection.browseId} (${collection.title})")
+        YtMusicRepository.browseSongs(collection.browseId)
+            .onSuccess { page ->
+                println("songs=${page.songs.size}")
+                page.songs.take(4).forEach { println("  ${it.title} — ${it.artist} [${it.videoId}]") }
+            }
+            .onFailure { println("browseSongs failed: ${it.javaClass.simpleName}: ${it.message}") }
+    }
+
     val songs = YtMusicRepository.search(query, SearchFilter.SONGS)
         .onSuccess { rows ->
             println("${rows.size} rows")

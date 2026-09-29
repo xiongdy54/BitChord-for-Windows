@@ -63,7 +63,7 @@ fun main() {
                 }
             }
             BitChordTheme {
-                Shell(player, home)
+                Shell(player, home, autoPlayFirst = probeAutoplay)
             }
         }
     }

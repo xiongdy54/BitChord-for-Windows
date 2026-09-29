@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.explore
@@ -61,12 +64,13 @@ const val CONTENT_MAX_WIDTH = 1080
  * itself shows on API < 31.
  */
 @Composable
-fun Shell(player: PlayerController, home: HomeViewModel) {
+fun Shell(player: PlayerController, home: HomeViewModel, autoPlayFirst: Boolean = false) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val hazeState = remember { HazeState() }
     val song by player.current.collectAsState()
     val playing by player.playing.collectAsState()
     val loading by player.loading.collectAsState()
+    val status by player.status.collectAsState()
 
     val tabs = listOf(
         BottomTab(stringResource(Res.string.home), BitChordIcons.Home),
@@ -88,7 +92,7 @@ fun Shell(player: PlayerController, home: HomeViewModel) {
                         .hazeSource(hazeState),
                 ) {
                     when (selectedTab) {
-                        0 -> HomePage(vm = home, player = player)
+                        0 -> HomePage(vm = home, player = player, autoPlayFirst = autoPlayFirst)
                         1 -> NotPortedPlaceholder(title = title)
                         2 -> NotPortedPlaceholder(title = title)
                         else -> NotPortedPlaceholder(title = title)
@@ -119,6 +123,20 @@ fun Shell(player: PlayerController, home: HomeViewModel) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // Opening a collection takes a request round-trip before there is a
+            // track to put a mini player around, so the page says so rather than
+            // sitting silent for a second after the tap.
+            if (song == null && status != null) {
+                Text(
+                    status!!,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(50))
+                        .padding(horizontal = 16.dp, vertical = 9.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             song?.let { current ->
                 MiniPlayer(
                     song = current,
