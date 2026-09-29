@@ -10,6 +10,7 @@ import coil3.compose.setSingletonImageLoaderFactory
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.ui.HomeViewModel
 import com.music.bitchord.ui.shell.Shell
 import com.music.bitchord.ui.theme.BitChordTheme
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,7 @@ private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull
 fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val player = PlayerController(scope)
+    val home = HomeViewModel(scope)
 
     // Pays InnerTubeX's cold costs (player config, EJS solve, cipher) while the
     // window is still being opened rather than on the first tap.
@@ -61,7 +63,7 @@ fun main() {
                 }
             }
             BitChordTheme {
-                Shell(player)
+                Shell(player, home)
             }
         }
     }

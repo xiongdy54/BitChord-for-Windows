@@ -2,6 +2,12 @@ package com.music.bitchord.data.settings
 
 import kotlinx.coroutines.flow.MutableStateFlow
 
+/** How a shelf or library page lays its items out. */
+enum class LibraryViewType {
+    LIST,
+    GRID,
+}
+
 /**
  * The quality ceiling the resolver asks for, as the Android app's much larger
  * settings object defines it.
@@ -45,4 +51,15 @@ object AppSettings {
 
     /** Swipe a queue row sideways to jump to it. Off by default upstream too. */
     val swipeToPlayNext = MutableStateFlow(false)
+
+    /**
+     * Whether the home feed's "Recents" shelf is a list or a grid. The Android
+     * setter writes it to storage; here it lives for the session, which is all
+     * the switch itself needs.
+     */
+    val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST)
+
+    fun setHomeRecentsViewType(value: LibraryViewType) {
+        homeRecentsViewType.value = value
+    }
 }

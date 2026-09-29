@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.desktop.resources.Res
@@ -25,11 +26,14 @@ import com.music.bitchord.desktop.resources.explore
 import com.music.bitchord.desktop.resources.home
 import com.music.bitchord.desktop.resources.library
 import com.music.bitchord.desktop.resources.search
+import com.music.bitchord.ui.HomeViewModel
+import com.music.bitchord.ui.components.BottomFadeScrim
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.TopBarBlur
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.screens.NotPortedPlaceholder
 import dev.chrisbanes.haze.HazeState
@@ -57,7 +61,7 @@ const val CONTENT_MAX_WIDTH = 1080
  * itself shows on API < 31.
  */
 @Composable
-fun Shell(player: PlayerController) {
+fun Shell(player: PlayerController, home: HomeViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val hazeState = remember { HazeState() }
     val song by player.current.collectAsState()
@@ -84,7 +88,7 @@ fun Shell(player: PlayerController) {
                         .hazeSource(hazeState),
                 ) {
                     when (selectedTab) {
-                        0 -> NotPortedPlaceholder(title = title, detail = "The home feed lands in the next step.")
+                        0 -> HomePage(vm = home, player = player)
                         1 -> NotPortedPlaceholder(title = title)
                         2 -> NotPortedPlaceholder(title = title)
                         else -> NotPortedPlaceholder(title = title)
@@ -92,6 +96,21 @@ fun Shell(player: PlayerController) {
                 }
             }
         }
+
+        // The fades either end, in the order MainActivity paints them: content,
+        // then the top scrim — the bottom floor turned upside down, so both
+        // edges share one curve — then the bar's own blur, then the bottom
+        // scrim, then the bottom surfaces themselves.
+        BottomFadeScrim(
+            pageColor = MaterialTheme.colorScheme.background,
+            modifier = Modifier.align(Alignment.TopCenter).rotate(180f),
+        )
+        TopBarBlur(hazeState = hazeState, modifier = Modifier.align(Alignment.TopCenter))
+        BottomFadeScrim(
+            withMiniPlayer = song != null,
+            pageColor = MaterialTheme.colorScheme.background,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
 
         Column(
             modifier = Modifier.align(Alignment.BottomCenter)
