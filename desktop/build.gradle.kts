@@ -52,6 +52,17 @@ dependencies {
     // vlcj logs through SLF4J; without a provider its warnings — including the
     // ones that explain a refused stream — go nowhere.
     implementation("org.slf4j:slf4j-simple:2.0.17")
+
+    testImplementation(kotlin("test"))
+}
+
+// The SF Pro weights live in the Android module's res/font; pointing the
+// desktop resources at that directory keeps one copy of the 11MB in the repo.
+// They land at the root of the classpath, hence `Font(resource = "….otf")`.
+sourceSets["main"].resources.srcDir(rootProject.file("../app/src/main/res/font"))
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 // Headless smoke test for the ported data layer — see Probe.kt.
