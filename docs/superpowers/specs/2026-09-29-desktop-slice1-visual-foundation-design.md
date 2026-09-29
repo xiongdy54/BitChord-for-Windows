@@ -64,3 +64,20 @@
 ## 6. 本切片不做
 
 真玻璃渲染管线（`backdrop/` + `LiquidGlass` → 切片 1.5）；Now Playing 全屏与队列（切片 2）；歌词（切片 3）；浮窗与 Dock（切片 5）；设置/库/详情/历史/下载/账号/Scrobbling（切片 4、6）；en/zh 之外的 13 种语言（随切片 4 的设置页一起接）；Replay/Equalizer 等附属页。
+
+## 7. 实施记录（2026-09-29，实施中回填）
+
+### 与设计的三处偏离
+
+1. **字符串资源目录**：设计写的是 `compose.resources { customDirectory(...) }`。实施发现该版本插件的 `PrepareComposeResourcesTask` **不读这个配置**（仍找 `preparedResources/main/composeResources`，由 `src/main/composeResources` 推导）。改为把 Gradle Copy 的产物放进插件默认目录 `desktop/src/main/composeResources/`，并加进 `.gitignore` —— 仍然只有一份字符串真相（`app/src/main/res`）。
+2. **insets / IME 替身不需要**：设计里准备写 `statusBarsPaddingDesktop()` 等替身；实测 Compose Desktop 1.12.1 **自带** `statusBarsPadding`/`navigationBarsPadding`（`WindowInsets_notMobileKt`）与 `SoftwareKeyboardController`，搬运文件可原样保留这些调用。
+3. **主页卡片点击**：实施后发现未登录主页的**每一张卡都是合集**（10 张卡、10 个 browseId、0 个 videoId，探针实测），而合集本该打开详情页（切片 4），于是点击成了死路（用户实测反馈"点了没反应"）。按详情页自身的播放行为补上：`browseSongs(browseId)` 取曲目并播第一首；取回需要一次往返，期间在 tab 栏上方显示 "opening …"。
+
+### 验证结果
+
+- **单元测试 14 个全绿**：字体/字型表 3、取色管线 8（HSL 往返、WCAG 亮度、量化器）、版式常量 3（`CONTENT_MAX_WIDTH=1080`、`FLOATING_BAR_MAX_WIDTH=440.dp`、`SHELF_CARD_WIDTH=150.dp`、`PAGE_GUTTER=10.dp`、hero ≤320dp）。
+- **行为断言**：主页货架真实加载（截图）；点合集卡 → 取合集 → 解析 → 播放（日志 `browse:…ok` + `total resolve: 6.4s` + 截图里迷你播放器的进度在走）；搜索提交 → 结果分区渲染 → 首行歌曲播放（日志 + 截图）。
+- **双语**：中文截图（立即收听/首页/探索/资料库/搜索）与英文截图（Listen Now/Home/Explore/Library/Search）各一张，来自同一份 `strings.xml`。
+- **多尺寸**：1180×780 与 1550×974（屏幕上限）各一张；宽窗下内容列明显居中、左右留白，未铺满窗口（精确的 1080dp 由单元测试断言，不用缩放过的截图当量具）。
+- **两处已知行为差异**（非缺陷）：这台机器的 Windows 是浅色主题，应用跟随系统画浅色（与原版一致；强制深色属切片 4 设置页）；窗口标题栏仍是系统默认样式。
+

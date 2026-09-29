@@ -133,7 +133,14 @@ compose.desktop {
         // in the log comes out as mojibake once redirected to a file.
         jvmArgs += listOf("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
         // Debug hooks — see Main.kt for what they do and how to use them.
-        listOf("bitchord.probeQuery", "bitchord.probeAutoplay", "bitchord.autoExitMs").forEach { key ->
+        listOf(
+            "bitchord.probeQuery",
+            "bitchord.probeAutoplay",
+            "bitchord.autoExitMs",
+            "bitchord.windowWidth",
+            "bitchord.windowHeight",
+            "bitchord.locale",
+        ).forEach { key ->
             (project.findProperty(key) as String?)?.let { jvmArgs += "-D$key=$it" }
         }
         nativeDistributions {

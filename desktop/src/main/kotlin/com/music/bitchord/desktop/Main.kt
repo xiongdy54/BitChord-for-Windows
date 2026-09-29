@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 /*
  * Debug hooks, off by default. They exist so the window can be driven without
@@ -32,7 +33,17 @@ private val probeQuery = System.getProperty("bitchord.probeQuery").orEmpty()
 private val probeAutoplay = System.getProperty("bitchord.probeAutoplay") == "true"
 private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull()
 
+/** Window geometry and locale, so the acceptance screenshots can be taken at other sizes and in English. */
+private val windowWidth = System.getProperty("bitchord.windowWidth")?.toIntOrNull() ?: 1180
+private val windowHeight = System.getProperty("bitchord.windowHeight")?.toIntOrNull() ?: 780
+
 fun main() {
+    // Before anything reads a string resource: the resource environment follows
+    // the JVM default locale, which is what makes the English pass possible on
+    // a Chinese machine.
+    System.getProperty("bitchord.locale")
+        ?.let { Locale.setDefault(Locale.forLanguageTag(it)) }
+
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val player = PlayerController(scope)
     val home = HomeViewModel(scope)
@@ -50,7 +61,7 @@ fun main() {
         }
         Window(
             onCloseRequest = quit,
-            state = rememberWindowState(width = 1180.dp, height = 780.dp),
+            state = rememberWindowState(width = windowWidth.dp, height = windowHeight.dp),
             title = "BitChord for Windows",
         ) {
             // Coil has no network fetcher off Android; artwork is all remote.
