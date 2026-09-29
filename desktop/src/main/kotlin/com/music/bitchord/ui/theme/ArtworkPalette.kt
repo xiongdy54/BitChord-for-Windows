@@ -26,9 +26,6 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jetbrains.skia.ColorAlphaType
-import org.jetbrains.skia.ColorType
-import org.jetbrains.skia.ImageInfo
 
 // Ported from app/src/main/java/com/music/bitchord/ui/theme/ArtworkPalette.kt.
 // The colour logic — which grey the metadata line gets, how a sleeve's hue is
@@ -162,20 +159,8 @@ private fun rememberArtworkSeed(imageUrl: String?, artPx: Int): ArtworkSeed? {
         val image = (result as? SuccessResult)?.image ?: return@LaunchedEffect
         val found = withContext(Dispatchers.Default) {
             val bitmap = image.toBitmap()
-            val width = bitmap.width
-            val height = bitmap.height
-            // Ask for the layout the quantiser wants rather than trusting
-            // whatever the decoder produced: Skia converts during the read.
-            val info = ImageInfo(width, height, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
-            val bytes = bitmap.readPixels(info, width * 4, 0, 0) ?: return@withContext null
-            val pixels = IntArray(width * height) { i ->
-                val at = i * 4
-                (0xFF shl 24) or
-                    ((bytes[at].toInt() and 0xFF) shl 16) or
-                    ((bytes[at + 1].toInt() and 0xFF) shl 8) or
-                    (bytes[at + 2].toInt() and 0xFF)
-            }
-            seedOf(pixels, width, height)
+            val pixels = bitmap.argbPixels() ?: return@withContext null
+            seedOf(pixels, bitmap.width, bitmap.height)
         } ?: return@LaunchedEffect
         seedCache[imageUrl] = found
         seed = found

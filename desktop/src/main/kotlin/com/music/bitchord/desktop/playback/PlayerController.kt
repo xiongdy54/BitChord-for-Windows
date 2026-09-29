@@ -26,6 +26,10 @@ class PlayerController(private val scope: CoroutineScope) {
     private val _playing = MutableStateFlow(false)
     val playing: StateFlow<Boolean> = _playing.asStateFlow()
 
+    /** True from the tap until the first byte is on its way — what the mini player's spinner reads. */
+    private val _loading = MutableStateFlow(false)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
     private val _positionMs = MutableStateFlow(0L)
     val positionMs: StateFlow<Long> = _positionMs.asStateFlow()
 
@@ -52,19 +56,22 @@ class PlayerController(private val scope: CoroutineScope) {
     }
 
     fun play(song: Song) {
-        if (_current.value?.videoId == song.videoId && (vlc.isPlaying || _status.value == "resolving…")) return
+        if (_current.value?.videoId == song.videoId && (vlc.isPlaying || _loading.value)) return
         _current.value = song
         _positionMs.value = 0
         _durationMs.value = 0
         _status.value = "resolving…"
+        _loading.value = true
         scope.launch {
             withContext(Dispatchers.IO) { runCatching { StreamResolver.resolve(song.videoId) } }
                 .onSuccess { url ->
                     _status.value = null
+                    _loading.value = false
                     vlc.play(url, StreamResolver.mediaHeadersFor(url))
                     vlc.setVolume(_volume.value)
                 }
                 .onFailure { error ->
+                    _loading.value = false
                     _status.value = "resolve failed: ${error.message ?: error.javaClass.simpleName}"
                 }
         }

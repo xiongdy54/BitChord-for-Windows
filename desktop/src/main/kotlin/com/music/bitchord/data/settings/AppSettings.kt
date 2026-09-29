@@ -39,4 +39,10 @@ object AppSettings {
      * that drives it lives in the settings sheet, which is a later slice.
      */
     val reduceAnimation = MutableStateFlow(false)
+
+    /** Trades the live backdrop blur for a cheaper static one. Settings sheet, later slice. */
+    val reduceDynamicBlur = MutableStateFlow(false)
+
+    /** Swipe a queue row sideways to jump to it. Off by default upstream too. */
+    val swipeToPlayNext = MutableStateFlow(false)
 }

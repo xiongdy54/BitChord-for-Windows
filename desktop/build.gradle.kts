@@ -26,6 +26,12 @@ dependencies {
     // Kept at 1.11.0 to line up with the coroutines-core that
     // innertubex-desktop brings in transitively.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
+    // The ported screens reach for Icons.Rounded.* for menu and status glyphs
+    // (the tab icons are BitChordIcons' own). JetBrains stopped publishing this
+    // set for Compose Multiplatform after 1.7.3; it is generated ImageVector
+    // data over stable ui-graphics API, so the freeze is harmless.
+    @Suppress("DEPRECATION")
+    implementation(compose.materialIconsExtended)
 
     // ---- YouTube Music data layer: same versions as the Android app ----
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
@@ -50,6 +56,10 @@ dependencies {
     // ---- Artwork ----
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
+
+    // ---- Frosted glass (the bars' blur) ----
+    implementation("dev.chrisbanes.haze:haze:1.3.1")
+    implementation("dev.chrisbanes.haze:haze-materials:1.3.1")
 
     // ---- Playback: libvlc, needs VLC installed on the machine ----
     implementation("uk.co.caprica:vlcj:4.12.1")
@@ -84,6 +94,8 @@ val syncAppStrings by tasks.registering(Copy::class) {
     from(rootProject.file("../app/src/main/res")) {
         include("values/strings.xml")
         include("values-zh/strings.xml")
+        // The wordmark the top bar draws.
+        include("drawable/ic_logo.xml")
     }
     into(composeResourcesDir)
 }
