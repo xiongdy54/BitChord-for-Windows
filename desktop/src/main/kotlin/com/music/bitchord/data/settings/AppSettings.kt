@@ -32,4 +32,11 @@ object AppSettings {
 
     val effectiveAudioQuality: AudioQuality
         get() = audioQuality.value
+
+    /**
+     * Turns the artwork-tint crossfades into cuts. Read by
+     * [com.music.bitchord.ui.theme.rememberArtworkPalette]; the Android setting
+     * that drives it lives in the settings sheet, which is a later slice.
+     */
+    val reduceAnimation = MutableStateFlow(false)
 }
