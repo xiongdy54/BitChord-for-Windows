@@ -11,6 +11,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.ui.HomeViewModel
+import com.music.bitchord.ui.SearchViewModel
 import com.music.bitchord.ui.shell.Shell
 import com.music.bitchord.ui.theme.BitChordTheme
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +28,7 @@ import kotlinx.coroutines.delay
  *   ./gradlew -p desktop run -Pbitchord.probeQuery="周杰伦 晴天" \
  *       -Pbitchord.probeAutoplay=true -Pbitchord.autoExitMs=25000
  */
+private val probeQuery = System.getProperty("bitchord.probeQuery").orEmpty()
 private val probeAutoplay = System.getProperty("bitchord.probeAutoplay") == "true"
 private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull()
 
@@ -34,6 +36,7 @@ fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val player = PlayerController(scope)
     val home = HomeViewModel(scope)
+    val search = SearchViewModel(scope)
 
     // Pays InnerTubeX's cold costs (player config, EJS solve, cipher) while the
     // window is still being opened rather than on the first tap.
@@ -63,7 +66,13 @@ fun main() {
                 }
             }
             BitChordTheme {
-                Shell(player, home, autoPlayFirst = probeAutoplay)
+                Shell(
+                    player = player,
+                    home = home,
+                    search = search,
+                    initialQuery = probeQuery,
+                    autoPlayFirst = probeAutoplay,
+                )
             }
         }
     }

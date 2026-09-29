@@ -30,6 +30,7 @@ import com.music.bitchord.desktop.resources.home
 import com.music.bitchord.desktop.resources.library
 import com.music.bitchord.desktop.resources.search
 import com.music.bitchord.ui.HomeViewModel
+import com.music.bitchord.ui.SearchViewModel
 import com.music.bitchord.ui.components.BottomFadeScrim
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
@@ -64,8 +65,15 @@ const val CONTENT_MAX_WIDTH = 1080
  * itself shows on API < 31.
  */
 @Composable
-fun Shell(player: PlayerController, home: HomeViewModel, autoPlayFirst: Boolean = false) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+fun Shell(
+    player: PlayerController,
+    home: HomeViewModel,
+    search: SearchViewModel,
+    initialQuery: String = "",
+    autoPlayFirst: Boolean = false,
+) {
+    // A debug query opens on the search tab, since that is the screen it drives.
+    var selectedTab by remember { mutableIntStateOf(if (initialQuery.isNotBlank()) 3 else 0) }
     val hazeState = remember { HazeState() }
     val song by player.current.collectAsState()
     val playing by player.playing.collectAsState()
@@ -95,7 +103,12 @@ fun Shell(player: PlayerController, home: HomeViewModel, autoPlayFirst: Boolean 
                         0 -> HomePage(vm = home, player = player, autoPlayFirst = autoPlayFirst)
                         1 -> NotPortedPlaceholder(title = title)
                         2 -> NotPortedPlaceholder(title = title)
-                        else -> NotPortedPlaceholder(title = title)
+                        else -> SearchPage(
+                            vm = search,
+                            player = player,
+                            initialQuery = initialQuery,
+                            autoPlayFirst = autoPlayFirst,
+                        )
                     }
                 }
             }
