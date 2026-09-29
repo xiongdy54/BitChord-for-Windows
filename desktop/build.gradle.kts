@@ -14,6 +14,10 @@ kotlin {
 
 dependencies {
     implementation(compose.desktop.currentOs)
+    // The compose-resources runtime: the generated accessors call into it, and
+    // the plugin's value-conversion tasks are only wired up when it is present.
+    @Suppress("DEPRECATION")
+    implementation(compose.components.resources)
     // material3 has its own version line (1.9.x); the plugin alias picks the
     // one that matches this Compose release.
     @Suppress("DEPRECATION")
@@ -64,6 +68,40 @@ sourceSets["main"].resources.srcDir(rootProject.file("../app/src/main/res/font")
 tasks.test {
     useJUnitPlatform()
 }
+
+// String resources come from the Android app rather than being copied into the
+// repo a second time. Only the strings.xml files are taken: app/src/main/res
+// also holds layout/, mipmap-* and values-v31/, which the Compose resources
+// plugin does not know how to read.
+//
+// They land in the plugin's own source directory, which is gitignored.
+// `compose.resources { customDirectory(...) }` exists in this plugin version but
+// is not honoured by its prepare task — it still reads
+// preparedResources/main/composeResources, derived from src/main/composeResources
+// — so the copy goes where the plugin actually looks.
+val composeResourcesDir = layout.projectDirectory.dir("src/main/composeResources")
+val syncAppStrings by tasks.registering(Copy::class) {
+    from(rootProject.file("../app/src/main/res")) {
+        include("values/strings.xml")
+        include("values-zh/strings.xml")
+    }
+    into(composeResourcesDir)
+}
+
+compose.resources {
+    packageOfResClass = "com.music.bitchord.desktop.resources"
+    generateResClass = always
+}
+
+tasks.matching {
+    it.name.startsWith("generateComposeResClass") ||
+        it.name.startsWith("generateResourceAccessors") ||
+        it.name.startsWith("generateActualResourceCollectors") ||
+        it.name.startsWith("prepareComposeResources") ||
+        it.name.startsWith("convertXmlValueResources") ||
+        it.name.startsWith("copyNonXmlValueResources") ||
+        it.name.startsWith("assembleMainResources")
+}.configureEach { dependsOn(syncAppStrings) }
 
 // Headless smoke test for the ported data layer — see Probe.kt.
 tasks.register<JavaExec>("probe") {

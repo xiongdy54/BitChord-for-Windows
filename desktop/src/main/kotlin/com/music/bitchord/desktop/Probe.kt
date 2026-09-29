@@ -8,9 +8,14 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.desktop.playback.VlcAudioPlayer
+import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.retry
+import com.music.bitchord.desktop.resources.shelf_recents
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.Request
+import org.jetbrains.compose.resources.getString
+import java.util.Locale
 
 /**
  * Headless smoke test for the ported data layer: browse the home feed, search
@@ -28,6 +33,15 @@ fun main(args: Array<String>) {
 private suspend fun probe(args: Array<String>) {
     val query = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "周杰伦 晴天"
     InnerTubeXResolver.init()
+
+    // The string pipeline, checked before anything that needs the network: the
+    // app's own strings.xml has to reach Res.string.* in every locale it ships.
+    println("── strings ───────────────────────────")
+    println("machine locale = ${Locale.getDefault()}")
+    Locale.setDefault(Locale.US)
+    println("en: recents=${getString(Res.string.shelf_recents)} retry=${getString(Res.string.retry)}")
+    Locale.setDefault(Locale.SIMPLIFIED_CHINESE)
+    println("zh: recents=${getString(Res.string.shelf_recents)} retry=${getString(Res.string.retry)}")
 
     println("── home ──────────────────────────────")
     YtMusicRepository.home()
