@@ -319,7 +319,10 @@ class QueueCoordinatorTest {
         )!!
         assertEquals(QueueTier.CONTEXT, jumped.first().queueTier)
         assertEquals(PlaybackSourceType.QUEUE, jumped.first().playbackSourceType)
-        assertEquals(listOf("r1", "r2"), jumped.drop(1).map { it.videoId })
+        // The AUTOPLAY branch returns `listOf(promotedTarget) + allFutureUserQueue +
+        // remainingAutoplay` (app QueueCoordinator.kt:265-271), so the whole result is
+        // [r1, r2]: the promoted target leads and r2 survives as remaining autoplay.
+        assertEquals(listOf("r1", "r2"), jumped.map { it.videoId })
     }
 
     @Test
@@ -452,6 +455,24 @@ git commit -m "feat(desktop): the queue coordinator, with a seven-member seam wh
         currentIndex -= expired
     }
 ```
+
+同一文件里补两处 Task 2 评审留下的不一致（都是"假宿主必须像真宿主"这一件事）：
+
+```kotlin
+    override fun replaceRange(from: Int, to: Int, songs: List<Song>) {
+        val replaced = to - from
+        repeat(replaced) { items.removeAt(from) }
+        items.addAll(from, songs)
+        // Same shifting rule as removeAt: an edit behind the playhead that changes the
+        // item count moves the playhead. shuffle's reorder is always equal-size and
+        // always ahead of it, so this is a no-op there — but the fake must not be the
+        // only place that knows the real host's behaviour.
+        currentIndex = (currentIndex + songs.size - replaced)
+            .coerceIn(0, (items.size - 1).coerceAtLeast(0))
+    }
+```
+
+并把这条契约写进接缝本身而不是只写在假宿主里——`QueueHost.removeAt` 与 `replaceRange` 的 KDoc 各加一句：**"removing or shrinking rows behind the playhead must move the playhead down; ExoPlayer does this implicitly"**。Task 5/6 的真宿主是实现这个接口而不是实现这个假类，契约不在接口上就没人读得到。
 
 - [ ] **Step 2: 追加失败测试**
 
