@@ -389,7 +389,9 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 //    position-with-offset lambdas, and the third pane of the landscape column.
 //  * **Motion artwork** (spec §3.3) — `CanvasArtworkPlayer`, the hero *clip*, every
 //    frame-derived colour, `canvasRendered`/`canvasFrame`/`canvasCover`/`canvasAspect`,
-//    the Spotify presentation state and the sliding glass deck that came in with it,
+//    the Spotify presentation state and the sliding glass deck that came in with it —
+//    the deck's own going cost a live behaviour, the queue-scroll collapse, which is
+//    named at the queue's call site rather than glossed here —
 //    and the two `heroMode` inputs that were not the still cover's own. The static
 //    full-bleed hero `AsyncImage` stays: it is the fourth layer of the backdrop stack,
 //    and its `DstIn` bottom dissolve is `HERO_FADE_FRACTION`'s whole reason for
@@ -419,18 +421,22 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 // false), `fullBleedArtwork` (true), `legacyMeshGradient` (false, which is why
 // `MeshGradientBackground` has no call site here — see the backdrop),
 // `hideSongStatus` (false), `smartTransitionWindow` (null),
-// `versionAlignmentInProgress` (false).
+// `versionAlignmentInProgress` (false), and `hideVolumeBar` (false — the bar is
+// drawn, which is why there is no branch over it below).
 //
-// **The volume bar is absent, and not because a family took it.** Upstream's
-// `rememberPlayerVolume()` rides Android's `AudioManager` and a `ContentObserver` on
-// `Settings.System`; the desktop's volume sits on `PlayerController`
-// (`volume: StateFlow<Int>`, `setVolume(Int)`), which this function has no route to —
-// the parameter table is frozen for Task 11's wiring and there is no composition
-// local. Rather than a bar that goes nowhere, both layouts render upstream's own
-// *hidden* state: the portrait block keeps the row's 32dp slot so nothing below it
-// moves, and the landscape column passes `volume = null`, exactly as it does when
-// Settings hides the bar. Restoring it is a decision about the seam, not about this
-// file. See the task-10 report.
+// **The volume bar is mounted, and `volume` / `onVolumeChange` are the only
+// additions to the parameter table.** Upstream never passed a level in: it read one
+// from `rememberPlayerVolume()`, which rides Android's `AudioManager` behind a
+// `ContentObserver` on `Settings.System` (app `PlayerState.kt:284-354`) — a hook this
+// port has no equivalent of, and no composition local to stand in for it. Desktop's
+// volume is on `PlayerController` (`volume: StateFlow<Int>` in percent,
+// `setVolume(percent: Int)`), so Task 11's adapter hands it down the same way it hands
+// down every other callback here, and maps the scales at that seam. Both layouts
+// render the bar. `AppSettings.hideVolumeBar` is not ported — no settings sheet this
+// slice — so upstream's hide branch and the `VOLUME_ROW_HEIGHT` spacer that stood in
+// for it are gone, which leaves that Task 7 constant with no caller; see the portrait
+// call site. What upstream's `release()` still does, and why desktop needs none of
+// it, is at [onVolumeChange].
 // -------------------------------------------------------------------------------------
 
 // app NowPlayingScreen.kt:175-186 — the constants layer left these two out on the
@@ -522,17 +528,23 @@ fun NowPlayingScreen(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
-    onSeek: (Long) -> Unit,
     /**
-     * Seek to a fraction of the track, for the scrubber.
+     * Seek to a fraction of the track, for the scrubber — the only seek this
+     * screen asks for.
      *
-     * Separate from [onSeek] because the scrubber is the one caller that knows
-     * *where along the bar* it wants to go rather than a time. Converting that
-     * here would use this screen's cached duration, which lags a track change by
-     * however long the session takes to report the new one — long enough to drop
-     * the handle on a bar still scaled to the previous song and seek to the
-     * wrong fraction of the current one. The conversion belongs wherever the
-     * freshest duration is.
+     * Upstream had a sibling `onSeek: (Long) -> Unit` for a time. It is gone here,
+     * and not because a parameter was tidied away: its single call site in the app
+     * (`:652`) was `seekToLyric`, the tapped lyric line's time, and it died with
+     * that family. Everything else already routes through fractions — upstream's
+     * scrub release at `:1298` and [onScrubFinished] below both call
+     * `scrub.release(onSeekFraction)`, and `onJumpTo` moves between rows rather
+     * than within one.
+     *
+     * Why a fraction survives at all: converting it here would use this screen's
+     * cached duration, which lags a track change by however long the session takes
+     * to report the new one — long enough to drop the handle on a bar still scaled
+     * to the previous song and seek to the wrong fraction of the current one. The
+     * conversion belongs wherever the freshest duration is.
      */
     onSeekFraction: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
@@ -562,6 +574,39 @@ fun NowPlayingScreen(
      * width comfortably clears a phone's landscape width.
      */
     windowHeight: Dp,
+    /**
+     * The level the volume bar shows, `0f..1f`.
+     *
+     * **A desktop-only addition to a table otherwise frozen for Task 11**, and the
+     * reason is upstream's own plumbing: the Android screen never passed volume in
+     * at all. It read it from `rememberPlayerVolume()` (app `:952`), a hook over
+     * `AudioManager` with a `ContentObserver` on `Settings.System` behind it (app
+     * `PlayerState.kt:284-354`). Neither exists on this platform, and there is no
+     * composition local to lean on, so the controller that owns the level hands it
+     * down through these two parameters exactly as it hands down every other
+     * callback here — desktop keeps it as `volume: StateFlow<Int>` (percent) beside
+     * `setVolume(percent: Int)`, and the adapter maps the two scales.
+     *
+     * A plain `Float` rather than the `() -> Float` [VolumeRow] takes: upstream's
+     * closure existed because its level was a tweened `Animatable` living outside
+     * composition, so the bar could read it without the screen recomposing. Read
+     * from a parameter that saving is not available, so the lambda here keeps the
+     * shape the row asks for without pretending at the savings.
+     */
+    volume: Float,
+    /**
+     * The level the bar was dragged to, `0f..1f`, on every step of the drag.
+     *
+     * Continuous, because upstream's is: `PlayerVolume.drag` writes the stream on
+     * each `onValueChange` (app `PlayerState.kt:299-308`), never on release. What
+     * upstream passed as `onValueChangeFinished` — `volume::release` (app `:1301`) —
+     * commits nothing either: it only clears a `dragging` flag whose whole job was
+     * to stop the observer's tween from fighting the finger when a hardware key
+     * moved the stream mid-drag. Desktop has no second writer of the level and no
+     * system panel to observe, so there is nothing to arbitrate and the two call
+     * sites below pass an empty lambda for it.
+     */
+    onVolumeChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -1131,9 +1176,19 @@ fun NowPlayingScreen(
                                 compact = compact,
                             )
                         },
-                        // The row's own hidden state — see the header note on why
-                        // there is no volume to hand it.
-                        volume = null,
+                        // The bar, where upstream renders it (app :1552-1562) — the
+                        // column's last item, so its arrival pushes nothing else
+                        // around. Upstream nulls this slot when Settings hides the
+                        // bar; desktop has no such setting and no sheet to hold it,
+                        // so the row is always handed over. See [onVolumeChange] for
+                        // why finishing is empty here.
+                        volume = {
+                            VolumeRow(
+                                value = { volume },
+                                onValueChange = onVolumeChange,
+                                onValueChangeFinished = { },
+                            )
+                        },
                     )
                 },
                 queuePane = {
@@ -1935,14 +1990,25 @@ fun NowPlayingScreen(
                             onClear = onClearQueue,
                             onScrollingChange = { queueScrolling = it },
                             onDragActiveChange = onQueueDragActiveChange,
-                            // Upstream also let a queue scroll slide the lower
-                            // half-player away, through `SlidingPlayerDeck` — the
-                            // deck that came in with Spotify's full-screen clip and
-                            // went with it. [InlineQueue]'s side of that plumbing is
-                            // still here (`collapsePlayerOnScroll`, `onRevealPlayer`,
-                            // `onHidePlayer`), and all three stay at their defaults:
-                            // passing the two callbacks would write a visibility
-                            // value with nothing left to read it.
+                            // Upstream let a queue scroll slide the whole lower
+                            // half-player — scrubber, transport, volume bar, toggle
+                            // row — out of the way. That was live behaviour, not
+                            // decoration: app `:2811-2813` wrote `queueControlsOpen`
+                            // from the queue's own scroll, app `:2825-2827` gated
+                            // `SlidingPlayerDeck` on it, and app `:452-499` collapsed
+                            // the block's measured height as it slid, so the panel
+                            // took the space back. **The deck is not ported, and so
+                            // that behaviour is lost here: scrolling the queue leaves
+                            // the controls where they are.** Deleting it is still the
+                            // right call for a desktop overlay — the deck is the app's
+                            // bottom-reveal machinery, and decision 4 replaces what it
+                            // revealed with Task 11's overlay and Esc — but it is a
+                            // known deviation and is carried to Task 13, not a no-op.
+                            // [InlineQueue]'s side of the plumbing
+                            // (`collapsePlayerOnScroll`, `onRevealPlayer`,
+                            // `onHidePlayer`) is still there at its defaults with
+                            // nothing behind it, which is the other half of what Task
+                            // 13 decides.
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -2003,12 +2069,25 @@ fun NowPlayingScreen(
                 onNext = onNext,
             )
 
-            // Keep the volume slot's full footprint while its contents are absent.
-            // Removing the slot itself shortens the controls by 50dp and moves
-            // every control below it; this is exactly what upstream did when
-            // Settings hid the bar. See the header for why nothing feeds it here.
+            // The volume bar, where upstream renders it (app :2943-2953: the gap
+            // spacer, then the bar in the visible half of its `if`, then a
+            // `VOLUME_ROW_HEIGHT` spacer in the hidden half). The two branches are
+            // the same height by construction — 32dp is ThinSlider's touch target,
+            // 10dp of track under 22dp of padding — so the bar filling the slot
+            // moves nothing below it. That switch rides `AppSettings.hideVolumeBar`,
+            // a display preference with no settings sheet here and no field on
+            // desktop's `AppSettings`, so there is no branch to keep: the bar is
+            // simply always present. [VOLUME_ROW_HEIGHT] is left without a caller by
+            // that — its only use upstream was this slot's empty state — and it is a
+            // Task 7 surface, so it stays. See the task-10 report.
             Spacer(Modifier.height(12.dp + controlSpread / 2))
-            Spacer(Modifier.height(VOLUME_ROW_HEIGHT))
+
+            VolumeRow(
+                value = { volume },
+                onValueChange = onVolumeChange,
+                // Nothing to commit on release: see [onVolumeChange].
+                onValueChangeFinished = { },
+            )
 
             // The volume slider already has 13dp below its drawn track.
             // Balance that invisible inset with the caption gap below the icons.

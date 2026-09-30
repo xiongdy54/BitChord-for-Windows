@@ -325,7 +325,11 @@ internal fun LandscapeMainPane(
     credits: @Composable () -> Unit,
     scrubber: @Composable () -> Unit,
     transport: @Composable () -> Unit,
-    /** Null where the volume bar is not shown. */
+    /**
+     * Null where the volume bar is not shown — upstream's `hideVolumeBar` state
+     * (app `:1552-1562`). The nullable shape is the app's; no desktop call site
+     * passes null, because that setting is not ported and the bar is always here.
+     */
     volume: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
