@@ -41,8 +41,10 @@ class PlayerGeometryTest {
     @Test
     fun `the landscape rule is the original's, not a desktop one`() {
         // NowPlayingScreen.kt:408-409 — wider than it is tall, and at least
-        // :316's LANDSCAPE_PLAYER_MIN_WIDTH (560dp) across. The boundary is
-        // ">=", so 560dp is in and 559dp is out.
+        // :316's LANDSCAPE_PLAYER_MIN_WIDTH across. The boundary is ">=", so
+        // 560dp is in and 559dp is out. The constant is asserted by name too,
+        // which is what makes it `internal` here rather than the app's `private`.
+        assertEquals(560.dp, LANDSCAPE_PLAYER_MIN_WIDTH)
         assertEquals(true, landscapePlayerAvailable(1180.dp, 780.dp))
         assertEquals(false, landscapePlayerAvailable(780.dp, 1180.dp))
         assertEquals(false, landscapePlayerAvailable(559.dp, 100.dp))

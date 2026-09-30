@@ -5,7 +5,11 @@
 //
 // Ported from app/src/main/java/com/music/bitchord/ui/player/NowPlayingScreen.kt
 // (the app line is cited above each group). Values, names, units and KDocs
-// verbatim; the numbers are pinned by `PlayerGeometryTest`.
+// verbatim. The numbers a test actually pins are PLAYER_GUTTER (30.dp),
+// PLAYER_MAX_WIDTH (560.dp), TABLET_PLAYER_MIN_WIDTH (700.dp) and
+// LANDSCAPE_PLAYER_MIN_WIDTH (560.dp), each asserted by literal in
+// `PlayerGeometryTest`; every other number here is pinned only against the app
+// line cited above its group.
 //
 // Deliberately not carried over, each because the family it serves does not
 // ship in this slice:
@@ -24,8 +28,9 @@
 //
 // One mechanical difference from upstream, same as PlayerControls.kt:
 // TABLET_PLAYER_MIN_WIDTH and LANDSCAPE_PLAYER_MIN_WIDTH are `internal` rather
-// than the app's `private`, so the geometry test in another file can pin them.
-// Values unchanged.
+// than the app's `private`, so the geometry test in another file can name them —
+// and does, by literal: 700.dp in the width/gutter group, 560.dp in the landscape
+// group beside that group's operator pin. Values unchanged.
 package com.music.bitchord.ui.player
 
 import androidx.compose.animation.core.CubicBezierEasing
@@ -226,9 +231,11 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 // TASK 10 — READ THIS BEFORE EDITING THIS FILE.
 //
 // Everything above is the shared constants/geometry layer that Task 8 landed so
-// `PlayerQueue.kt` could compile (`PLAYER_GUTTER` / `PLAYER_MAX_WIDTH` are read at
-// PlayerQueue.kt:281, :292, :347; `TABLET_PLAYER_MIN_WIDTH` /
-// `LANDSCAPE_PLAYER_MIN_WIDTH` are pinned by PlayerGeometryTest).
+// `PlayerQueue.kt` could compile — `PLAYER_GUTTER` is what that file's three panel
+// paddings read (app PlayerQueue.kt:281, :292, :347). `TABLET_PLAYER_MIN_WIDTH`
+// and `LANDSCAPE_PLAYER_MIN_WIDTH` are `internal` because `PlayerGeometryTest`
+// asserts each by literal (700.dp, 560.dp); no other number in this file is read
+// by a test, so Task 10's body must not assume one guards the rest of them.
 //
 // Task 10 ports the body of `NowPlayingScreen` from
 // `app/src/main/java/com/music/bitchord/ui/player/NowPlayingScreen.kt` by APPENDING

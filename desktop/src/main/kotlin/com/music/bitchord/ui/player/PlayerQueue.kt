@@ -31,6 +31,13 @@
 // file rather than dropped along with the lyric panel. `collapsePlayerOnScroll`
 // is kept because collapsing the player on a scroll is real on a desktop window.
 //
+// CARRY TO SLICE 3 — whoever copies app/.../ui/player/PlayerLyrics.kt into this
+// package deletes BOTH pieces above (upstream: the helper at PlayerLyrics.kt:1358,
+// the constant at :401), not just the function. A second `internal` of the helper
+// collides at compile time; `CONTROLS_SCROLL_SLOP` does not — two file-private
+// top-levels with the same name never collide, so it would survive in both files,
+// silently free to diverge from 20.dp.
+//
 // Row geometry, motion and the drag algorithm are verbatim, app line by line:
 // `QUEUE_ROW_MOTION` :123, `animateItem(fadeInSpec = null, …)` :203, the edge
 // scroll zone/speed :471-472, `edgeScrollSpeed` :487-505, `QueueDrag` :553-688,
@@ -162,6 +169,8 @@ private val CONTROLS_SCROLL_SLOP = 20.dp
  * the lyrics auto-follow and the queue's current-track jump cannot move chrome.
  *
  * Upstream this sits in `PlayerLyrics.kt`; see the header for why it lives here.
+ * When slice 3 copies that file in, this function and its `CONTROLS_SCROLL_SLOP`
+ * are both deleted from here — not left beside the original.
  */
 @Composable
 internal fun rememberPlayerControlsOnScroll(
