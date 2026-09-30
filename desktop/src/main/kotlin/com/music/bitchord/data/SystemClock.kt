@@ -11,4 +11,13 @@ package com.music.bitchord.data
  */
 object SystemClock {
     fun elapsedRealtime(): Long = System.nanoTime() / 1_000_000
+
+    /**
+     * `android.os.SystemClock.uptimeMillis()`: the same monotonic clock without
+     * deep sleep. The UI's tap windows only ever compare two readings against
+     * each other, so on a machine that does not suspend into this clock's
+     * account the two are the same number — and keeping both names means the
+     * ported call sites stay verbatim.
+     */
+    fun uptimeMillis(): Long = elapsedRealtime()
 }

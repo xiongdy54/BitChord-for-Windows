@@ -83,10 +83,10 @@ tasks.test {
     environment("LOCALAPPDATA", layout.buildDirectory.dir("test-app-data").get().asFile.path)
 }
 
-// String resources come from the Android app rather than being copied into the
-// repo a second time. Only the strings.xml files are taken: app/src/main/res
-// also holds layout/, mipmap-* and values-v31/, which the Compose resources
-// plugin does not know how to read.
+// String resources and the vector drawables come from the Android app rather
+// than being copied into the repo a second time. Only the files named below are
+// taken: app/src/main/res also holds layout/, mipmap-* and values-v31/, which
+// the Compose resources plugin does not know how to read.
 //
 // They land in the plugin's own source directory, which is gitignored.
 // `compose.resources { customDirectory(...) }` exists in this plugin version but
@@ -100,6 +100,11 @@ val syncAppStrings by tasks.registering(Copy::class) {
         include("values-zh/strings.xml")
         // The wordmark the top bar draws.
         include("drawable/ic_logo.xml")
+        // The transport glyphs: vector drawables, same pipeline as the wordmark.
+        include("drawable/ic_player_play.xml")
+        include("drawable/ic_player_pause.xml")
+        include("drawable/ic_player_next.xml")
+        include("drawable/ic_player_previous.xml")
     }
     into(composeResourcesDir)
 }
