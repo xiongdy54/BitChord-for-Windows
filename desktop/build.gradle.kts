@@ -77,6 +77,10 @@ sourceSets["main"].resources.srcDir(rootProject.file("../app/src/main/res/font")
 
 tasks.test {
     useJUnitPlatform()
+    // The ported shuffle tests drive QueueShuffle.toggle, which persists by design.
+    // Redirect the app-data root into the build directory so no test can reach the
+    // developer's real %LOCALAPPDATA%\BitChord\settings.properties.
+    environment("LOCALAPPDATA", layout.buildDirectory.dir("test-app-data").get().asFile.path)
 }
 
 // String resources come from the Android app rather than being copied into the

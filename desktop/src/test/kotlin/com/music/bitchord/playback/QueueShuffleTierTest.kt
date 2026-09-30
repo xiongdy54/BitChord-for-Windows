@@ -41,10 +41,13 @@ class QueueShuffleTierTest {
     }
 
     /**
-     * [QueueShuffle.toggle] persists through [AppSettings.setShuffleEnabled], which writes the
-     * real `settings.properties`. Put the default back — in an `@AfterTest` rather than the last
-     * two lines of the case, so a mid-loop assertion failure still cannot leave the user's next
-     * session starting shuffled. Nothing here reads the flag back afterwards.
+     * [QueueShuffle.toggle] persists through [AppSettings.setShuffleEnabled], so this class
+     * writes a `settings.properties` for real. `desktop/build.gradle.kts` points the app-data
+     * root at the build directory, which keeps it out of the developer's `%LOCALAPPDATA%`; what
+     * that redirect cannot do is clean up the singletons — [AppSettings] and [QueueShuffle] are
+     * process-wide, and every test class in this run shares one JVM. Restore both, in an
+     * `@AfterTest` rather than the last two lines of the case, so a mid-loop assertion failure
+     * still cannot leave a later class reading shuffle as already on.
      */
     @AfterTest
     fun leaveTheFlagAndTheFileAtTheirDefaults() {
@@ -144,7 +147,12 @@ class QueueShuffleTierTest {
         val queued = host.entryIds()
 
         QueueShuffle.toggle(host)
-
+        // Not vacuous, and it has to be read before the assertions below: with three CONTEXT
+        // rows in the span, shuffledSection can never hand back their unchanged order —
+        // avoidIdentityShuffle rotates the identity it draws. So the permutation is guaranteed
+        // to move rows, and every expectation under it is about a queue that really was
+        // rewritten rather than one left as it was queued.
+        assertNotEquals(queued, host.entryIds())
         assertEquals(6, host.itemCount)
         assertEquals(0, host.currentIndex)
         // The row under the needle is not part of the span that gets rewritten.
