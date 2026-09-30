@@ -56,7 +56,24 @@ class QueueTimeline : QueueHost {
     /** Start a row playing from the beginning. */
     var onPlay: (Song) -> Unit = {}
 
-    /** The list or the playhead changed — republish. Called once per act, not once per row moved. */
+    /**
+     * The list or the playhead changed — republish.
+     *
+     * Fires once per list **edit**, not once per act: an act that deletes rows goes through
+     * [removeAt] once per row, and each of those publishes. So one advance over a queue with k
+     * consumed USER rows publishes k+1 times — [afterMoved] runs
+     * [QueueCoordinator.consumePlayedUserQueue] and then publishes itself — and [clearUserQueue]
+     * publishes once per row cleared. `an advance that prunes a consumed user row publishes once per
+     * edit` is that path.
+     *
+     * The count is not something a caller may lean on, and nothing needs it to be: the consumer's
+     * `publish()` writes a whole `PlayerState` snapshot into a `MutableStateFlow`
+     * (`_state.value = state.copy(...)`), so a repeated publish of an unchanged state costs one
+     * structural equality check and nothing else. Do not batch the publications to make the count
+     * match an act — that would be a mechanism of its own, and per-edit publication is what the
+     * ported coordinator gets for free. The invariant is the list and the needle, not how often the
+     * change is announced.
+     */
     var onChanged: () -> Unit = {}
 
     override fun songAt(index: Int): Song? = items.getOrNull(index)
@@ -174,8 +191,20 @@ class QueueTimeline : QueueHost {
     fun jumpToRow(targetIndex: Int) =
         QueueCoordinator.jumpToQueueItem(this, targetIndex, cachedTimeline = snapshot())
 
-    /** The row under the needle is what is playing; deleting it is not a thing the queue panel asks for. */
-    fun removeRow(index: Int) { if (index != currentIndex) removeAt(index) }
+    /**
+     * Delete a row the queue panel offered to delete.
+     *
+     * Two refusals, and both of them are this function's business rather than the caller's. The row
+     * under the needle is what is playing, and deleting it is not a thing the panel asks for. And an
+     * index that is not in the list any more has to be refused too: [removeAt] forwards straight to
+     * `items.removeAt`, which throws, and this is the one index entry with no guard of its own while
+     * [trimHistory] is shrinking the head of the list from inside the pump. A row drawn at index 26
+     * in the panel can therefore be past the end by the time its delete button is clicked — the same
+     * shape [moveRow], [jumpTo] and `QueueCoordinator.jumpToQueueItem` each already guard.
+     */
+    fun removeRow(index: Int) {
+        if (index in items.indices && index != currentIndex) removeAt(index)
+    }
 
     /**
      * Drag a row to a new slot, keeping the needle on the track it was on.
@@ -203,8 +232,11 @@ class QueueTimeline : QueueHost {
     // ---- the pump -----------------------------------------------------------------
 
     /**
-     * End of media, and the only place that decides what plays next (spec §4). Repeat-one
-     * replays in place; otherwise walk forward; wrap under repeat-all; stop at the tail.
+     * End of media, and the only place that decides what plays next *when a track runs out*
+     * (spec §4). Repeat-one replays in place; otherwise walk forward; wrap under repeat-all; stop at
+     * the tail. [next] and [previous] are the same rules for a button press rather than an engine
+     * callback, and every index move in the three of them leaves through [afterMoved], so the history
+     * window and the consumed user rows are pruned the same way whichever way the needle moved.
      */
     fun onFinished(): String? {
         if (items.isEmpty()) return null
@@ -214,13 +246,41 @@ class QueueTimeline : QueueHost {
         return null
     }
 
-    fun next(): String? =
-        if (currentIndex + 1 < items.size) { currentIndex += 1; afterMoved() } else null
+    /**
+     * The next button. Steps forward, and — under repeat-all only — wraps from the tail to the head
+     * exactly as [onFinished] does, so an enabled button always has somewhere to go.
+     *
+     * The wrap is what the original gets from ExoPlayer rather than writing out: the transport on
+     * Android is a media-session call that hands the press straight to the player
+     * (`PlaybackService.kt:6573-6591` → `seekToNextMediaItem()`), and the enabled state the UI dims
+     * from is `player.hasNextMediaItem()` (`PlayerConnection.kt:305-306`) — an answer from the player
+     * rather than an index comparison, which is why [PlayerState]'s carried KDoc can say the
+     * wrap-around of repeat-all is already accounted for. Here the answer has to be computed, and an
+     * enabled glyph that returns nothing is the dead button spec §2 rules out. Repeat-one is
+     * deliberately not given a wrap: there the loop belongs to the current row, which [onFinished]
+     * answers in place above, and these two stay plain steps. At the tail with repeat off this is a
+     * stop, not a wrap.
+     */
+    fun next(): String? {
+        if (items.isEmpty()) return null
+        if (currentIndex + 1 < items.size) { currentIndex += 1; return afterMoved() }
+        if (repeatMode == RepeatMode.ALL) { currentIndex = 0; return afterMoved() }
+        return null
+    }
 
+    /**
+     * The back button: restart the current row if the listener is already into it, otherwise step
+     * back — and under repeat-all, wrap to the tail from the head, for the same reason [next] wraps.
+     *
+     * The restart rule keeps precedence over the wrap: past [BACK_RESTARTS_AFTER_MS] the press is
+     * answered by the row already under the needle, whether or not there is anywhere to wrap to. A
+     * single-row queue wraps onto itself, which is a replay rather than a throw or a spin.
+     */
     fun previous(positionMs: Long): String? {
         if (items.isEmpty()) return null
         if (positionMs > BACK_RESTARTS_AFTER_MS) return items[currentIndex].videoId
         if (currentIndex > 0) { currentIndex -= 1; return afterMoved() }
+        if (repeatMode == RepeatMode.ALL) { currentIndex = items.size - 1; return afterMoved() }
         return null
     }
 
