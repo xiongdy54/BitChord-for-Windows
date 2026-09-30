@@ -59,6 +59,23 @@ object AppSettings {
     val swipeToPlayNext = MutableStateFlow(false)
 
     /**
+     * Put this track's quality ceiling and the resolver's recorded figures on the
+     * foot of the sleeve — [com.music.bitchord.ui.player.SleeveNerdStats]'s gate.
+     *
+     * The Android app gates that composable on this switch and starts it off
+     * (`AppSettings.kt:407`), so the field exists here to give the ported gate
+     * something honest to read rather than a trigger of its own: with the switch
+     * off, nothing is drawn, which is upstream's behaviour. The settings sheet
+     * that flips it is a later slice, so like the three switches above this lives
+     * for the session only — no persistence key.
+     */
+    val showNerdStats = MutableStateFlow(false)
+
+    fun setShowNerdStats(value: Boolean) {
+        showNerdStats.value = value
+    }
+
+    /**
      * Whether the home feed's "Recents" shelf is a list or a grid. The Android
      * setter writes it to storage; here it lives for the session, which is all
      * the switch itself needs.

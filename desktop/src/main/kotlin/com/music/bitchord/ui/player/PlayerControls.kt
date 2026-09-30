@@ -14,7 +14,6 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.ui.graphics.graphicsLayer
-import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.*
 
 import androidx.compose.animation.animateContentSize
@@ -78,7 +77,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -251,7 +249,7 @@ internal fun PlaybackQualityLabel(
 
 /**
  * Stats for nerds, on the foot of the sleeve: what the resolver settled on for
- * this track.
+ * this track. Nothing at all while the setting is off.
  *
  * Upstream drew two lines here — the measured stream, and under it what
  * Automix's analysis was doing. The second needed the smart-fade switch, its
@@ -259,9 +257,10 @@ internal fun PlaybackQualityLabel(
  * of which exist on this branch yet; it is simply absent rather than stubbed.
  *
  * What remains is a short " · "-joined line in the upstream's own style — a
- * figure that is not known is dropped, never filled in — and it is deliberately
- * quiet until the resolver has recorded something, because before that there is
- * nothing to report but a preference.
+ * figure that is not known is dropped, never filled in. The gate is upstream's
+ * own [AppSettings.showNerdStats] (app `:280-281`), not a substitute: it starts
+ * off here as it does there, so this draws for nobody until the settings sheet
+ * arrives with a switch to flip it.
  *
  * Read the fields for what they are: the first is the ceiling this app *asked*
  * the resolver for, the rest are what the resolver recorded. Neither is a
@@ -270,10 +269,11 @@ internal fun PlaybackQualityLabel(
  */
 @Composable
 internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
+    val showNerdStats by AppSettings.showNerdStats.collectAsState()
+    if (!showNerdStats) return
     val effectiveQuality by AppSettings.audioQuality.collectAsState()
     val kbps = NerdStats.pickedKbps(song.videoId)
     val source = NerdStats.pickedSource(song.videoId)
-    if (kbps == null && source == null) return
     // A plain white line reads fine over the usual dark tile, but a light
     // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
     // entirely. The shadow costs nothing on a dark background and is what
