@@ -95,10 +95,11 @@ class QueueCoordinatorTest {
         )!!
         assertEquals(QueueTier.CONTEXT, jumped.first().queueTier)
         assertEquals(PlaybackSourceType.QUEUE, jumped.first().playbackSourceType)
-        // Task 2's brief wrote this as `jumped.drop(1)` against the same expected list. The
-        // AUTOPLAY branch returns the promoted target first (app/.../QueueCoordinator.kt:271),
-        // so ["r1", "r2"] is the whole jump: the assertion's subject was wrong, not its value —
-        // which is also how the original suite states it (app/.../QueueCoordinatorTest.kt:389).
+        // The plan (docs/superpowers/plans/2026-09-30-desktop-slice2-now-playing-queue.md:322) wrote
+        // this as `jumped.drop(1)` over the same expected list. The AUTOPLAY branch returns the
+        // promoted target first (app/.../QueueCoordinator.kt:271), so ["r1", "r2"] *is* the whole
+        // jump: the assertion's subject was wrong, not its value — and the original suite states a
+        // case of this shape as a full-list map (app/.../QueueCoordinatorTest.kt:389).
         assertEquals(listOf("r1", "r2"), jumped.map { it.videoId })
     }
 
