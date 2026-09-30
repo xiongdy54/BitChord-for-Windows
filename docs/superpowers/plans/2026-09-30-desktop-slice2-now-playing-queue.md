@@ -1852,7 +1852,7 @@ git commit -m "feat(desktop): the player's two backdrop layers, on Skia not andr
 
 **Interfaces:**
 - Consumes: Task 7 全部控件、Task 8 的 `InlineQueue`、Task 9 两层底图、Task 1 `PlayerState` / `PlaybackPosition` / `RepeatMode`、桌面 `MeshGradientBackground` + `rememberArtworkColors`（`MeshGradient.kt:75,220`）、`rememberArtworkTopBandLuminance` + `topBandScrimAlpha`（`ArtworkPalette.kt:143,195`，**目前无调用者，本页是第一个消费者**）、`PLAYER_ART_PX`（同样首次使用）、`rememberRemoteArtworkUrl`（`RemoteArtwork.kt:27`）、`BitChordIcons`、`OptimizedHaze.optimizedHazeEffect`（`:25`）、`Haptics`。
-- Produces: `fun NowPlayingScreen(song, isPlaying, isLoading, position, durationMs, queue, queueIndex, hasPrevious, hasNext, repeatMode, shuffleEnabled, likeStatus, onToggleLike, onPlayPause, onNext, onPrevious, onSeek, onSeekFraction, onToggleShuffle, onCycleRepeat, onJumpTo, onRemoveFromQueue, onMoveInQueue, onQueueDragActiveChange, onClearQueue, onOpenMenu, onOpenAlbum, onOpenArtist, windowWidth, windowHeight, modifier)`。
+- Produces: `fun NowPlayingScreen(song, isPlaying, isLoading, position, durationMs, queue, queueIndex, hasPrevious, hasNext, repeatMode, shuffleEnabled, likeStatus, onToggleLike, onPlayPause, onNext, onPrevious, onSeekFraction, onToggleShuffle, onCycleRepeat, onJumpTo, onRemoveFromQueue, onMoveInQueue, onQueueDragActiveChange, onClearQueue, onOpenMenu, onOpenAlbum, onOpenArtist, windowWidth, windowHeight, volume, onVolumeChange, modifier)`。
 
 - [ ] **Step 1: 取正文**
 
@@ -1876,8 +1876,11 @@ wc -l /tmp/nps-body.txt
 | `onOpenPlaybackSource` | `:581` | 详情页＝切片 4 |
 | `lyrics`、`lyricsSource`、`lyricsProviderStates`、`onSelectLyricsProvider`、`lyricsUnavailable`、`lyricsOffsetOpen`、`onDismissLyricsOffset` | `:590-596` | 歌词＝切片 3 |
 | `onBlockedControl` | `:548` | controlsLocked 属一起听锁，随该族删 |
+| `onSeek` | `:549` | （勘误，随歌词族一起走）它唯一的使用点是 `:652` 歌词行点击 `seekToLyric`，那一族本来就整删；scrubber 与 `onScrubFinished` 都走 fraction（`:1298` 与桌面同一处都是 `scrub.release(onSeekFraction)`），所以"ms 还有人用"不成立。留一个没人调的参数＝本切片禁止的死按钮，Task 11 不得传它 |
 
-**保留**：`song`、`isPlaying`、`isLoading`、`position: PlaybackPosition`（`:521`，spec §4 最后一行的插值就靠它）、`durationMs`、`queue`、`queueIndex`、`hasPrevious`、`hasNext`、`repeatMode: Int`、`shuffleEnabled`、`likeStatus`、`onToggleLike`、`onPlayPause`、`onNext`、`onPrevious`、`onSeek`、`onSeekFraction`（**都留**：scrubber 用 fraction、`onScrubFinished` 用 ms）、`onToggleShuffle`、`onCycleRepeat`、`onJumpTo`、`onRemoveFromQueue`、`onMoveInQueue`、`onQueueDragActiveChange`、`onClearQueue`、`onOpenMenu`、`onOpenAlbum`、`onOpenArtist`、`windowWidth`、`windowHeight`、`modifier`。
+**保留**：`song`、`isPlaying`、`isLoading`、`position: PlaybackPosition`（`:521`，spec §4 最后一行的插值就靠它）、`durationMs`、`queue`、`queueIndex`、`hasPrevious`、`hasNext`、`repeatMode: Int`、`shuffleEnabled`、`likeStatus`、`onToggleLike`、`onPlayPause`、`onNext`、`onPrevious`、`onSeekFraction`（留，且是本页唯一的 seek 入口——scrubber 与 `onScrubFinished` 都走 fraction；见上表 `onSeek` 一行的勘误）、`onToggleShuffle`、`onCycleRepeat`、`onJumpTo`、`onRemoveFromQueue`、`onMoveInQueue`、`onQueueDragActiveChange`、`onClearQueue`、`onOpenMenu`、`onOpenAlbum`、`onOpenArtist`、`windowWidth`、`windowHeight`、`modifier`。
+
+**桌面新增的两个参数**（唯一对这张表的加法，理由写在了代码的参数注释里）：`volume: Float`（0f..1f）与 `onVolumeChange: (Float) -> Unit`，插在 `windowHeight` 之后、`modifier` 之前。原版音量不走参数——`rememberPlayerVolume()`（app `:952`）在内部读 `AudioManager` 并挂一个 `Settings.System` 的 `ContentObserver`（app `PlayerState.kt:284-354`），这两样桌面都没有对应物；桌面的音量在 `PlayerController`（`volume: StateFlow<Int>` 百分比 + `setVolume(percent: Int)`），只能走参数。spec §3.3 列了 `VolumeRow`，两个布局都渲染它，`AppSettings.hideVolumeBar` 不移植（本切片无设置面板），因此原来的隐藏分支与它顶位的 `VOLUME_ROW_HEIGHT` 间隔条一并没有了——两者同高 32dp，下方控件不移位。
 
 - [ ] **Step 3: 按三族删正文**
 
@@ -2013,6 +2016,7 @@ class ShellState {
 fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier = Modifier) {
     val snapshot by player.state.collectAsState()
     val shuffle by player.shuffleEnabled.collectAsState()
+    val volumePercent by player.volume.collectAsState()
     val overrides by LikeState.overrides.collectAsState()
     val song = snapshot.song ?: return
 
@@ -2038,7 +2042,6 @@ fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier =
         onPlayPause = player::togglePlayPause,
         onNext = player::next,
         onPrevious = player::previous,
-        onSeek = player::seekTo,
         onSeekFraction = player::seekToFraction,
         onToggleShuffle = player::toggleShuffle,
         onCycleRepeat = player::cycleRepeat,
@@ -2052,10 +2055,16 @@ fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier =
         onOpenArtist = { },
         windowWidth = windowWidth,
         windowHeight = windowHeight,
+        // `PlayerController.volume` is 0..100; the bar is 0f..1f. `setVolume`
+        // already coerces to 0..100, so nothing else is needed at the seam.
+        volume = volumePercent / 100f,
+        onVolumeChange = { player.setVolume((it * 100).roundToInt()) },
         modifier = modifier,
     )
 }
 ```
+
+- `volume` / `onVolumeChange`：桌面的音量在 `PlayerController`（`val volume: StateFlow<Int>` 百分比、`fun setVolume(percent: Int)`），不在任何 hook 里，所以只能由本页把它们传下去（`NowPlayingScreen` 的参数注释记了这条加法的原因）。连续回写是对的：原版 `PlayerVolume.drag` 每个 `onValueChange` 都直接写 `AudioManager`（app `PlayerState.kt:299-308`），而它作为 `onValueChangeFinished` 的 `volume::release`（app `:1301`）什么都不提交——只清一个 `dragging` 标志，用来按住观察器把硬件音量键的跳变补上 tween 时不去跟手指抢。桌面没有第二个写者也没有系统面板，所以两处调用点的 `onValueChangeFinished` 都是空的。**副作用**：`onSeek` 删掉后 `player.seekTo(ms)` 失去唯一的生产调用者（`PlayerController.kt:351`，测试也不调它），留还是删归 Task 13。
 
 - `windowWidth/windowHeight` 用 `LocalWindowInfo.current.containerSize`（切片 1 已验证的 `LocalConfiguration.current` 替代），这样把窗口拉高到 `h > w` 时**原版的竖屏分支自动生效**——spec 决策 1 要的正是"不自己另造判定条件，拉高即生效"。
 - `onQueueDragActiveChange = { }`：原版它用于拖拽时压掉播放页滑动手势（`:575`）。桌面没有那个竞争手势，空实现**不是死按钮**（它不渲染任何东西）。
