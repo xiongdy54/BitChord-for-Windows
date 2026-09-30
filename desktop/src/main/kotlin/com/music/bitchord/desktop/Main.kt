@@ -9,7 +9,9 @@ import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.ui.HomeViewModel
 import com.music.bitchord.ui.SearchViewModel
 import com.music.bitchord.ui.shell.Shell
@@ -45,6 +47,9 @@ fun main() {
         ?.let { Locale.setDefault(Locale.forLanguageTag(it)) }
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Same as the Android service does on create: the object may already hold a value, so
+    // assign both true and false rather than only turning it on.
+    QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
     val player = PlayerController(scope)
     val home = HomeViewModel(scope)
     val search = SearchViewModel(scope)

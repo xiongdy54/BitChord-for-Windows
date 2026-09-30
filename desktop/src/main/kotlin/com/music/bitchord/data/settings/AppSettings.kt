@@ -1,5 +1,8 @@
 package com.music.bitchord.data.settings
 
+import com.music.bitchord.data.AppFiles
+import com.music.bitchord.data.FileStore
+import com.music.bitchord.playback.RepeatMode
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** How a shelf or library page lays its items out. */
@@ -31,6 +34,9 @@ enum class AudioQuality(
  * There is no metered/mobile split on a desktop — the machine is the network —
  * so [effectiveAudioQuality] is just the one value, and it defaults to
  * Lossless the way both Android rungs do.
+ *
+ * Two of the settings below do store, though: the two the player has to be
+ * asked about again before the user touches anything.
  */
 object AppSettings {
 
@@ -62,4 +68,32 @@ object AppSettings {
     fun setHomeRecentsViewType(value: LibraryViewType) {
         homeRecentsViewType.value = value
     }
+
+    /** The original keeps these in SharedPreferences (`bitchord_settings`); here it is one file. */
+    private val prefs: FileStore by lazy { FileStore(AppFiles.file("settings.properties")) }
+
+    /**
+     * Whether the queue is held in shuffled order, and how the player repeats.
+     *
+     * The two queue flags persist because the player reads them back on the next
+     * launch: `QueueShuffle` decides whether a fresh queue goes in shuffled, and
+     * repeat mode is restored the same way. Booleans and small ints ride
+     * [FileStore]'s string accessors rather than widening it — the same one file,
+     * and no new surface on the store the resolver's config already depends on.
+     */
+    val shuffleEnabled = MutableStateFlow(prefs.getString(KEY_SHUFFLE_ENABLED, "false") == "true")
+    val repeatMode = MutableStateFlow(prefs.getString(KEY_REPEAT_MODE, "0").toIntOrNull() ?: RepeatMode.OFF)
+
+    fun setShuffleEnabled(value: Boolean) {
+        shuffleEnabled.value = value
+        prefs.putString(KEY_SHUFFLE_ENABLED, value.toString())
+    }
+
+    fun setRepeatMode(value: Int) {
+        repeatMode.value = value
+        prefs.putString(KEY_REPEAT_MODE, value.toString())
+    }
+
+    private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
+    private const val KEY_REPEAT_MODE = "repeat_mode"
 }
