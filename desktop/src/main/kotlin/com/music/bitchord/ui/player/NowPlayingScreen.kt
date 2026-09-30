@@ -370,10 +370,16 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 // =====================================================================================
 
 // -------------------------------------------------------------------------------------
-// THE BODY — app NowPlayingScreen.kt:507-2968, plus the three private helpers it reads
+// THE BODY — app NowPlayingScreen.kt:507-2968, plus the three helpers it reads
 // (`dragQueueIn`, `PlayerArtwork`/`rememberPlayerArtwork`,
-// `PlayerScrub`/`rememberPlayerScrub`), which live in the app's `PlayerState.kt` and
-// `NowPlayingScreen.kt` outside that range and had no other task to carry them.
+// `PlayerScrub`/`rememberPlayerScrub`). `dragQueueIn` sits after the app's body
+// range in the same file, and is `private` there; the other two are in the app's
+// `PlayerState.kt`, which no task in this plan carried, and are `internal` there
+// for exactly one reason — that file is not their caller's. Carrying them with
+// their only caller put them in this file, so all four keep the app's `private`:
+// nothing outside this file reads them. `LandscapePlayer.kt` names
+// `PlayerArtwork` in prose only, and takes the sleeve as the plain
+// `ImageRequest`/`Boolean` pair it is handed.
 //
 // Four things left, in order of how much of the file they took:
 //
