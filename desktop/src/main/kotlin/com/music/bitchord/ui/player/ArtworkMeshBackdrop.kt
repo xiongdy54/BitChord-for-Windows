@@ -32,6 +32,13 @@
 // `rememberArtworkMesh`'s `canvasFrame` stays in the signature, so the player's
 // call site can read like upstream's, but it is typed `Any?` and only the null
 // path is kept: motion artwork does not ship in this slice.
+//
+// Upstream's motion-clip paragraphs — `MESH_SAMPLE`, `MESH_FADE_MS` and
+// `ArtworkMeshBackdrop`'s clip wording — stay verbatim and are inert on this
+// build: no frame producer was removed here, there simply is not one on desktop,
+// so a reader who wonders where the clip frames come from can stop looking.
+// (`MESH_SAMPLE`'s `[source]` link is the one word changed — `meshOf`'s parameter
+// is `pixels` now, and the reference would dangle.)
 package com.music.bitchord.ui.player
 
 import androidx.compose.animation.core.Animatable
@@ -72,7 +79,6 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.toBitmap
 import com.music.bitchord.data.model.CARD_ART_PX
-import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.theme.argbImageBitmap
@@ -134,7 +140,7 @@ class ArtworkMesh internal constructor(internal val image: ImageBitmap)
 @Composable
 fun rememberFullArtworkBlurImage(
     imageUrl: String?,
-    artPx: Int = PLAYER_ART_PX,
+    artPx: Int = CARD_ART_PX,
     prepare: Boolean = true,
 ): ImageBitmap? {
     val context = PlatformContext.INSTANCE

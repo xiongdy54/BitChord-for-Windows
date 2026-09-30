@@ -38,6 +38,11 @@ internal fun Bitmap.argbPixels(): IntArray? {
  * Null when there is no image in what was handed over, or when Skia refuses the
  * install — the same "no answer" a failed pixel read means, and callers treat it
  * that way.
+ *
+ * The pair round-trips *opaque* ARGB only: [argbPixels] forces alpha to `0xFF`,
+ * so it discards alpha rather than reading it back. Nothing in this build
+ * produces non-opaque artwork pixels, and the Android original discarded it too,
+ * one step later, in `argb()`.
  */
 internal fun argbImageBitmap(pixels: IntArray, width: Int, height: Int): ImageBitmap? {
     if (width < 1 || height < 1 || pixels.size < width * height) return null
@@ -52,5 +57,8 @@ internal fun argbImageBitmap(pixels: IntArray, width: Int, height: Int): ImageBi
         bytes[at + 3] = (argb shr 24 and 0xFF).toByte()
     }
     val bitmap = Bitmap()
+    // Safe to hand over a throwaway array: skiko's signature takes a plain
+    // ByteArray, not a direct ByteBuffer, so a JNI frame cannot legally keep
+    // this address after the call returns without copying or holding a global ref.
     return if (bitmap.installPixels(info, bytes, info.minRowBytes)) bitmap.asComposeImageBitmap() else null
 }
