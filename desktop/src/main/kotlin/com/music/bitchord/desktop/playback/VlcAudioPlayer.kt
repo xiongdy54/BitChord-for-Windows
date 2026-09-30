@@ -13,16 +13,16 @@ import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
  * options, which is as close as that can get — see [Http]'s note about
  * googlevideo binding a URL to the connection that minted it.
  */
-class VlcAudioPlayer {
+class VlcAudioPlayer : AudioEngine {
 
     private val factory = MediaPlayerFactory("--no-video-title-show", "--quiet")
     private val player: MediaPlayer = factory.mediaPlayers().newMediaPlayer()
 
-    var onTime: ((Long) -> Unit)? = null
-    var onLength: ((Long) -> Unit)? = null
-    var onPlayingChanged: ((Boolean) -> Unit)? = null
-    var onFinished: (() -> Unit)? = null
-    var onError: ((String) -> Unit)? = null
+    override var onTime: ((Long) -> Unit)? = null
+    override var onLength: ((Long) -> Unit)? = null
+    override var onPlayingChanged: ((Boolean) -> Unit)? = null
+    override var onFinished: (() -> Unit)? = null
+    override var onError: ((String) -> Unit)? = null
 
     init {
         player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
@@ -58,13 +58,13 @@ class VlcAudioPlayer {
     }
 
     /** What the player is doing right now, for callers that want to ask rather than wait. */
-    val isPlaying: Boolean get() = player.status().isPlaying()
+    override val isPlaying: Boolean get() = player.status().isPlaying()
 
-    val timeMs: Long get() = player.status().time()
+    override val timeMs: Long get() = player.status().time()
 
     val lengthMs: Long get() = player.status().length()
 
-    fun play(url: String, headers: Map<String, String>) {
+    override fun play(url: String, headers: Map<String, String>) {
         val options = buildList {
             headers["Referer"]?.let { add(":http-referrer=$it") }
             headers["User-Agent"]?.let { add(":http-user-agent=$it") }
@@ -72,28 +72,28 @@ class VlcAudioPlayer {
         player.media().play(url, *options.toTypedArray())
     }
 
-    fun pause() {
+    override fun pause() {
         player.controls().setPause(true)
     }
 
-    fun resume() {
+    override fun resume() {
         player.controls().setPause(false)
     }
 
-    fun stop() {
+    override fun stop() {
         player.controls().stop()
     }
 
-    fun seekTo(fraction: Float) {
+    override fun seekTo(fraction: Float) {
         player.controls().setPosition(fraction.coerceIn(0f, 1f))
     }
 
     /** VLC's own scale, where 100 is unity. */
-    fun setVolume(percent: Int) {
+    override fun setVolume(percent: Int) {
         player.audio().setVolume(percent.coerceIn(0, 100))
     }
 
-    fun release() {
+    override fun release() {
         runCatching { player.release() }
         runCatching { factory.release() }
     }

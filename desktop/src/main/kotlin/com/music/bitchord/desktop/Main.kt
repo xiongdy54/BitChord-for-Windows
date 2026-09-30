@@ -51,6 +51,11 @@ fun main() {
     // assign both true and false rather than only turning it on.
     QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
     val player = PlayerController(scope)
+    // PlaybackService.kt:5286 restores repeat the same way; the shuffle half of that
+    // pair is already applied above, before the player exists. Restored here rather
+    // than in the controller's init because a constructor that reads the disk makes
+    // unit tests inherit whatever the last one left in settings.properties.
+    player.setRepeat(AppSettings.repeatMode.value)
     val home = HomeViewModel(scope)
     val search = SearchViewModel(scope)
 
