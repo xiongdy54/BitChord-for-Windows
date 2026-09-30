@@ -1025,21 +1025,23 @@ private fun formatTime(ms: Long): String {
 }
 
 /**
- * The gap between the two timestamps under the seek bar: the rate the resolver
- * settled on once it has settled, and the wait for it while it has not.
+ * The gap between the two timestamps under the seek bar: the rate of the stream
+ * the resolver picked, once it has picked one, and the wait for it while it has
+ * not.
  *
- * Upstream this badge had six states, and read every one of them off a measured
+ * Upstream this badge had six branches and read every one of them off a measured
  * stream: lossless, Hi-Res lossless, Dolby Atmos, a module's 320kbps tier, the
  * data-saver rung, the medium one — with a highlight sweeping across the two
- * that had been asked for *and confirmed*. The measurement came from the
- * platform's decoder callback into a cross-process snapshot, and the confirmation
- * from an `AudioTrack` negotiated against a real output device. A desktop
- * process has neither, so this draws the two things it can actually stand
- * behind, neither of them shimmered: shimmer is what upstream used to say
- * "verified", and nothing here is.
+ * that had been asked for *and confirmed*. The measurement came in through the
+ * platform's decoder callback and a cross-process snapshot of it; this process
+ * has neither, so nothing here can say a format was verified. Which is also why
+ * no branch shimmers: shimmer is the word upstream used for "confirmed", and
+ * what `data/innertube/StreamResolver.kt:274` records is the figure the *source*
+ * stated for the stream it chose — source metadata, not a decoder's report and
+ * not the machine's path.
  *
  * [pickedKbps] is read at composition rather than collected — the resolver's
- * record is a lookup, not a flow. It arrives while the badge is recomposing for
+ * record is a lookup, not a flow. It lands while the badge is recomposing for
  * the load that fetched it, which is the same moment it would have landed any
  * other way.
  */
