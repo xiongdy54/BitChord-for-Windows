@@ -39,7 +39,7 @@ class FakeQueueHost(
         repeat(replaced) { items.removeAt(from) }
         items.addAll(from, songs)
         // Same shifting rule as removeAt, and the same guard as the real host's
-        // replaceRange in Task 5: only an edit at or behind the needle moves it.
+        // replaceRange in QueueTimeline: only an edit behind the needle moves it.
         // shuffle's reorder is always ahead and always equal-size, so this is a
         // no-op there — but the fake must not be the only place that knows what
         // a real host does.
