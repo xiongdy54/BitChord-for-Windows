@@ -248,7 +248,8 @@ class QueueTimeline : QueueHost {
 
     /**
      * The next button. Steps forward, and — under repeat-all only — wraps from the tail to the head
-     * exactly as [onFinished] does, so an enabled button always has somewhere to go.
+     * exactly as [onFinished] does, so the glyph stays honest in the one mode that loops the whole
+     * list.
      *
      * The wrap is what the original gets from ExoPlayer rather than writing out: the transport on
      * Android is a media-session call that hands the press straight to the player
