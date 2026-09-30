@@ -27,10 +27,22 @@ interface QueueHost {
     /** `Player.getMediaItemAt(index).toSong()`, and `Player.currentMediaItem` for the playhead. */
     fun songAt(index: Int): Song?
 
-    /** `Player.removeMediaItem(index)`. */
+    /**
+     * `Player.removeMediaItem(index)`.
+     *
+     * Removing a row behind the playhead must move the playhead down; ExoPlayer does this
+     * implicitly, so an implementation that keeps the index where it was leaves the needle on a
+     * different track than the one the caller was playing.
+     */
     fun removeAt(index: Int)
 
-    /** `Player.replaceMediaItems(fromIndex, toIndex, mediaItems)`. */
+    /**
+     * `Player.replaceMediaItems(fromIndex, toIndex, mediaItems)`.
+     *
+     * Shrinking a range behind the playhead must move the playhead down by the rows that went away,
+     * and growing one must move it up — ExoPlayer does this implicitly. An equal-size rewrite, which
+     * is all shuffle ever does, leaves it alone.
+     */
     fun replaceRange(from: Int, to: Int, songs: List<Song>)
 
     /** `Player.setMediaItems(items, startIndex, positionMs)`. */

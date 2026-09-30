@@ -14,6 +14,17 @@ class FakeQueueHost(
     val items: MutableList<Song> = songs.toMutableList()
     val played = mutableListOf<String>()
 
+    /**
+     * The two playback entries in the order they were called, with the position [jumpTo] was given.
+     *
+     * [played] cannot tell them apart — both append the row they land on — while on a real host they
+     * are different acts: `jumpTo` is `seekTo(index, positionMs)` + play, so it restarts the clock,
+     * and `playCurrent` leaves the position alone and only sounds the row under the needle. A
+     * forward jump rebuilds the list and plays; a backward jump seeks into the history already
+     * there. Without this channel a test cannot tell the two apart.
+     */
+    val playbackCalls = mutableListOf<String>()
+
     override val itemCount: Int get() = items.size
     override fun songAt(index: Int): Song? = items.getOrNull(index)
     override fun removeAt(index: Int) {
@@ -24,14 +35,39 @@ class FakeQueueHost(
         if (index < currentIndex) currentIndex -= 1
     }
     override fun replaceRange(from: Int, to: Int, songs: List<Song>) {
-        repeat(to - from) { items.removeAt(from) }
+        val replaced = to - from
+        repeat(replaced) { items.removeAt(from) }
         items.addAll(from, songs)
+        // Same shifting rule as removeAt: an edit behind the playhead that changes the
+        // item count moves the playhead. shuffle's reorder is always equal-size and
+        // always ahead of it, so this is a no-op there — but the fake must not be the
+        // only place that knows the real host's behaviour.
+        currentIndex = (currentIndex + songs.size - replaced)
+            .coerceIn(0, (items.size - 1).coerceAtLeast(0))
     }
     override fun setTimeline(songs: List<Song>, startIndex: Int) {
         items.clear(); items.addAll(songs); currentIndex = startIndex
     }
-    override fun jumpTo(index: Int, positionMs: Long) { currentIndex = index; played += items[index].videoId }
-    override fun playCurrent() { items.getOrNull(currentIndex)?.let { played += it.videoId } }
+    override fun jumpTo(index: Int, positionMs: Long) {
+        playbackCalls += "jumpTo($index, $positionMs)"
+        currentIndex = index
+        played += items[index].videoId
+    }
+    override fun playCurrent() {
+        playbackCalls += "playCurrent()"
+        items.getOrNull(currentIndex)?.let { played += it.videoId }
+    }
+
+    var repeatMode: Int = RepeatMode.OFF
+
+    /** PlaybackService.kt:2712-2724: under repeat-all, expired history rotates to the tail. */
+    fun trimHistory() {
+        val expired = queueHistoryTrimCount(currentIndex)
+        if (expired <= 0) return
+        if (repeatMode == RepeatMode.ALL) repeat(expired) { items.add(items.removeAt(0)) }
+        else repeat(expired) { items.removeAt(0) }
+        currentIndex -= expired
+    }
 
     /** The tier the algorithms ask for at an index. */
     fun tierAt(index: Int): QueueTier = items[index].queueTier

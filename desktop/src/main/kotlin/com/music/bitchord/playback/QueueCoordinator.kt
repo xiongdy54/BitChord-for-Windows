@@ -265,6 +265,15 @@ object QueueCoordinator {
     /**
      * Executes a semantic queue jump on [host], preserving history up to [QueueHost.currentIndex]
      * and avoiding unintended reshuffling.
+     *
+     * Deliberately the only jump pruning on desktop: the original had two. This one answers a tap on
+     * a queue row. The other sat on the session side, `PlaybackService.kt:6527-6571`'s
+     * `seekTo(mediaItemIndex, positionMs)` for the notification shade and Android Auto, which used
+     * [skippedByQueueJump] to pick the bypassed span, deleted by the target's tier, and moved the
+     * target up to the row right after the playhead. Desktop has the one entry point until the media
+     * session arrives with slice 6, so that half stays on Android — which leaves [skippedByQueueJump]
+     * without a production caller here. It is kept as the verbatim carry it is, alongside
+     * [MAX_QUEUE_HISTORY], and pinned by the tests in QueueHistoryTest and QueueCoordinatorTest.
      */
     fun jumpToQueueItem(
         host: QueueHost,
