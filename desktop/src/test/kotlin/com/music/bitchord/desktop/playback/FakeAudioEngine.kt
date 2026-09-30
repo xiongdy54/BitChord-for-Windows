@@ -18,12 +18,22 @@ class FakeAudioEngine : AudioEngine {
     override var timeMs: Long = 0L
     val playedUrls = mutableListOf<String>()
 
+    /** Every volume the controller asked for, in order — including the re-seat on a new row. */
+    val volumes = mutableListOf<Int>()
+
+    /** Every fraction the controller asked the *engine* to seek to. Empty is the norm: a row
+     * change restarts the clock, so a seek inside one is work thrown away. */
+    val seekFractions = mutableListOf<Float>()
+
     /** What libvlc's `finished` event does: clear playing, then tell us. */
     fun finish() {
         isPlaying = false; onPlayingChanged?.invoke(false); onFinished?.invoke()
     }
 
     fun tick(ms: Long) { timeMs = ms; onTime?.invoke(ms) }
+
+    /** What libvlc's `lengthChanged` event does: report the media's total. */
+    fun length(ms: Long) { onLength?.invoke(ms) }
 
     override fun play(url: String, headers: Map<String, String>) {
         playedUrls += url; isPlaying = true; onPlayingChanged?.invoke(true)
@@ -32,7 +42,7 @@ class FakeAudioEngine : AudioEngine {
     override fun pause() { isPlaying = false; onPlayingChanged?.invoke(false) }
     override fun resume() { isPlaying = true; onPlayingChanged?.invoke(true) }
     override fun stop() { isPlaying = false; onPlayingChanged?.invoke(false) }
-    override fun seekTo(fraction: Float) {}
-    override fun setVolume(percent: Int) {}
+    override fun seekTo(fraction: Float) { seekFractions += fraction }
+    override fun setVolume(percent: Int) { volumes += percent }
     override fun release() {}
 }

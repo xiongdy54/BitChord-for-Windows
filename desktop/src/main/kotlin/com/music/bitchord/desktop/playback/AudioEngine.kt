@@ -37,9 +37,10 @@ interface AudioEngine {
     /**
      * Where the engine actually is, in milliseconds.
      *
-     * Distinct from the position the UI shows: [PlayerController] interpolates a
-     * display position between ticks, and the "restart or step back" decision has
-     * to be made against the real one.
+     * Distinct from the position the UI shows, and not derived from it: the display value is a UI
+     * quantity — the engine's ticks are passed straight into it, a row change re-seats it at zero
+     * and a scrubber drag writes it — so it can disagree with the media clock by design. The
+     * "restart or step back" decision is a claim about the media, so it is made against this.
      */
     val timeMs: Long
 

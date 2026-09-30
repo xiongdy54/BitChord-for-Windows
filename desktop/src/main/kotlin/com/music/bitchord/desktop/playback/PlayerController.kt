@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop.playback
 
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -11,6 +12,7 @@ import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.playback.QueueTimeline
 import com.music.bitchord.playback.RepeatMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +57,23 @@ class PlayerController(
     private val queue = QueueTimeline()
 
     /**
+     * Which row the audio half is working on, and the only answer to "is this resolve still
+     * somebody's?".
+     *
+     * Bumped on every entry to [resolveAndPlay]. A fetch that finishes while it is still the
+     * current one is the row under the needle and gets to sound; a fetch whose token has moved on
+     * belongs to a row the playhead has already left, and is discarded — see [resolveAndPlay].
+     *
+     * A token rather than the in-flight [kotlinx.coroutines.Job], because cancelling that job is
+     * not the same act as forgetting its result: the coroutine would still run its failure path,
+     * and the whole point here is that a row nobody is on any more has nothing to report.
+     *
+     * A plain `Int`, not an atomic: read and written only on [queueDispatcher], which is the one
+     * thread every [resolveAndPlay] entry happens on.
+     */
+    private var playGeneration = 0
+
+    /**
      * The dispatcher queue edits and state publication are confined to.
      *
      * `Dispatchers.Main` on desktop, which `kotlinx-coroutines-swing` makes the Swing event
@@ -77,24 +96,33 @@ class PlayerController(
      */
     var onPrefetch: (suspend (String) -> Unit)? = null
 
-    private val _state = MutableStateFlow(PlayerState())
-
-    /** The one snapshot the player screens read. */
-    val state: StateFlow<PlayerState> = _state.asStateFlow()
-
     /**
      * The playhead, held apart from [state] on purpose.
      *
      * [PlayerState.position] is this same object, so reading a position means reading this and
-     * nothing else recomposes. Only two things write it: the engine's tick, and a row change
-     * re-seating the clock — see the class's note on threading.
+     * nothing else recomposes. Three things write it: the engine's tick, a row change re-seating
+     * the clock, and a jump naming the position it wants — see the class's note on threading.
      */
     val position = PlaybackPosition()
+
+    /**
+     * Seeded with [position] rather than left to [PlayerState]'s default: that default builds a
+     * *second* [PlaybackPosition], and everything about this object's identity is the point of it
+     * (its own KDoc). Without the seed the first render reads one object and every publish after
+     * it another — the trap [PlaybackPosition]'s KDoc warns about, and the reason this property
+     * is declared above the flow that carries it.
+     */
+    private val _state = MutableStateFlow(PlayerState(position = position))
+
+    /** The one snapshot the player screens read. */
+    val state: StateFlow<PlayerState> = _state.asStateFlow()
 
     private val _volume = MutableStateFlow(80)
     val volume: StateFlow<Int> = _volume.asStateFlow()
 
-    /** Null when there is nothing to report — a resolve in flight or a finished queue. */
+    /** What went wrong, or what is being waited on — and always the *current* row's, never a
+     * superseded one's: see [playGeneration]. Null when there is nothing to report, which is the
+     * case both for a row that sounded and for the tail the queue walked out to. */
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status.asStateFlow()
 
@@ -121,7 +149,12 @@ class PlayerController(
 
     init {
         queue.onPlay = ::playCurrentRow
-        queue.onSeek = { _, ms -> seekTo(ms) }
+        // A jump names the position it wants *before* it names the play, so this is the display
+        // clock and nothing more. Handing it to the engine instead would be wasted work twice
+        // over: the [resolveAndPlay] that follows on the same act stops the engine and re-seats
+        // the clock at zero, and the fraction `seekTo(ms)` computes would be divided by the
+        // duration of the row being left behind.
+        queue.onSeek = { _, ms -> position.positionMs = ms }
         queue.onChanged = ::publish
         engine.onTime = { ms -> position.positionMs = ms }
         engine.onLength = { ms -> onQueue { _state.update { it.copy(durationMs = ms) } } }
@@ -148,27 +181,34 @@ class PlayerController(
      * unchanged input, and it is — every write here is a whole value into a `MutableStateFlow`,
      * which compares structurally and drops the repeat. Do not batch the publications to make the
      * count match an act, and do not lean on the count anywhere.
+     *
+     * One form, too: every snapshot write goes through `update {}`, never
+     * `_state.value = _state.value.copy(…)`. Both read the current value, but only `update` re-reads
+     * it if somebody else won the race, so a future writer added on the second form would drop
+     * publishes rather than order them.
      */
     private fun publish() {
         val song = queue.songAt(queue.currentIndex)
         val index = queue.currentIndex
         val wraps = queue.repeatMode == RepeatMode.ALL
-        _state.value = _state.value.copy(
-            song = song,
-            isPlaying = _playing.value,
-            position = position,
-            isLoading = _loading.value,
-            repeatMode = queue.repeatMode,
-            queue = queue.snapshot(),
-            queueIndex = index,
-            // Read from the queue, never guessed from the index — and only the mode that can
-            // wrap may light the glyph. Repeat-one replays the current row instead of wrapping
-            // (Media3's own contract: its ends "behave as they do in REPEAT_MODE_OFF"), and
-            // QueueTimeline.next() returns null in that case, so `!= RepeatMode.OFF` here would
-            // light a transport button that does nothing. Same condition, literally.
-            hasPrevious = wraps || index > 0,
-            hasNext = wraps || index + 1 < queue.itemCount,
-        )
+        _state.update {
+            it.copy(
+                song = song,
+                isPlaying = _playing.value,
+                position = position,
+                isLoading = _loading.value,
+                repeatMode = queue.repeatMode,
+                queue = queue.snapshot(),
+                queueIndex = index,
+                // Read from the queue, never guessed from the index — and only the mode that can
+                // wrap may light the glyph. Repeat-one replays the current row instead of wrapping
+                // (Media3's own contract: its ends "behave as they do in REPEAT_MODE_OFF"), and
+                // QueueTimeline.next() returns null in that case, so `!= RepeatMode.OFF` here would
+                // light a transport button that does nothing. Same condition, literally.
+                hasPrevious = wraps || index > 0,
+                hasNext = wraps || index + 1 < queue.itemCount,
+            )
+        }
         _current.value = song
     }
 
@@ -253,12 +293,22 @@ class PlayerController(
             _status.value = "opening $label…"
             // Out to IO for the round trip and back to the queue thread for the mutation:
             // `withContext` returns to the context it was called from.
-            val songs = withContext(Dispatchers.IO) {
-                YtMusicRepository.browseSongs(browseId).getOrNull()?.songs.orEmpty()
-            }
-            setLoading(false)
+            val fetched = withContext(Dispatchers.IO) { YtMusicRepository.browseSongs(browseId) }
+            val songs = fetched.getOrNull()?.songs.orEmpty()
             if (songs.isEmpty()) {
+                // Nobody else is going to clear the flag: [playFrom], which normally does it in
+                // its own stride, is the branch that is not being taken. Kept inside this branch
+                // rather than lifted above it, because on the way out to play a queue a
+                // `setLoading(false)` here would only drop the spinner for a frame.
+                setLoading(false)
                 _status.value = "nothing playable in $label"
+                // The empty message is what the user sees; the cause is what makes it recoverable.
+                // `getOrNull()` alone erases it, and "nothing playable" is then indistinguishable
+                // from "the request failed" — so say which, and put the throwable where the
+                // copy-log button can reach it.
+                fetched.exceptionOrNull()?.let {
+                    TrackLog.w(TAG, "playCollection: $label ($browseId) could not be opened", it)
+                }
             } else {
                 playFrom(songs, 0, PlaybackSourceType.BROWSE, label, browseId)
             }
@@ -282,9 +332,10 @@ class PlayerController(
      *
      * [AudioEngine.timeMs], not the display position: past
      * [QueueTimeline.BACK_RESTARTS_AFTER_MS] a press means "replay this one", and that threshold
-     * is a claim about the media clock. The display position is the UI's own number — written by
-     * ticks, re-seated to zero when a row starts, and held by a scrubber mid-drag — so deciding
-     * on it would make a transport button answer what the screen is showing.
+     * is a claim about the media clock. The display position is the UI's own number — it mirrors
+     * what the engine reports, is re-seated to zero when a row starts, and is what a scrubber
+     * writes while a drag is in progress (see [queue]'s `onSeek`) — so deciding on it would make
+     * a transport button answer what the screen is showing rather than where the stream is.
      */
     fun previous() {
         val positionMs = engine.timeMs
@@ -403,8 +454,12 @@ class PlayerController(
      * The state writes happen on the queue thread; only the blocking resolve hops, and it hops
      * back before touching the engine. So the list is already moved by the time a URL is being
      * fetched, and the fetch cannot reorder the queue.
+     *
+     * Nothing waits for the fetch it starts, and nothing cancels it either — the row it was asked
+     * for can be history before the URL arrives. [playGeneration] is what makes that harmless.
      */
     private fun resolveAndPlay(videoId: String) {
+        val generation = ++playGeneration
         engine.stop()
         position.positionMs = 0
         // Whatever length the snapshot still carries belongs to the row that just ended.
@@ -412,12 +467,25 @@ class PlayerController(
         _status.value = "resolving…"
         setLoading(true)
         scope.launch {
-            // `runCatching`, not the engine's own error path, because a resolve that throws is
-            // this app's failure rather than libvlc's, and it has to be named as one.
-            val outcome = withContext(resolveDispatcher) { runCatching { resolveUrl(videoId) } }
+            // Not `runCatching`: that would swallow a [CancellationException] and hand it to the
+            // failure branch below, which would report a resolve nobody wants any more as
+            // "resolve failed", over the message of the row that replaced it. Cancellation is a
+            // change of mind, not an error, and it has to leave this function unreported.
+            val outcome = try {
+                Result.success(withContext(resolveDispatcher) { resolveUrl(videoId) })
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Result.failure(error)
+            }
             // The publish inside this block reads the queue, so it belongs on the queue thread —
             // and on the one that may not be edited from here either.
             withContext(queueDispatcher) {
+                // Superseded while the URL was being fetched: the row this resolve was started for
+                // is no longer the one under the needle, so everything this branch would write —
+                // the URL, the cleared status, the cleared spinner — belongs to a row the user has
+                // already left. Discard it all; the current row reports for itself.
+                if (generation != playGeneration) return@withContext
                 outcome
                     .onSuccess { url ->
                         _status.value = null
@@ -440,15 +508,27 @@ class PlayerController(
      *
      * No cache of its own: [StreamResolver] already keys by videoId for twenty minutes
      * (`StreamResolver.kt:1082-1084`) and coalesces concurrent resolves of the same track
-     * (`:386-416`). The only thing missing was somebody calling it early. A failure is swallowed
-     * whole — a prefetch that did not work is worth exactly what it costs, and the real resolve
-     * will report it if it matters.
+     * (`:386-416`). The only thing missing was somebody calling it early.
+     *
+     * Launched and not awaited: awaited, this would hold the row's own resolve coroutine open for
+     * a second full round trip, and in production that round trip belongs on the IO pool rather
+     * than on the thread that just agreed to make sound. The queue is therefore read *here*, on
+     * the queue thread, before the launch — the launched half touches no state at all.
+     *
+     * A failure is swallowed whole — a prefetch that did not work is worth exactly what it costs,
+     * and the real resolve will report it if it matters. Unlike [resolveAndPlay], `runCatching` is
+     * the right shape here, cancellation included: this writes no status and no flag, so there is
+     * nothing for a stale report to be stale *about*.
      */
-    private suspend fun prefetchNext() {
+    private fun prefetchNext() {
         val next = queue.songAt(queue.currentIndex + 1) ?: return
         val callback = onPrefetch
-        runCatching {
-            if (callback != null) callback(next.videoId) else resolveUrl(next.videoId)
+        scope.launch {
+            runCatching {
+                withContext(resolveDispatcher) {
+                    if (callback != null) callback(next.videoId) else resolveUrl(next.videoId)
+                }
+            }
         }
     }
 
@@ -460,5 +540,10 @@ class PlayerController(
 
     fun release() {
         engine.release()
+    }
+
+    private companion object {
+        /** The app's one log tag — see [TrackLog]. */
+        const val TAG = "BitChord"
     }
 }
