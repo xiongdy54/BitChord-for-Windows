@@ -273,9 +273,10 @@ class QueueTimelineTest {
 
     @Test
     fun `repeat-one leaves the transport buttons as plain steps`() {
-        // REPEAT_ONE replays in place, and that is the whole of its loop: `repeat-one replays the
-        // same row` above pins the pump's half, and this pins that the buttons keep their plain-step
-        // shape. Wrapping here would put the needle somewhere the mode never asked it to go.
+        // REPEAT_ONE's Next/Previous "behave as they do in REPEAT_MODE_OFF" — Media3's own contract,
+        // quoted in next()'s KDoc — and the repetition itself belongs to the current row, which
+        // `repeat-one replays the same row` above pins. Wrapping here would put the needle where the
+        // mode never sends it.
         val t = started("a", "b", "c", startIndex = 2)
         t.repeatMode = RepeatMode.ONE
         assertNull(t.next())

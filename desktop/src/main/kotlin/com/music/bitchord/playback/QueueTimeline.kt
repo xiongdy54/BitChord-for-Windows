@@ -256,10 +256,14 @@ class QueueTimeline : QueueHost {
      * from is `player.hasNextMediaItem()` (`PlayerConnection.kt:305-306`) — an answer from the player
      * rather than an index comparison, which is why [PlayerState]'s carried KDoc can say the
      * wrap-around of repeat-all is already accounted for. Here the answer has to be computed, and an
-     * enabled glyph that returns nothing is the dead button spec §2 rules out. Repeat-one is
-     * deliberately not given a wrap: there the loop belongs to the current row, which [onFinished]
-     * answers in place above, and these two stay plain steps. At the tail with repeat off this is a
-     * stop, not a wrap.
+     * enabled glyph that returns nothing is the dead button spec §2 rules out.
+     *
+     * The rule copied is Media3's own `Player.REPEAT_MODE_*` contract: repeat-all gives the "Previous"
+     * and "Next" actions "looping at the ends, so that Next when playing the last MediaItem will move
+     * to the first", while repeat-one's "behave as they do in REPEAT_MODE_OFF … doing nothing when
+     * there is no previous or next MediaItem". So repeat-one gets no wrap — there the loop belongs to
+     * the current row, which [onFinished] answers in place above — and at the tail with repeat off
+     * this is a stop.
      */
     fun next(): String? {
         if (items.isEmpty()) return null
