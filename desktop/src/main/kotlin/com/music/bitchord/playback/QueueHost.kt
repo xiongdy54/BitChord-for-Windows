@@ -40,8 +40,13 @@ interface QueueHost {
      * `Player.replaceMediaItems(fromIndex, toIndex, mediaItems)`.
      *
      * Shrinking a range behind the playhead must move the playhead down by the rows that went away,
-     * and growing one must move it up — ExoPlayer does this implicitly. An equal-size rewrite, which
-     * is all shuffle ever does, leaves it alone.
+     * and growing one must move it up — ExoPlayer does this implicitly. An edit entirely ahead of the
+     * playhead leaves it where it is, whatever it does to the row count: that is the shape of the
+     * calls this member exists for, since a hand-queued insertion and shuffle's reorder both pass
+     * `from = currentIndex + 1`, and the needle has to stay put through them — the app's own
+     * count-changing edit ahead of it (`PartySync.kt:898`) rewrites the tail with a smaller list and
+     * never re-seeks. Equal-size rewrites, which is all shuffle ever does, sit where the two rules
+     * agree — so it is the ahead case, and only that, this clause has to settle.
      */
     fun replaceRange(from: Int, to: Int, songs: List<Song>)
 

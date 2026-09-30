@@ -257,7 +257,8 @@ class QueueCoordinatorTest {
 
     // ---- the QueueHost playhead contract, pinned here because Tasks 4-6 implement the interface
     //      and not this fake: an edit that changes the number of rows behind the needle has to move
-    //      the needle with them, which is what ExoPlayer did implicitly. ----
+    //      the needle with them, while an edit ahead of it has to leave it on the same row whatever it
+    //      does to the count. ExoPlayer did both implicitly. ----
 
     @Test
     fun `an edit behind the playhead moves it down with the rows it removed`() {
@@ -281,6 +282,23 @@ class QueueCoordinatorTest {
         assertEquals(0, host.currentIndex)
     }
 
+    @Test
+    fun `a count changing edit ahead of the playhead leaves the row it is playing alone`() {
+        val host = FakeQueueHost(listOf(song("now"), song("c1")), currentIndex = 0)
+
+        // The pure-insertion shape a hand-queued row takes on this member: from = currentIndex + 1,
+        // to = from. Unguarded, the delta alone drags the needle to 2 — onto u2, a row the user just
+        // queued. ExoPlayer leaves currentMediaItemIndex alone for an edit ahead of it in either
+        // direction, which is what the app assumes at PartySync.kt:898 (it rewrites the tail with a
+        // deliberately smaller list and never re-seeks). The equal-size case above passes with or
+        // without the guard, so a count-changing call is the only shape that can catch it missing.
+        host.replaceRange(1, 1, listOf(song("u1"), song("u2")))
+
+        assertEquals(listOf("now", "u1", "u2", "c1"), host.items.map { it.videoId })
+        assertEquals(0, host.currentIndex)
+        assertEquals("now", host.items[host.currentIndex].videoId)
+    }
+
     // ---- the history window, PlaybackService.kt:2712-2724. The counts are queueHistoryTrimCount's
     //      own arithmetic, not chosen to fit: 27 rows with the needle on the last one is the first
     //      shape that expires anything, because (26 - 25) is 1 while (25 - 25) is 0. ----
@@ -298,6 +316,8 @@ class QueueCoordinatorTest {
         assertEquals(27, host.items.size)
         assertEquals("t2", host.items.first().videoId)
         assertEquals("t1", host.items.last().videoId)
+        // The row under the needle, not just its index: same song, one slot earlier.
+        assertEquals("t27", host.items[host.currentIndex].videoId)
     }
 
     @Test
@@ -309,6 +329,31 @@ class QueueCoordinatorTest {
         assertEquals(26, host.items.size)
         assertEquals(25, host.currentIndex)
         assertEquals("t2", host.items.first().videoId)
+        // Still the same song being played, now one slot earlier than it was.
+        assertEquals("t27", host.items[host.currentIndex].videoId)
+    }
+
+    @Test
+    fun `three expired rows rotate and the needle slides with them`() {
+        // The cases above all sit at expired == 1, where a loop that repeats once is indistinguishable
+        // from a decrement of one. Here queueHistoryTrimCount(28) is 28 - MAX_QUEUE_HISTORY = 3
+        // (QueueHistory.kt:8), so repeat(expired) really iterates and the aggregate
+        // currentIndex -= expired has to land where three separate shifts would put the needle.
+        val host = FakeQueueHost((1..29).map { song("t$it") }, currentIndex = 28)
+        host.repeatMode = RepeatMode.ALL
+
+        host.trimHistory()
+
+        // Three moves of head-to-tail: t1, t2 and t3 in that order, so the length is unchanged and the
+        // first and last rows name the iteration count as well as the direction.
+        assertEquals(29, host.items.size)
+        assertEquals("t4", host.items.first().videoId)
+        assertEquals("t3", host.items.last().videoId)
+        // ExoPlayer's moveMediaItem(0, mediaItemCount - 1) slides every row behind the needle down one
+        // slot per move, so t29 goes 28 -> 27 -> 26 -> 25; the single aggregate decrement has to land
+        // on that same row, which is why the index and the row are both asserted.
+        assertEquals(25, host.currentIndex)
+        assertEquals("t29", host.items[host.currentIndex].videoId)
     }
 
     @Test
@@ -326,7 +371,7 @@ class QueueCoordinatorTest {
 
     @Test
     fun `the history window is the app's own number`() {
-        // The three cases above read the window through the same constant the fake trims with, so
+        // The four cases above read the window through the same constant the fake trims with, so
         // without this pin they would silently follow it wherever it went.
         assertEquals(25, MAX_QUEUE_HISTORY)
         assertEquals(0, queueHistoryTrimCount(currentIndex = 25))
@@ -336,11 +381,12 @@ class QueueCoordinatorTest {
     @Test
     fun `a jump that only steps over the next row has nothing to delete`() {
         assertNull(skippedByQueueJump(currentIndex = 3, targetIndex = 4))
-        // The plan (docs/superpowers/plans/2026-09-30-desktop-slice2-now-playing-queue.md:570) wrote
-        // 4..4 here. `(currentIndex + 1) until targetIndex` — QueueHistory.kt:18, carried verbatim —
-        // is 4..5 for 3 -> 6, the same shape the original states as 3..6 for 2 -> 7
-        // (app/src/test/java/com/music/bitchord/QueueHistoryTest.kt:23). Kept the plan's indices and
-        // corrected the range: its value cannot be produced by the function it is testing.
+        // 4..4 is the *brief's* stale value (task-3-brief.md:139), not the plan's: the plan this case
+        // was ported from has since been corrected to 4..5, so the discrepancy lives only in the brief
+        // the case was handed over in. `(currentIndex + 1) until targetIndex` — QueueHistory.kt:19,
+        // carried verbatim — gives 4..5 for 3 -> 6, the same shape the original states as 3..6 for
+        // 2 -> 7 (app/src/test/java/com/music/bitchord/QueueHistoryTest.kt:23). Kept the brief's
+        // indices and corrected its range: its value cannot be produced by the function it tests.
         assertEquals(4..5, skippedByQueueJump(currentIndex = 3, targetIndex = 6))
     }
 }

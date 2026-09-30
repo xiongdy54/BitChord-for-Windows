@@ -38,12 +38,15 @@ class FakeQueueHost(
         val replaced = to - from
         repeat(replaced) { items.removeAt(from) }
         items.addAll(from, songs)
-        // Same shifting rule as removeAt: an edit behind the playhead that changes the
-        // item count moves the playhead. shuffle's reorder is always equal-size and
-        // always ahead of it, so this is a no-op there — but the fake must not be the
-        // only place that knows the real host's behaviour.
-        currentIndex = (currentIndex + songs.size - replaced)
-            .coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        // Same shifting rule as removeAt, and the same guard as the real host's
+        // replaceRange in Task 5: only an edit at or behind the needle moves it.
+        // shuffle's reorder is always ahead and always equal-size, so this is a
+        // no-op there — but the fake must not be the only place that knows what
+        // a real host does.
+        if (from < currentIndex) {
+            currentIndex = (currentIndex + songs.size - replaced)
+                .coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        }
     }
     override fun setTimeline(songs: List<Song>, startIndex: Int) {
         items.clear(); items.addAll(songs); currentIndex = startIndex
