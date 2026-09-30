@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
  * here means a ported file was rewritten rather than carried over — exactly the
  * failure mode decision 3 exists to prevent.
  *
- * The `PlayerControls.kt` line cited in each group is where that number is defined
+ * The app file and line cited in each group is where that number is defined
  * upstream; `PlayerGeometryTest` is why those declarations are `internal` there
  * rather than the app's `private`.
  */
@@ -36,6 +36,25 @@ class PlayerGeometryTest {
         assertEquals(26f, MARQUEE_DP_PER_SEC)
         assertEquals(48.dp, MARQUEE_GAP)
         assertEquals(5_000L, MARQUEE_REST_MS)
+    }
+
+    @Test
+    fun `the landscape rule is the original's, not a desktop one`() {
+        // NowPlayingScreen.kt:408-409 — wider than it is tall, and at least
+        // :316's LANDSCAPE_PLAYER_MIN_WIDTH (560dp) across. The boundary is
+        // ">=", so 560dp is in and 559dp is out.
+        assertEquals(true, landscapePlayerAvailable(1180.dp, 780.dp))
+        assertEquals(false, landscapePlayerAvailable(780.dp, 1180.dp))
+        assertEquals(false, landscapePlayerAvailable(559.dp, 100.dp))
+        assertEquals(true, landscapePlayerAvailable(560.dp, 100.dp))
+    }
+
+    @Test
+    fun `the player column keeps the app's own width and gutter`() {
+        // NowPlayingScreen.kt:291, :284, :302.
+        assertEquals(560.dp, PLAYER_MAX_WIDTH)
+        assertEquals(30.dp, PLAYER_GUTTER)
+        assertEquals(700.dp, TABLET_PLAYER_MIN_WIDTH)
     }
 
     @Test
