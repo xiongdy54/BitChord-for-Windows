@@ -60,6 +60,19 @@ class PlayerGeometryTest {
     }
 
     @Test
+    fun `the landscape branch keeps the app's own numbers`() {
+        // LandscapePlayer.kt:76, :84, :90, :105 — the column cap, the height
+        // below which the right column tightens, the gutter it swaps to when it
+        // does, and the strip above the columns for the sheet's handle. These
+        // are `internal` here rather than the app's `private` for the same
+        // reason as the two above: this test is what keeps them the app's.
+        assertEquals(1100.dp, LANDSCAPE_PLAYER_MAX_WIDTH)
+        assertEquals(440.dp, LANDSCAPE_COMPACT_HEIGHT)
+        assertEquals(20.dp, LANDSCAPE_GUTTER_COMPACT)
+        assertEquals(24.dp, LANDSCAPE_HANDLE_STRIP)
+    }
+
+    @Test
     fun `the gesture gate and the queue constants are the app's own numbers`() {
         // PlayerControls.kt:125 — the shuffle glyph's tap window.
         assertEquals(400L, SHUFFLE_TAP_WINDOW_MS)
