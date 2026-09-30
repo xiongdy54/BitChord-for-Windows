@@ -464,7 +464,7 @@ git commit -m "feat(desktop): the queue coordinator, with a seven-member seam wh
         repeat(replaced) { items.removeAt(from) }
         items.addAll(from, songs)
         // Same shifting rule as removeAt, and the same guard as the real host's
-        // replaceRange in Task 5: only an edit at or behind the needle moves it.
+        // replaceRange in QueueTimeline: only an edit behind the needle moves it.
         // shuffle's reorder is always ahead and always equal-size, so this is a
         // no-op there — but the fake must not be the only place that knows what
         // a real host does.
@@ -876,7 +876,8 @@ class QueueTimelineTest {
         val moves = mutableListOf<String?>()
         t.onChanged = { moves += t.songAt(t.currentIndex)?.videoId }
         t.onFinished()
-        assertEquals(listOf("b"), moves)
+        // assertEquals cannot infer one T across List<String> and MutableList<String?>.
+        assertEquals(listOf<String?>("b"), moves)
     }
 
     @Test
@@ -915,7 +916,7 @@ class QueueTimelineTest {
     fun `history beyond the window rotates rather than vanishing under repeat-all`() {
         val t = QueueTimeline()
         t.repeatMode = RepeatMode.ALL
-        t.start((1..27).map { song("t$it") }.asQueueEntry(QueueTier.CONTEXT), startIndex = 0)
+        t.start((1..27).map { song("t$it").asQueueEntry(QueueTier.CONTEXT) }, startIndex = 0)
         repeat(26) { t.onFinished() }
         assertEquals(27, t.itemCount)
         assertEquals(25, t.currentIndex)
@@ -926,7 +927,7 @@ class QueueTimelineTest {
     @Test
     fun `history beyond the window is dropped when repeat is off`() {
         val t = QueueTimeline()
-        t.start((1..27).map { song("t$it") }.asQueueEntry(QueueTier.CONTEXT), startIndex = 0)
+        t.start((1..27).map { song("t$it").asQueueEntry(QueueTier.CONTEXT) }, startIndex = 0)
         repeat(26) { t.onFinished() }
         assertEquals(26, t.itemCount)
         assertEquals(25, t.currentIndex)
@@ -1026,7 +1027,12 @@ class QueueTimeline : QueueHost {
     var onChanged: () -> Unit = {}
 
     override fun songAt(index: Int): Song? = items.getOrNull(index)
-    override fun snapshot(): List<Song> = items.toList()
+    /**
+     * A member here rather than of [QueueHost]: this object *is* the list, so the copy is one call,
+     * while every caller that reaches the queue through the seam has to build it from [songAt] —
+     * which is what `QueueShuffle`'s private extension of the same name does.
+     */
+    fun snapshot(): List<Song> = items.toList()
 
     override fun removeAt(index: Int) {
         items.removeAt(index)
@@ -1038,7 +1044,7 @@ class QueueTimeline : QueueHost {
         val replaced = to - from
         repeat(replaced) { items.removeAt(from) }
         items.addAll(from, songs)
-        // Only an edit at or behind the needle moves it. ExoPlayer leaves
+        // Only an edit behind the needle moves it. ExoPlayer leaves
         // currentMediaItemIndex alone when items ahead of it change size, and
         // shuffle's reorder is always ahead and always equal-size — so guarding
         // this is what keeps a future unequal-size edit from teleporting the
@@ -1130,7 +1136,14 @@ class QueueTimeline : QueueHost {
     fun moveRow(from: Int, to: Int) {
         if (from !in items.indices || to !in items.indices) return
         items.add(to, items.removeAt(from))
-        if (from == currentIndex) currentIndex = to else if (from < currentIndex) currentIndex -= 1
+        // `to` is where the moved row ends up. The needle moves in two steps — the removal shifts
+        // it down, the insertion shifts it up — and the two cancel out when both are behind it.
+        currentIndex = if (from == currentIndex) {
+            to
+        } else {
+            val afterRemoval = if (from < currentIndex) currentIndex - 1 else currentIndex
+            if (to <= afterRemoval) afterRemoval + 1 else afterRemoval
+        }
         onChanged()
     }
 
@@ -1181,7 +1194,7 @@ class QueueTimeline : QueueHost {
 - [ ] **Step 3: 跑测试**
 
 Run: `./gradlew -p desktop test --console=plain --tests "*QueueTimelineTest*"`
-Expected: PASS（15 条）。两条 `history beyond the window …` 若失败，先量 `currentIndex` 修正与 `queueHistoryTrimCount` 的关系（`afterMoved()` 里 `trimHistory()` 与 `consumePlayedUserQueue` 谁先动下标），**别改期望值**。
+Expected: PASS（本计划 15 条；实落 18 条 —— 另加 `next()`、`moveRow()`、跳转回调三条，覆盖本任务声明却未被这 15 条调用到的成员）。两条 `history beyond the window …` 若失败，先量 `currentIndex` 修正与 `queueHistoryTrimCount` 的关系（`afterMoved()` 里 `trimHistory()` 与 `consumePlayedUserQueue` 谁先动下标），**别改期望值**。
 
 - [ ] **Step 4: 全量测试 + 提交**
 
