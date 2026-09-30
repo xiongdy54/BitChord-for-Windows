@@ -1024,6 +1024,12 @@ class QueueTimeline : QueueHost {
     var repeatMode: Int = RepeatMode.OFF
     var onSeek: (Song, Long) -> Unit = { _, _ -> }
     var onPlay: (Song) -> Unit = {}
+    // Fires per list edit, not per act: consumePlayedUserQueue and clearUserQueue loop over
+    // host.removeAt, and each removeAt publishes. So one advance over a queue with k consumed USER
+    // rows publishes k+1 times, and clearing the queue publishes once per row cleared. The consumer's
+    // publish() is idempotent (a whole PlayerState written into a MutableStateFlow), so the extra
+    // calls are absorbed; do not batch them to match the act. The invariant is the list and the
+    // needle, not the publication count.
     var onChanged: () -> Unit = {}
 
     override fun songAt(index: Int): Song? = items.getOrNull(index)
@@ -1131,7 +1137,14 @@ class QueueTimeline : QueueHost {
     fun jumpToRow(targetIndex: Int) =
         QueueCoordinator.jumpToQueueItem(this, targetIndex, cachedTimeline = snapshot())
 
-    fun removeRow(index: Int) { if (index != currentIndex) removeAt(index) }
+    // Two refusals, and both are this function's business: the row under the needle, and an index the
+    // list no longer has. removeAt forwards straight to items.removeAt, which throws, while
+    // trimHistory shrinks the head of the list from inside the pump — so a row the queue panel drew
+    // at index 26 can be past the end by the time its delete button is clicked. moveRow, jumpTo and
+    // jumpToQueueItem each already guard their index; this was the one that did not.
+    fun removeRow(index: Int) {
+        if (index in items.indices && index != currentIndex) removeAt(index)
+    }
 
     fun moveRow(from: Int, to: Int) {
         if (from !in items.indices || to !in items.indices) return
@@ -1161,13 +1174,31 @@ class QueueTimeline : QueueHost {
         return null
     }
 
-    fun next(): String? =
-        if (currentIndex + 1 < items.size) { currentIndex += 1; afterMoved() } else null
+    // The next button. Under repeat-all the tail wraps to the head, exactly as onFinished() does:
+    // the original gets this for free from ExoPlayer — the session's transport hands the press to
+    // the player itself (PlaybackService.kt:6573-6591 -> seekToNextMediaItem()) and the enabled state
+    // comes from player.hasNextMediaItem() (PlayerConnection.kt:305-306), an answer from the player
+    // rather than an index comparison, which is what PlayerState's carried KDoc means by "the
+    // wrap-around of repeat-all is already accounted for". Here the answer has to be computed, and an
+    // enabled glyph that returns nothing is the dead button spec §2 rules out. Repeat-one gets no
+    // wrap — there the loop belongs to the current row, which onFinished answers in place — and with
+    // repeat off the tail is a stop.
+    fun next(): String? {
+        if (items.isEmpty()) return null
+        if (currentIndex + 1 < items.size) { currentIndex += 1; return afterMoved() }
+        if (repeatMode == RepeatMode.ALL) { currentIndex = 0; return afterMoved() }
+        return null
+    }
 
+    // The back button: the restart rule keeps precedence, then step back, then — under repeat-all
+    // only — wrap from the head to the tail. Both the step and the wrap leave through afterMoved(),
+    // so the history trim and the USER pruning are applied whichever way the needle moved; a
+    // single-row queue wraps onto itself rather than throwing or spinning.
     fun previous(positionMs: Long): String? {
         if (items.isEmpty()) return null
         if (positionMs > BACK_RESTARTS_AFTER_MS) return items[currentIndex].videoId
         if (currentIndex > 0) { currentIndex -= 1; return afterMoved() }
+        if (repeatMode == RepeatMode.ALL) { currentIndex = items.size - 1; return afterMoved() }
         return null
     }
 
@@ -1194,7 +1225,7 @@ class QueueTimeline : QueueHost {
 - [ ] **Step 3: 跑测试**
 
 Run: `./gradlew -p desktop test --console=plain --tests "*QueueTimelineTest*"`
-Expected: PASS（本计划 15 条；实落 18 条 —— 另加 `next()`、`moveRow()`、跳转回调三条，覆盖本任务声明却未被这 15 条调用到的成员）。两条 `history beyond the window …` 若失败，先量 `currentIndex` 修正与 `queueHistoryTrimCount` 的关系（`afterMoved()` 里 `trimHistory()` 与 `consumePlayedUserQueue` 谁先动下标），**别改期望值**。
+Expected: PASS（本计划 15 条；实落 25 条 —— 另加 `next()`、`moveRow()`、跳转回调三条覆盖本任务声明却未被这 15 条调用到的成员，再加评审的七条：`removeRow` 越界拒绝、一次推进按编辑发布（USER 行被逐行消耗的那条路径）、REPEAT_ALL 下 `next()`/`previous()` 的回绕各一端、REPEAT_ONE 仍是普通步进、单行队列不抛不转、回绕同样走 `afterMoved()` 的剪枝）。两条 `history beyond the window …` 若失败，先量 `currentIndex` 修正与 `queueHistoryTrimCount` 的关系（`afterMoved()` 里 `trimHistory()` 与 `consumePlayedUserQueue` 谁先动下标），**别改期望值**。
 
 - [ ] **Step 4: 全量测试 + 提交**
 
@@ -1478,7 +1509,7 @@ class PlayerController(
 2. **"切下一首"与"解析下一首"分开**：`resolveAndPlay(videoId)` 先 `engine.stop()` + `position.positionMs = 0` + `isLoading = true`，再 `scope.launch { withContext(resolveDispatcher) { runCatching { resolveUrl(videoId) } } }`，成功 → `engine.play(url, StreamResolver.mediaHeadersFor(url))`，失败 → `_status.value = "resolve failed: …"`（文案沿用切片 1 的 `PlayerController.kt:76`）。原 `play(song)` 的主体搬进这里，改成接收 videoId。
 3. **入队入口**：`playFrom(songs, index, source, sourceTitle, sourceId)` → `queue.playFrom(songs, index, QueueSource(sourceTitle, source, sourceId))` → `resolveAndPlay(returnedId)`；`playOneOff` 同理走 `queue.startOneOff`；`play(song)` 保留为 `playOneOff(song, PLAYBACK-from-current)` 的薄封装，别删（`HomePage.kt:61-68` / `SearchPage.kt:60` 现在就在调它）。
    `playCollection(browseId, label)` 改成：`browseSongs(browseId)` 取回曲目后 **`playFrom(songs, 0, PlaybackSourceType.BROWSE, label, browseId)`** —— 现在它只播第一首并丢弃其余（`PlayerController.kt:89-104`），那就是 CONTEXT 档的缺口，本任务补上（对应 spec §3.2"入队入口"）。
-4. **上一首**：`previous()` → `queue.previous(engine.timeMs)`。**用 `engine.timeMs` 而不是 `position.positionMs`**：后者是插值过用于显示的，判定重播阈值要用 VLC 的实际位置。拿到 id 后 `resolveAndPlay(id)`；拿到 null（队首且未过阈值）就别动。
+4. **上一首**：`previous()` → `queue.previous(engine.timeMs)`。**用 `engine.timeMs` 而不是 `position.positionMs`**：后者是插值过用于显示的，判定重播阈值要用 VLC 的实际位置。拿到 id 后 `resolveAndPlay(id)`；拿到 null（队首、未过阈值、且不是 REPEAT_ALL —— Task 5 之后队首在 REPEAT_ALL 下会回绕到队尾）就别动。
 5. **repeat 循环**：`cycleRepeat()` 按原版 `MainActivity.kt:2083-2087` 的 OFF→ALL→OFF（安卓版也不循环 REPEAT_ONE，保持一致），写 `queue.repeatMode` 并 `AppSettings.setRepeatMode(...)`，再 `publish()`。
 6. **hasNext / hasPrevious 从队列取**，不从 `queueIndex` 猜：`hasNext = queue.repeatMode != RepeatMode.OFF || index + 1 < size`、`hasPrevious = queue.repeatMode != RepeatMode.OFF || index > 0`。这与原版 `PlayerConnection.kt:87-91` 的 KDoc（"taken from the player so the wrap-around of repeat-all is already accounted for"）同意。
 7. **预取**（决策 7）：`resolveAndPlay` **成功起播之后**，取 `queue.songAt(currentIndex + 1)`，有就 `scope.launch { runCatching { onPrefetch?.invoke(id) ?: resolveUrl(id) } }`。`StreamResolver` 已按 videoId 缓存 20 分钟（`:1082-1084`）、已合并并发解析（`coalescedResolve`，`:386-416`），**所以预取不需要新缓存，只需要有人去调 `resolve`**。失败必须吞掉（`runCatching`），一次预取失败不该污染任何状态。`onPrefetch` 只是给测试留的断言点，生产路径默认 null。
