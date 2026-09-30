@@ -129,20 +129,6 @@ class PlayerController(
     /** Shuffle lives in [QueueShuffle], process-wide, so the UI reads that flow directly. */
     val shuffleEnabled: StateFlow<Boolean> = QueueShuffle.enabled
 
-    // Three slice-1 flows the chrome of *this* build still reads — Shell.kt:78-81,
-    // HomePage.kt:43, SearchPage.kt:51 — kept because the screens that read `state` instead
-    // are Tasks 10 and 11. [publish] is their only writer besides the two setters below, so
-    // they cannot drift from `state`; the moment that chrome lands, all three come out.
-    private val _current = MutableStateFlow<Song?>(null)
-    val current: StateFlow<Song?> = _current.asStateFlow()
-
-    private val _playing = MutableStateFlow(false)
-    val playing: StateFlow<Boolean> = _playing.asStateFlow()
-
-    /** True from the tap until the first byte is on its way — what the mini player's spinner reads. */
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
-
     /** Everything that touches the queue, on one dispatcher and in the order it was asked for. */
     private fun onQueue(block: suspend CoroutineScope.() -> Unit) =
         scope.launch(queueDispatcher, block = block)
@@ -194,9 +180,12 @@ class PlayerController(
         _state.update {
             it.copy(
                 song = song,
-                isPlaying = _playing.value,
+                // `isPlaying` and `isLoading` are deliberately absent, so a list edit leaves them
+                // where the audio half put them: they belong to [setPlaying] and [setLoading],
+                // which now that the slice-1 flows are gone write the snapshot itself. Carrying
+                // them here meant reading them back off a second store, and that second store is
+                // exactly what this publish had to keep in step.
                 position = position,
-                isLoading = _loading.value,
                 repeatMode = queue.repeatMode,
                 queue = queue.snapshot(),
                 queueIndex = index,
@@ -209,26 +198,33 @@ class PlayerController(
                 hasNext = wraps || index + 1 < queue.itemCount,
             )
         }
-        _current.value = song
     }
 
     /**
-     * The engine's playing flag.
+     * The engine's playing flag, straight into the one snapshot the UI reads.
      *
-     * `isPlaying` is a snapshot field and a slice-1 flow, so both get it from here; one writer
-     * is what keeps the transitional pair in step.
+     * Compared before writing: a `MutableStateFlow` already drops a structurally equal repeat,
+     * but this also skips the copy that would build a new snapshot for it.
      */
     private fun setPlaying(value: Boolean) {
-        if (_playing.value == value) return
-        _playing.value = value
-        publish()
+        if (_state.value.isPlaying == value) return
+        // `update`, like every other snapshot write — see [publish].
+        _state.update { it.copy(isPlaying = value) }
+        // The one line that answers "did something just stop it". Every transition the
+        // engine reports lands here and nowhere else, so this is what the screenshots are
+        // read against: closing the player has to leave it silent, and an end of track has
+        // to make exactly one pair of them. Only on a real change, so the twice-a-second
+        // position tick never writes it.
+        TrackLog.d(TAG, "playing=$value ${_state.value.song?.videoId ?: "-"}")
     }
 
-    /** The buffering flag, same pair. */
+    /**
+     * The buffering flag — true from the tap until the first byte is on its way, which is what
+     * the mini player's spinner and the player's scrubber read.
+     */
     private fun setLoading(value: Boolean) {
-        if (_loading.value == value) return
-        _loading.value = value
-        publish()
+        if (_state.value.isLoading == value) return
+        _state.update { it.copy(isLoading = value) }
     }
 
     // ---- starting and switching queues ---------------------------------------------
@@ -275,7 +271,10 @@ class PlayerController(
      */
     fun play(song: Song) {
         onQueue {
-            if (_current.value?.videoId == song.videoId && (_playing.value || _loading.value)) return@onQueue
+            val current = _state.value
+            if (current.song?.videoId == song.videoId && (current.isPlaying || current.isLoading)) {
+                return@onQueue
+            }
             startRow(queue.startOneOff(song, QueueSource(song.title, PlaybackSourceType.QUEUE, null)))
         }
     }
@@ -318,8 +317,9 @@ class PlayerController(
     // ---- transport ------------------------------------------------------------------
 
     fun togglePlayPause() {
-        if (_current.value == null) return
-        if (_playing.value) engine.pause() else engine.resume()
+        val current = _state.value
+        if (current.song == null) return
+        if (current.isPlaying) engine.pause() else engine.resume()
     }
 
     /** The next button. Whether it wraps is the pump's answer, not this one ([QueueTimeline.next]). */

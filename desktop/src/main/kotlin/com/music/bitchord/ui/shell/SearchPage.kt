@@ -48,7 +48,10 @@ fun SearchPage(
     val typeaheadResults by vm.typeaheadResults.collectAsState()
     val history by vm.history.collectAsState()
     val scrollResetTrigger by vm.scrollResetTrigger.collectAsState()
-    val song by player.current.collectAsState()
+    // Read for two things only: the content padding that clears the mini player, and
+    // the autoplay debug hook's "something is already playing, stop". Slice 1 had a
+    // `current` flow of its own for these; it was a copy of this snapshot's `song`.
+    val snapshot by player.state.collectAsState()
     val listState = rememberLazyListState()
     var focusRequested by remember { mutableStateOf(false) }
 
@@ -94,7 +97,7 @@ fun SearchPage(
             hookFired = true
             vm.onSubmitText(initialQuery)
         }
-        if (!autoPlayFirst || results == null || song != null) return@LaunchedEffect
+        if (!autoPlayFirst || results == null || snapshot.song != null) return@LaunchedEffect
         val firstSong = (results as? com.music.bitchord.data.model.UiState.Success)?.data
             ?.firstNotNullOfOrNull { row ->
                 when (row) {
@@ -148,7 +151,7 @@ fun SearchPage(
         onHistoryClear = vm::clearHistory,
         contentPadding = PaddingValues(
             top = topBarContentPadding(),
-            bottom = if (song != null) 210.dp else 140.dp,
+            bottom = if (snapshot.song != null) 210.dp else 140.dp,
         ),
     )
 }

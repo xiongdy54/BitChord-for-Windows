@@ -105,6 +105,18 @@ val syncAppStrings by tasks.registering(Copy::class) {
         include("drawable/ic_player_pause.xml")
         include("drawable/ic_player_next.xml")
         include("drawable/ic_player_previous.xml")
+        // The four transport glyphs say `android:fillColor="@android:color/white"`, a
+        // reference into the *framework's* colour table that Android resolves at draw
+        // time. Compose Multiplatform's vector parser has no such table: it throws
+        // `IllegalArgumentException: Invalid color value @android:color/white`, and the
+        // transport row of the full-screen player could not be composed at all — the
+        // first thing Task 11's screenshots showed. `@android:color/white` *is* opaque
+        // white, so the literal takes its place, and it goes into the desktop copy only:
+        // app/ is the upstream module and is not touched. `Icon(tint = …)` overpaints
+        // the value either way, so nothing about the drawn glyph changes.
+        filesMatching("drawable/ic_player_*.xml") {
+            filter { line -> line.replace("@android:color/white", "#FFFFFFFF") }
+        }
     }
     into(composeResourcesDir)
 }
@@ -145,10 +157,15 @@ compose.desktop {
         listOf(
             "bitchord.probeQuery",
             "bitchord.probeAutoplay",
+            "bitchord.probeOpenPlayer",
             "bitchord.autoExitMs",
             "bitchord.windowWidth",
             "bitchord.windowHeight",
             "bitchord.locale",
+            // DebugLog's own gate. It defaults to on, so nothing breaks without it, but a
+            // verification pass that says `-Pbitchord.debug=true` has to be able to mean it —
+            // and the player's first screenshots are read out of this log.
+            "bitchord.debug",
         ).forEach { key ->
             (project.findProperty(key) as String?)?.let { jvmArgs += "-D$key=$it" }
         }

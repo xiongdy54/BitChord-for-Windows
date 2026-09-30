@@ -21,6 +21,14 @@
 // constants layer in NowPlayingScreen.kt: the four numbers `PlayerGeometryTest`
 // pins by literal are `internal` rather than the app's `private`, because a test
 // in another file cannot read a private top-level. Values unchanged.
+//
+// Task 11 took two more things off, both of them the credits' rather than the
+// layout's: `onOpenAlbum` / `onOpenArtist` and the `Modifier.opensPage(...)` wrap
+// they hung on the title and the artist line. The desktop adapter has nothing to
+// hand a browse page this build does not have, and slice 1's rule is that the
+// entry goes rather than the tap staying lit over an empty callback. The column
+// cap, the compact chain, both gutters, the three fade durations and every size
+// below them are untouched from the app's file.
 package com.music.bitchord.ui.player
 
 import com.music.bitchord.desktop.resources.*
@@ -372,8 +380,6 @@ internal fun LandscapeCredits(
     likeStatus: LikeStatus,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
-    onOpenAlbum: (String) -> Unit,
-    onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -383,6 +389,11 @@ internal fun LandscapeCredits(
             modifier = Modifier.weight(1f),
             label = "landscapeCredits",
         ) {
+            // The title and the artist carried `Modifier.opensPage(...)` upstream, tappable
+            // wherever YouTube handed over a browse id. Both pages are a later slice and no
+            // task in this one owns them, so the entry went along with the `onOpenAlbum` /
+            // `onOpenArtist` parameters rather than staying lit over an empty callback. The
+            // ledger is at the top of NowPlayingScreen.kt.
             Column {
                 var titleOverflowing by remember { mutableStateOf(false) }
                 MarqueeText(
@@ -395,7 +406,6 @@ internal fun LandscapeCredits(
                     } else {
                         null
                     },
-                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
                 )
                 Spacer(Modifier.height(2.dp))
                 MarqueeText(
@@ -405,7 +415,6 @@ internal fun LandscapeCredits(
                     // A title that's also scrolling gets to go first — starting
                     // together reads as clutter, so the artist waits a beat.
                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
                 )
             }
         }

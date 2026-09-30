@@ -413,6 +413,13 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 //    scrubber's `loading` has nothing left to be true for, and `InlineQueue` is
 //    handed `autoplayEnabled = false` — the AUTOPLAY tier renders because nothing
 //    fills it, which is decision 6's stated implementation.
+//  * **The album and the artist page** (a later slice, and no task in this one) —
+//    `onOpenAlbum` / `onOpenArtist` and the four `Modifier.opensPage(...)` wraps they hung on
+//    the title and the artist line, two here and two in `LandscapePlayer.kt`. Task 11's
+//    adapter had nothing to hand them: this build opens no browse page, and slice 1's rule is
+//    that the entry goes rather than the tap staying live over an empty callback. The helper
+//    survives at `PlayerControls.kt:846` with no caller, in the company of
+//    `VOLUME_ROW_HEIGHT`.
 //
 // Settings this file used to read and does not have on this platform — desktop
 // `AppSettings` carries seven fields, none of them the player's — so each of these
@@ -563,8 +570,6 @@ fun NowPlayingScreen(
     onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
     onOpenMenu: () -> Unit,
-    onOpenAlbum: (String) -> Unit,
-    onOpenArtist: (String) -> Unit,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -1137,8 +1142,6 @@ fun NowPlayingScreen(
                                 likeStatus = likeStatus,
                                 onToggleLike = onToggleLike,
                                 onOpenMenu = onOpenMenu,
-                                onOpenAlbum = onOpenAlbum,
-                                onOpenArtist = onOpenArtist,
                             )
                         },
                         scrubber = {
@@ -1881,6 +1884,14 @@ fun NowPlayingScreen(
                             animationSpec = tween(durationMillis = 300),
                             label = "playerCredits",
                         ) {
+                            // Upstream wrapped both lines in `Modifier.opensPage(...)`, which
+                            // made a title tappable for its album page and an artist for theirs
+                            // wherever YouTube handed over the browse id. Neither page exists in
+                            // this build and no task in this slice owns one, so the entries went
+                            // with the `onOpenAlbum` / `onOpenArtist` parameters rather than
+                            // staying on screen as two lines that light up under a pointer and
+                            // answer nothing. The helper is still there (`PlayerControls.kt:846`)
+                            // for the slice that brings the pages back; it has no caller today.
                             Column {
                                 MarqueeText(
                                     text = song.title,
@@ -1895,9 +1906,6 @@ fun NowPlayingScreen(
                                         null
                                     },
                                     onOverflowChange = { titleOverflowing = it },
-                                    // Only the tracks YouTube hands us a browse id for
-                                    // lead anywhere; the rest stay plain text.
-                                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
                                 )
                                 MarqueeText(
                                     text = song.artist,
@@ -1911,7 +1919,6 @@ fun NowPlayingScreen(
                                     // starting together reads as clutter, so the artist
                                     // waits a beat before it joins in.
                                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
                                 )
                             }
                         }

@@ -40,7 +40,10 @@ fun HomePage(vm: HomeViewModel, player: PlayerController, autoPlayFirst: Boolean
     val refreshing by vm.refreshing.collectAsState()
     val loadingMore by vm.loadingMore.collectAsState()
     val recentlyPlayedLoading by vm.recentlyPlayedLoading.collectAsState()
-    val song by player.current.collectAsState()
+    // Playback is read here for one thing: whether to clear the mini player's height
+    // at the foot of the list. Slice 1 had a `current` flow of its own for that; it
+    // was a copy of this snapshot's `song` field, and the copy is gone.
+    val snapshot by player.state.collectAsState()
     val listState = rememberLazyListState()
     val pullState = rememberPullToRefreshState()
 
@@ -98,7 +101,7 @@ fun HomePage(vm: HomeViewModel, player: PlayerController, autoPlayFirst: Boolean
         pullState = pullState,
         contentPadding = PaddingValues(
             top = topBarContentPadding(),
-            bottom = if (song != null) 210.dp else 140.dp,
+            bottom = if (snapshot.song != null) 210.dp else 140.dp,
         ),
         onLoadMore = vm::loadMore,
         loadingMore = loadingMore,

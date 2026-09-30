@@ -273,26 +273,21 @@ class PlayerControllerTest {
     }
 
     @Test
-    fun `the slice-1 flows the chrome reads still track the snapshot`() {
+    fun `the one snapshot the chrome reads carries song and flags across an advance`() {
         val (player, engine) = controller()
         player.playFrom(listOf(song("a"), song("b")), index = 0,
             source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
-        // Shell.kt:78-81 and the two pages' `song != null` guards read these three rather than
-        // `state` until Task 11 rewires them; one writer keeps them from drifting. Compared
-        // against the snapshot rather than against constants, because "the two cannot disagree" is
-        // the claim under test. The concrete values are still pinned after them, so a pair that
-        // drifts *together* fails here too instead of agreeing its way to green.
-        assertEquals(player.state.value.song, player.current.value)
-        assertEquals(player.state.value.isPlaying, player.playing.value)
-        assertEquals(player.state.value.isLoading, player.loading.value)
+        // Task 11 moved Shell and the two pages onto `state`, so the slice-1 pair of stores this
+        // case used to compare is gone: there is one snapshot, and what is worth pinning is that
+        // an advance re-seats the song *and* keeps the audio flags pointing at the row that now
+        // sounds, rather than the pair agreeing with each other about the row that used to.
+        assertEquals("a", player.state.value.song?.videoId)
         assertTrue(player.state.value.isPlaying)
         assertFalse(player.state.value.isLoading)
         engine.finish()
-        assertEquals(player.state.value.song, player.current.value)
-        assertEquals(player.state.value.isPlaying, player.playing.value)
-        assertEquals(player.state.value.isLoading, player.loading.value)
-        assertEquals("b", player.current.value?.videoId)
-        assertTrue(player.playing.value)
+        assertEquals("b", player.state.value.song?.videoId)
+        assertTrue(player.state.value.isPlaying)
+        assertFalse(player.state.value.isLoading)
     }
 
     @Test
