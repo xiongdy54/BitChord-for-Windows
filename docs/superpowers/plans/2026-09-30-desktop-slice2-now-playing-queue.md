@@ -1557,8 +1557,8 @@ git commit -m "feat(desktop): a queue-aware player, and the read-ahead that make
 - Test: `desktop/src/test/kotlin/com/music/bitchord/ui/player/PlayerGeometryTest.kt`（第一组常量）
 
 **Interfaces:**
-- Consumes: 桌面已有的 `Res.string.*` 管线（`syncAppStrings`，切片 1 已跑通）、`ui/haptics/Haptics`（`Haptic` 全词汇表已就位）、`AppSettings.effectiveAudioQuality`（`:39`）、`data/NerdStats.kt`、`Res.drawable.*`。
-- Produces（Task 10/11 的调用面，名字与原版一致）：`internal fun TransportRow(isPlaying, isLoading, previousEnabled, nextEnabled, onPrevious, onPlayPause, onNext, compact: Boolean = false)`、`internal fun PlayerScrubber(shown: () -> Float, durationMs: Long, loading: Boolean, transitionWindow: ClosedFloatingPointRange<Float>?, onScrub: (Float) -> Unit, onScrubFinished: () -> Unit, centerLabel: @Composable BoxScope.() -> Unit = {})`、`internal fun VolumeRow(value: () -> Float, onValueChange: (Float) -> Unit, onValueChangeFinished: () -> Unit)`、`internal fun PlaybackQualityLabel(song, isLoading, modifier)`、`internal fun MarqueeText(text, style, color, modifier, enabled, startDelayMillis, leading, onOverflowChange)`、`internal fun CircleGlyph(icon, contentDescription, onClick, active, haptic)`、`internal fun ExplicitBadge(color)`、`internal fun Modifier.bleedHorizontally(gutter: Dp): Modifier`、`internal fun Modifier.opensPage(browseId: String?, onOpen: (String) -> Unit): Modifier`、`@Composable internal fun playbackOriginText(song: Song): String`（`playedBy` 参数随一起听删）、`internal fun PlaybackOriginCaption(text, onClick, textAlign, contentPadding, modifier)`、`internal fun PlayerActionRow(queueOpen, shuffleEnabled, repeatMode, onToggleQueue, onToggleShuffle, onCycleRepeat, onOpenMenu)`、`internal val VOLUME_ROW_HEIGHT = 32.dp`。
+- Consumes: 桌面已有的 `Res.string.*` 管线（`syncAppStrings`，切片 1 已跑通）、`ui/haptics/Haptics`（`Haptic` 全词汇表已就位）、`AppSettings.effectiveAudioQuality`（`:39`）、`data/NerdStats.kt`（**只有 `pickedKbps`/`pickedSource`**，见下表 NerdStats 行）、`Res.drawable.*`。
+- Produces（Task 10/11 的调用面，名字与原版一致）：`internal fun TransportRow(isPlaying, isLoading, previousEnabled, nextEnabled, onPrevious, onPlayPause, onNext, compact: Boolean = false)`、`internal fun PlayerScrubber(shown: () -> Float, durationMs: Long, loading: Boolean, transitionWindow: ClosedFloatingPointRange<Float>?, onScrub: (Float) -> Unit, onScrubFinished: () -> Unit, centerLabel: @Composable BoxScope.() -> Unit = {})`、`internal fun VolumeRow(value: () -> Float, onValueChange: (Float) -> Unit, onValueChangeFinished: () -> Unit)`、`internal fun PlaybackQualityLabel(song, isLoading, modifier)`、`internal fun MarqueeText(text, style, color, modifier, enabled, startDelayMillis, leading, onOverflowChange)`、`internal fun CircleGlyph(icon, contentDescription, onClick, active, haptic)`、`internal fun ExplicitBadge(color)`、`internal fun Modifier.bleedHorizontally(gutter: Dp): Modifier`、`internal fun Modifier.opensPage(browseId: String?, onOpen: (String) -> Unit): Modifier`、`@Composable internal fun playbackOriginText(song: Song): String`（`playedBy` 参数随一起听删）、`internal fun PlaybackOriginCaption(text, onClick, textAlign, contentPadding, modifier)`、`internal fun PlayerActionRow(queueOpen: Boolean, shuffleEnabled: Boolean, repeatMode: Int, onToggleQueue: () -> Unit, onToggleShuffle: () -> Unit, onCycleRepeat: () -> Unit)`（Step 2b：歌词/AUTOPLAY/输出/一起听六个参数随各自的族删，`onOpenMenu` 不属于这一行——菜单走 `CircleGlyph`，见 `NowPlayingScreen`），`internal val VOLUME_ROW_HEIGHT = 32.dp`。
 
 - [ ] **Step 1: 把四个图标接进资源管线**
 
@@ -1591,13 +1591,28 @@ cp app/src/main/java/com/music/bitchord/ui/player/ThinSlider.kt desktop/src/main
 | `androidx.media3.common.Player`（`:100`，来源是 `PlayerActionRow` 里 `repeatMode: Int` 与 `:549-566` 的常量比较） | 删 import；`Player.REPEAT_MODE_ALL` / `_OFF` / `_ONE` → `RepeatMode.ALL` / `OFF` / `ONE`（`com.music.bitchord.playback.RepeatMode`）。比较逻辑一字不改 |
 | `androidx.annotation.DrawableRes` + `@DrawableRes icon: Int`（`:11, :658` `TransportGlyph`） | 参数改 `icon: DrawableResource`（`org.jetbrains.compose.resources.DrawableResource`）；四处 `R.drawable.ic_player_*`（`:391, 412, 421, 688`）→ `Res.drawable.ic_player_*`；`painterResource` 的 import 换 `org.jetbrains.compose.resources.painterResource` |
 | `android.os.SystemClock`（`:10`，调用点 `:870, :1094` 用的是 `uptimeMillis()`） | import 换 `com.music.bitchord.data.SystemClock`，并在桌面 `SystemClock.kt` 加 `fun uptimeMillis(): Long = elapsedRealtime()`——保持调用点零改动，与该文件"保留安卓名字，让搬运文件与上游只差一行 import"的既有意图一致 |
-| `android.media.AudioFormat`（`:9`，`:957-960` 的 `ENCODING_PCM_*` 实际编码判定） | 那是 Android 音频栈的输出格式，桌面没有对应物。删掉这段判定，`OutputCaption` 的编码标签退成"仅报容器/码率"。**措辞不得暗示验证过硬件输出**（CONTRIBUTING.md "Audio Changes and Telemetry"）；`desktop/.../data/NerdStats.kt` 的 `Snapshot` 有什么就写什么 |
-| `LocalContext` / `context.getString`（`:87, 282, 1535-1550` 的 `NerdStats.Snapshot.describe(context)`） | 删 `describe(context: android.content.Context)`，换成不带 Context 的同名扩展；`SleeveNerdStats`（`:279`）调用点跟着改 |
+| `android.media.AudioFormat`（`:9`，`:957-960` 的 `ENCODING_PCM_*` 实际编码判定） | 那是 Android 音频栈的输出格式，桌面没有对应物。**整段删**，不要改成"猜一个桌面等价物" |
+| `NerdStats.Snapshot` / `NerdStats.current` / `NerdStats.racingLossless`（`:249-263`、`:279` `SleeveNerdStats`、`:1035`、`:1313-1408` `LosslessOrStats`、`:1535-1550` `describe(context)`） | **桌面 `data/NerdStats.kt` 只有 `pickedKbps(videoId)` 与 `pickedSource(videoId)` 两个查询——没有 `Snapshot`、没有 `current`、没有 `racingLossless`**（已核对，全 34 行）。`Snapshot`/`current`/`racingLossless` 是安卓侧跨进程与 lossless 竞速的产物，属切片 6。**处置：不新建 `Snapshot` 体系**（那等于自造一层原版数据结构，违反"改动集中在少量替换处"）。`SleeveNerdStats` 与 `LosslessOrStats` 保留外观与调用位置，但只渲染桌面确实知道的三件事：`AppSettings.effectiveAudioQuality` 的档位标签、`NerdStats.pickedKbps(song.videoId)` 解出来的码率、`pickedSource` 的来源名；`racing`/`stillRacing`/`nerdStats` 参数与 `describe(context)` 整条删。**措辞不得暗示验证过硬件输出或实际编码格式**（CONTRIBUTING.md "Audio Changes and Telemetry"）。删不掉的分支宁可少给，别给假数据。 |
+| `LocalContext` / `context.getString`（`:87, 282, 1538-1550`） | 删；改 `stringResource(Res.string.*)` |
 | 一起听族：`ListenTogether.State.badge()`（`:1014-1023`）、`rememberControlsLocked()`（`:1034-1042`）、`rememberPartyBadge()`（`:1051-1059`）、`OutputPartyPill`（`:794-832`）、`PillSegment` 的 party 分支、`PlayerActionRow` 的 `onListenTogether` / `onOpenListenTogetherMembers` / `onOpenOutput` 参数（`:497-499`）、`playbackOriginText(song, playedBy)` 的 `playedBy`（`:397-399`） | **整族删**（决策 6）。`PlayerActionRow` 保留 `queueOpen` / `shuffleEnabled` / `repeatMode` 与三个 callback，其余成员按原版顺序原样留 |
 | `stringResource(R.string.*)`、`stringArrayResource(R.array.*)`、`R.plurals.*` | → `Res.string.*`，并按切片 1 已踩过的坑同时换 `stringResource` 的 import 为 `org.jetbrains.compose.resources.stringResource`，加 `import com.music.bitchord.desktop.resources.*`（通配符，否则每个键都要单独 import） |
 | `AppSettings.audioQualityWifi` / `audioQualityCellular` / `meteredConnection`（`:249-263`） | 桌面 `AppSettings` 没这些字段；`PlaybackQualityLabel` 与 `LosslessOrStats` 只留 `effectiveAudioQuality` 一条路径，把 wifi/cellular 分支与 KDoc 里解释"为什么分档"的那段一起删 |
 
-**尺寸常量一个都不许改**（Task 13 几何量核对的对象）：`VOLUME_ROW_HEIGHT = 32.dp`（`:434`）、`PLAYER_SKIP_ICON_SIZE = 53.dp`（`:699`）、`PLAYER_SKIP_TOUCH_SIZE = 53.dp`（`:700`）、`PLAYER_SKIP_HEIGHT_SCALE = 0.85f`（`:706`）、`BOTTOM_ACTION_SIZE = 44.dp`（`:708`）、`PILL_SEGMENT_WIDTH = 64.dp`（`:716`）、`PILL_ICON_SIZE = 24.dp`（`:737`）、`MARQUEE_DP_PER_SEC = 26f`（`:1132`）、`MARQUEE_GAP = 48.dp`（`:1135`）、`MARQUEE_REST_MS = 5_000L`（`:1138`）、`SHUFFLE_TAP_WINDOW_MS = 400L`（`:125`），以及 `TransportRow` 内联的 `playSize 58/74.dp`（`:380`）、`playTouch 76/92.dp`（`:381`）、spinner `strokeWidth 3.dp` / `size 30/38.dp`（`:406-407`）、`CircleGlyph` 的 34.dp 圆盘 / 19.dp 图标（`:624, 642-645`）。
+- [ ] **Step 2b: `PlayerActionRow` 的收口（本切片必须做的一个形状决定）**
+
+删掉歌词、AUTOPLAY、音频输出、一起听四族之后，原版这一行的三个成员（左 `BottomGlyph` 歌词、中间胶囊、右 `BottomGlyph` 队列）只剩两个，而中间那个 `AnimatedContent(targetState = queueOpen)`（`:523`）存在的唯一理由是**在"队列模式三格胶囊"和"输出/派对两格胶囊"之间换**——后者整族删掉之后，这个切换只剩一个状态。已核对 `:484-604` 的正文，决定如下：
+
+1. **`AnimatedContent` 与 `queueOpen` 分支整段删**，永远直接渲染队列模式胶囊。它上面的注释（"Unclipped… the capsule's own rounded ends are what the eye follows"）随它一起删——那是切换动画的注释，不是胶囊的。
+2. **保留 `PillSegment` 的 `PILL_SEGMENT_WIDTH_TRIPLE = 52.dp`**，不要退回 `PILL_SEGMENT_WIDTH = 64.dp`。该常量的 KDoc（`:720-726`）自己说过 64 的间距"即使只有两个图标也显得空"；52 是作者为"眼睛看到的密度"调过的数，剩下 shuffle+repeat 两格时用它才维持原版的视觉密度。**`PILL_SEGMENT_WIDTH`（64）、`PILL_HEADPHONES_SIZE`（23）、`PILL_PARTY_SIZE`（22）随 `OutputPartyPill` 一起删**，`pillWidth(segments)` 留着（`widestRow` 用得到）。
+3. **`widestRow` 重算**为 `BOTTOM_ACTION_SIZE + pillWidth(2)`（原来是 `BOTTOM_ACTION_SIZE * 2 + pillWidth(3)`），`edgeInset` 那行公式不动。结果：中间胶囊不再居中，两枚控件贴在内缩后的两侧。**这是一处可见的形状偏离，不是缺陷**——它是"歌词/AUTOPLAY/输出/一起听都不出现"的直接代价。留到 Task 13 的截图判读里给使用者看，并在 spec 的偏离记录里写明；**实施时不要为了让它看起来平衡而自造控件**（切片 1 的死按钮规矩）。
+4. `BottomGlyph` 的 `label`/`tapWindowMs` 参数、`SHUFFLE_TAP_WINDOW_MS`、`PILL_*` 常量形状保持原样。
+5. `playbackOriginText(song, playedBy)` 去掉 `playedBy` 参数（`:397-399`），文案里"谁点了这首歌"的分支删。
+
+- [ ] **Step 2c: 其余逐类清 Android 符号**
+
+处理 Step 2 的表以外，还需注意：`rememberControlsLocked()`/`ListenTogether.State.badge()`/`rememberPartyBadge()`/`OutputPartyPill`/`OutputCaption` 整族删（`:938-1059`），`AudioPipelineDialog`/`AudioOutputSheet`/`ListenTogetherMembersSheet` 的调用点一并删；这些都不出现，不是置灰。
+
+**尺寸常量一个都不许改**（Task 13 几何量核对的对象）：`VOLUME_ROW_HEIGHT = 32.dp`（`:434`）、`PLAYER_SKIP_ICON_SIZE = 53.dp`（`:699`）、`PLAYER_SKIP_TOUCH_SIZE = 53.dp`（`:700`）、`PLAYER_SKIP_HEIGHT_SCALE = 0.85f`（`:706`）、`BOTTOM_ACTION_SIZE = 44.dp`（`:708`）、`PILL_SEGMENT_WIDTH_TRIPLE = 52.dp`（`:724`）、`PILL_ICON_SIZE = 24.dp`（`:737`）、`MARQUEE_DP_PER_SEC = 26f`（`:1132`）、`MARQUEE_GAP = 48.dp`（`:1135`）、`MARQUEE_REST_MS = 5_000L`（`:1138`）、`SHUFFLE_TAP_WINDOW_MS = 400L`（`:125`），以及 `TransportRow` 内联的 `playSize 58/74.dp`（`:380`）、`playTouch 76/92.dp`（`:381`）、spinner `strokeWidth 3.dp` / `size 30/38.dp`（`:406-407`）、`CircleGlyph` 的 34.dp 圆盘 / 19.dp 图标（`:624, 642-645`）。`PILL_SEGMENT_WIDTH`/`PILL_HEADPHONES_SIZE`/`PILL_PARTY_SIZE` 是 Step 2b 明确随输出胶囊删掉的三个例外。
 
 - [ ] **Step 3: 补 `ThinSlider`**
 
@@ -1631,7 +1646,7 @@ class PlayerGeometryTest {
         assertEquals(53.dp, PLAYER_SKIP_ICON_SIZE)
         assertEquals(53.dp, PLAYER_SKIP_TOUCH_SIZE)
         assertEquals(0.85f, PLAYER_SKIP_HEIGHT_SCALE)
-        assertEquals(64.dp, PILL_SEGMENT_WIDTH)
+        assertEquals(52.dp, PILL_SEGMENT_WIDTH_TRIPLE)
         assertEquals(24.dp, PILL_ICON_SIZE)
     }
 
@@ -1653,7 +1668,7 @@ class PlayerGeometryTest {
 ```
 
 Run: `./gradlew -p desktop test --console=plain --tests "*PlayerGeometryTest*"`
-Expected: PASS（3 条）。若 `PILL_SEGMENT_WIDTH` 等因 Step 2 删 pill 分支而被顺手删掉，**把常量恢复**（`pillWidth(segments)` 还在用），不要为了让测试过去而删断言。
+Expected: PASS（3 条）。若某条常量因 Step 2/2b 删族而被顺手删掉，先回到那张表确认它是**明确要删的三个**（`PILL_SEGMENT_WIDTH`/`PILL_HEADPHONES_SIZE`/`PILL_PARTY_SIZE`）之一；不在那三个里的就**把常量恢复**（`pillWidth(segments)` 还在用 `PILL_SEGMENT_WIDTH_TRIPLE`），不要为了让测试过去而删断言。
 
 - [ ] **Step 5: 全量测试 + 提交**
 
