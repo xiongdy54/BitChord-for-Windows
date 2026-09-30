@@ -492,8 +492,8 @@ git commit -m "feat(desktop): the queue coordinator, with a seven-member seam wh
             listOf(song("now"), song("skip", QueueTier.USER_QUEUE), song("target")),
         )
         QueueCoordinator.jumpToQueueItem(host, targetIndex = 2, cachedTimeline = host.items.toList())
-        // history [now] + newUpcoming [target, skip] — the skipped USER_QUEUE row
-        // survives (buildJumpQueue:257), and the playhead lands on history.size.
+        // history = (0..currentIndex) = [now]; newUpcoming = [target, skip] (the USER_QUEUE
+        // row survives, buildJumpQueue:257-276); newTargetIndex = history.size = 1.
         assertEquals(listOf("now", "target", "skip"), host.items.map { it.videoId })
         assertEquals(1, host.currentIndex)
         assertEquals(listOf("target"), host.played)
@@ -629,27 +629,48 @@ import kotlin.test.assertFalse
 
 class AppSettingsTest {
 
-    private fun store(name: String) = FileStore(AppFiles.file(name))
+    /**
+     * A throwaway file, reopened as a second process would. Not `AppFiles.root` —
+     * a unit test must not leave a real `settings.properties` behind in the user's
+     * app directory, and `AppSettings`' own `prefs` must stay untouched so the
+     * Task 5 and Task 6 cases read the defaults they assume.
+     */
+    private fun tempFile(): File =
+        File.createTempFile("bitchord-settings-test", ".properties").apply { deleteOnExit() }
 
     @Test
-    fun `the shuffle switch round-trips through the file it lives in`() {
-        val s = store("settings_roundtrip.properties")
-        s.putString("shuffle_enabled", "true")
-        assertTrue(store("settings_roundtrip.properties").getString("shuffle_enabled", "false") == "true")
-        s.putString("shuffle_enabled", "false")
-        assertFalse(store("settings_roundtrip.properties").getString("shuffle_enabled", "true") == "true")
+    fun `a boolean round-trips through the file it lives in`() {
+        val file = tempFile()
+        FileStore(file).putString("shuffle_enabled", "true")
+        assertTrue(FileStore(file).getString("shuffle_enabled", "false") == "true")
+        FileStore(file).putString("shuffle_enabled", "false")
+        assertFalse(FileStore(file).getString("shuffle_enabled", "true") == "true")
     }
 
     @Test
     fun `repeat mode reads back as the number it was written as`() {
-        store("settings_roundtrip.properties").putString("repeat_mode", RepeatMode.ALL.toString())
+        val file = tempFile()
+        FileStore(file).putString("repeat_mode", RepeatMode.ALL.toString())
         assertEquals(
             RepeatMode.ALL,
-            store("settings_roundtrip.properties").getString("repeat_mode", "0").toIntOrNull(),
+            FileStore(file).getString("repeat_mode", "0").toIntOrNull(),
         )
+    }
+
+    @Test
+    fun `the keys are the ones the Android app persists under`() {
+        val file = tempFile()
+        val store = FileStore(file)
+        store.putString("shuffle_enabled", "true")
+        store.putString("repeat_mode", "1")
+        val reread = FileStore(file)
+        assertEquals("true", reread.getString("shuffle_enabled", "false"))
+        assertEquals("1", reread.getString("repeat_mode", "0"))
     }
 }
 ```
+
+需 import `java.io.File`（`FileStore` / `RepeatMode` 已在上面）。**不要**在这三个用例里读写 `AppSettings` 单例本身——它的 `prefs` 指向用户目录，测试动了就会污染 Task 5/6 的默认假设。三个用例证明的是：键名与安卓版一致、布尔与 Int 的字符串编码能过"`FileStore` 只有 String/Long"这一层转换、以及重开文件读得到。
 
 （`FileStore` 每次构造都重读文件，所以"写完用新实例读"就是持久化的直接证明。）
 
@@ -748,6 +769,7 @@ package com.music.bitchord.playback
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -859,7 +881,7 @@ class QueueTimelineTest {
         // playhead (QueueCoordinator:145-148), so user rows form one block
         // directly behind the current track rather than going to the list tail.
         assertEquals(listOf("a", "n", "q", "b", "c"), t.snapshot().map { it.videoId })
-        assertEquals(QueueTier.USER_QUEUE, t.snapshot()[3].queueTier)
+        assertEquals(QueueTier.USER_QUEUE, t.snapshot()[2].queueTier)
     }
 
     @Test
@@ -917,6 +939,11 @@ class QueueTimelineTest {
         assertEquals("u1", t.songAt(1)?.videoId)
         assertEquals(5, t.itemCount)
         assertEquals(0, t.currentIndex)
+        // toggle() persists through AppSettings.setShuffleEnabled(true), which writes
+        // the real settings.properties. Put the default back so a test run does not
+        // leave the user's next session starting shuffled.
+        AppSettings.setShuffleEnabled(false)
+        QueueShuffle.setEnabled(false)
     }
 
     @Test
@@ -926,17 +953,19 @@ class QueueTimelineTest {
         val startedId = t.playFrom(
             listOf(song("c1"), song("c2"), song("c3")), selectedIndex = 2, source = search,
         )
-        // startingOrder puts songs[startIndex] first and queueStartIndex then says
-        // the playhead is 0, not 2 — the two halves of PlayerConnection:762-771.
+        // startingOrder puts songs[startIndex] first, and queueStartIndex then says
+        // the playhead is 0 rather than 2 — the two halves of PlayerConnection:762-771
+        // that must always move together.
         assertEquals("c3", startedId)
         assertEquals(0, t.currentIndex)
         assertEquals("c3", t.songAt(0)?.videoId)
         assertEquals(3, t.itemCount)
+        QueueShuffle.setEnabled(false)
     }
 }
 ```
 
-`toggleShuffle()` 会经 `QueueShuffle.toggle` 走到 `AppSettings.setShuffleEnabled(true)`，也就是真的写一次 `settings.properties`；`@BeforeTest` 里那句 `QueueShuffle.setEnabled(false)` 只回内存标志、不回写文件（原版 `setEnabled` 就不写盘，`:44-46`）。**这是有意的**：门控读取的是 `QueueShuffle.enabled`，测试的确定性由 `@BeforeTest` 保证，不需要为此把 `AppSettings` 做成可注入。**不要**为了测试给 `QueueTimeline` 加公开写方法，也**不要**给 `AppSettings` 加"重置"API。
+`toggleShuffle()` 会经 `QueueShuffle.toggle` 走到 `AppSettings.setShuffleEnabled(true)`，也就是真的写一次 `settings.properties` —— 上面用例末尾那两行把它还原回默认，`@BeforeTest` 再把内存标志钉成关。**不要**为了测试给 `QueueTimeline` 加公开写方法，也**不要**给 `AppSettings` 加"重置"API。
 
 Run: `./gradlew -p desktop test --console=plain --tests "*QueueTimelineTest*"`
 Expected: 编译失败——`QueueTimeline` 未解析。
@@ -1212,7 +1241,7 @@ class FakeAudioEngine : AudioEngine {
 }
 ```
 
-`PlayerControllerTest.kt`（scope 用 `Dispatchers.Unconfined`，让 `scope.launch { resolveAndPlay(...) }` 在测试里同步跑完，于是**不需要** `kotlinx-coroutines-test`）：
+`PlayerControllerTest.kt`（scope 与 `resolveDispatcher` 都用 `Dispatchers.Unconfined`，让解析协程当场跑完，于是**不需要** `kotlinx-coroutines-test`；光有 Unconfined 的 scope 不够——`withContext(Dispatchers.IO)` 仍会真跳线程，断言就会读到空引擎）：
 
 ```kotlin
 package com.music.bitchord.desktop.playback
@@ -1241,6 +1270,7 @@ class PlayerControllerTest {
         QueueShuffle.setEnabled(false)
         val player = PlayerController(CoroutineScope(Dispatchers.Unconfined), engine)
         player.resolveUrl = { videoId -> "https://test/$videoId" }
+        player.resolveDispatcher = Dispatchers.Unconfined
         return player to engine
     }
 
@@ -1373,6 +1403,13 @@ class PlayerController(
 
     /** Test seam. Production resolves through StreamResolver, whose cache already exists. */
     var resolveUrl: suspend (String) -> String = { StreamResolver.resolve(it) }
+    /**
+     * The blocking resolve hops to IO in production. Tests set this to
+     * `Dispatchers.Unconfined` — `withContext(Dispatchers.IO)` does not run inline
+     * even under an Unconfined scope, so without this seam every assertion right
+     * after `play…()` would race the network coroutine and read an empty engine.
+     */
+    var resolveDispatcher: CoroutineDispatcher = Dispatchers.IO
     /** Handed the videoId of the row after the one that just started. */
     var onPrefetch: (suspend (String) -> Unit)? = null
 
@@ -1391,7 +1428,7 @@ class PlayerController(
 ```
 
 1. **推进只认一个入口**（spec §4 第 2 行）：`advance()` 是 `onFinished` 唯一下游。它先 `val id = queue.onFinished()`——这一步**只改列表**，同步、纯；拿到 id 才 `resolveAndPlay(id)`。拿到 null 就停在末尾（`isPlaying=false`、`isLoading=false`、`_status` 保持 null，因为"走到队尾"是正常结局不是错误，原版 `PlaybackService` 在这里也只是 idle）。
-2. **"切下一首"与"解析下一首"分开**：`resolveAndPlay(videoId)` 先 `engine.stop()` + `position.positionMs = 0` + `isLoading = true`，再 `scope.launch { withContext(Dispatchers.IO) { runCatching { resolveUrl(videoId) } } }`，成功 → `engine.play(url, StreamResolver.mediaHeadersFor(url))`，失败 → `_status.value = "resolve failed: …"`（文案沿用切片 1 的 `PlayerController.kt:76`）。原 `play(song)` 的主体搬进这里，改成接收 videoId。
+2. **"切下一首"与"解析下一首"分开**：`resolveAndPlay(videoId)` 先 `engine.stop()` + `position.positionMs = 0` + `isLoading = true`，再 `scope.launch { withContext(resolveDispatcher) { runCatching { resolveUrl(videoId) } } }`，成功 → `engine.play(url, StreamResolver.mediaHeadersFor(url))`，失败 → `_status.value = "resolve failed: …"`（文案沿用切片 1 的 `PlayerController.kt:76`）。原 `play(song)` 的主体搬进这里，改成接收 videoId。
 3. **入队入口**：`playFrom(songs, index, source, sourceTitle, sourceId)` → `queue.playFrom(songs, index, QueueSource(sourceTitle, source, sourceId))` → `resolveAndPlay(returnedId)`；`playOneOff` 同理走 `queue.startOneOff`；`play(song)` 保留为 `playOneOff(song, PLAYBACK-from-current)` 的薄封装，别删（`HomePage.kt:61-68` / `SearchPage.kt:60` 现在就在调它）。
    `playCollection(browseId, label)` 改成：`browseSongs(browseId)` 取回曲目后 **`playFrom(songs, 0, PlaybackSourceType.BROWSE, label, browseId)`** —— 现在它只播第一首并丢弃其余（`PlayerController.kt:89-104`），那就是 CONTEXT 档的缺口，本任务补上（对应 spec §3.2"入队入口"）。
 4. **上一首**：`previous()` → `queue.previous(engine.timeMs)`。**用 `engine.timeMs` 而不是 `position.positionMs`**：后者是插值过用于显示的，判定重播阈值要用 VLC 的实际位置。拿到 id 后 `resolveAndPlay(id)`；拿到 null（队首且未过阈值）就别动。
@@ -2021,6 +2058,8 @@ class SongActionsTest {
     private fun player(): PlayerController =
         PlayerController(CoroutineScope(Dispatchers.Unconfined), FakeAudioEngine()).apply {
             resolveUrl = { "https://test/$it" }
+            resolveDispatcher = Dispatchers.Unconfined
+            QueueShuffle.setEnabled(false)
         }
 
     @Test
