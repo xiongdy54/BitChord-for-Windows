@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.shell
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -36,10 +37,18 @@ fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier =
     val shuffle by player.shuffleEnabled.collectAsState()
     val volumePercent by player.volume.collectAsState()
     val overrides by LikeState.overrides.collectAsState()
-    // No song, no page. Shell only offers the mini player once something is playing, and the
-    // queue keeps its last row at the tail rather than emptying under the player, so this is a
-    // guard rather than a state the user can reach.
-    val song = snapshot.song ?: return
+    // The player cannot be open without a track: `showPlayer` is only set from the mini
+    // player's body, and that bar is mounted only while the snapshot has a song (Shell.kt),
+    // plus the debug hook, which checks the same thing. So an open overlay whose song has gone
+    // is a state that should not outlive its frame — and returning here would leave it alive:
+    // nothing drawn, `showPlayer` still true, and Main.kt's Escape handler still consuming the
+    // key over the ordinary shell, so the key reads as dead until the next track plays.
+    // Clearing the flag is the honest half of the guard; the overlay unmounts with it.
+    val song = snapshot.song
+    LaunchedEffect(song) {
+        if (song == null) state.showPlayer = false
+    }
+    if (song == null) return
 
     val (windowWidth, windowHeight) = windowDimensions()
 

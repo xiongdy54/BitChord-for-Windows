@@ -1,6 +1,8 @@
 package com.music.bitchord.ui.shell
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.data.model.Song
@@ -126,10 +129,13 @@ fun Shell(
     )
     val title = tabs[state.selectedTab].label
 
-    // Debug hook — see Main.kt. Opens the player the first time there is a track to
-    // open it on, so the full-screen branch can be screenshotted without a hand on
-    // the mouse. Keyed on the song rather than run every recomposition: once it has
-    // opened, an Escape stays closed, which is the thing worth being able to see.
+    // Debug hook — see Main.kt. Opens the player the first time there is a track to open it
+    // on, so the full-screen branch can be screenshotted without a hand on the mouse. It is
+    // keyed on `song?.videoId`, so it re-arms once per track: with the flag on, a track
+    // ending or an auto-advance raises the overlay again even after Escape has closed it.
+    // That is only ever true of the debug flag — a real open comes from the mini player's tap
+    // — and the keying stays as it is, because Task 13's screenshot pass may depend on the
+    // player coming back up on its own after a track ends.
     LaunchedEffect(autoOpenPlayer, song?.videoId) {
         if (autoOpenPlayer && song != null) state.showPlayer = true
     }
@@ -230,11 +236,42 @@ fun Shell(
         // seeing a ghost of the tab bar through the sleeve. The one `hazeSource`
         // above stays the only one — the MiniPlayer and the tab bar under it are
         // covered, not blurred into the player.
+        //
+        // Covered is not the same as unreachable. Compose hit-traversal only offers a
+        // region to the layers that own a pointer node, and `NowPlayingScreen`'s root
+        // boxes (`NowPlayingScreen.kt:1094`, `:1220`) own none of their own: without the
+        // consumer below, a press in any dead area of the full-screen player — the gutters
+        // around the sleeve, the space under the transport — falls straight through to the
+        // chrome painted beneath it, which switches tabs (`FloatingBottomBar`'s
+        // `onTabSelected` above) or taps a row in the home/search list and starts a
+        // different song, all under a player that is still up. The overlay would be modal
+        // to the eye only.
+        //
+        // So the root swallows every press inside its bounds. `awaitFirstDown` +
+        // `consume()` rather than `Modifier.clickable(indication = null)`, because a
+        // clickable root would also publish itself as one giant button in the semantics
+        // tree and take keyboard focus (and with it Enter/Space) on the first click,
+        // none of which is wanted here; consuming the pointer is the whole of the job.
+        // The consumer sits on the *parent*, so the player's own controls still get
+        // their presses first — a child that consumes stops the downward propagation,
+        // and only what no control claims ever reaches this line.
+        //
+        // Swallowing at the overlay, instead of not mounting the chrome beneath it, is
+        // deliberate: the player shares this composition with the content column
+        // because that column is the haze source its backdrop layers read, and the
+        // bars are painted for the frame the overlay closes on. Unmounting them to
+        // make the player modal would take the frost with it.
         if (state.showPlayer) {
             PlayerPage(
                 player = player,
                 state = state,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false).consume()
+                        }
+                    },
             )
         }
     }

@@ -398,8 +398,13 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 //    existing. What survives of `heroMode` is the still-art half of it — see its
 //    declaration.
 //  * **Android-only** (spec §3.3) — `PlayerBackHandler` and `OverlayBack` with all
-//    seven call sites (the queue is closed by Task 11's Esc and by the row's own
-//    glyph), `StatusBarIcons`, `LocalView`/`keepScreenOn`, the dead `LocalContext`,
+//    seven call sites. Nothing here replaces their queue dismissal: Escape is handled by
+//    the *window* (Main.kt), which clears only `ShellState.showPlayer`, and `queueOpen` is
+//    this screen's own `remember`ed state, so the pane does not have a keyboard close of its
+//    own — it is destroyed together with the overlay and a reopened player comes back on the
+//    main pane. Two layers close on one keypress, and the row's own glyph is the only
+//    way to leave the queue while the player stays up. Also gone: `StatusBarIcons`,
+//    `LocalView`/`keepScreenOn`, the dead `LocalContext`,
 //    and the `android.graphics.Bitmap` the frame capture carried. `Build.VERSION` is
 //    gone with the deck it gated, which leaves no SDK check anywhere in this file.
 //    The two inset calls at app `:1196` and `:1977-1978` were kept on purpose: CMP
