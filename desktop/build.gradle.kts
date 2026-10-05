@@ -117,9 +117,39 @@ val syncAppStrings by tasks.registering(Copy::class) {
         filesMatching("drawable/ic_player_*.xml") {
             filter { line -> line.replace("@android:color/white", "#FFFFFFFF") }
         }
+        // The desktop's own strings ride along: the file in src/main/desktopStrings
+        // is a full <resources> document (so an IDE validates it), and its entries —
+        // the wrapper tags and blanks stripped — are appended just before the app
+        // file's closing tag. One merged document, one set of generated accessors,
+        // and the words only this build says never have to touch app/.
+        filesMatching("values/strings.xml") {
+            filter { line -> appendDesktopStrings(line, desktopStrings("values/strings.xml")) }
+        }
+        filesMatching("values-zh/strings.xml") {
+            filter { line -> appendDesktopStrings(line, desktopStrings("values-zh/strings.xml")) }
+        }
     }
     into(composeResourcesDir)
 }
+
+// Read once per file rather than once per line — the filter below is called for
+// every line of an eleven-hundred-line document.
+private val desktopStringsCache = mutableMapOf<File, List<String>>()
+
+private fun desktopStrings(relativePath: String): List<String> =
+    desktopStringsCache.getOrPut(
+        layout.projectDirectory.file("src/main/desktopStrings/$relativePath").asFile,
+    ) {
+        layout.projectDirectory.file("src/main/desktopStrings/$relativePath").asFile
+            .readLines()
+            .filterNot {
+                val trimmed = it.trim()
+                trimmed.isEmpty() || trimmed == "<resources>" || trimmed == "</resources>"
+            }
+    }
+
+private fun appendDesktopStrings(line: String, desktopLines: List<String>): String =
+    if (line.trim() == "</resources>") desktopLines.joinToString("\n") + "\n</resources>" else line
 
 compose.resources {
     packageOfResClass = "com.music.bitchord.desktop.resources"
@@ -158,6 +188,9 @@ compose.desktop {
             "bitchord.probeQuery",
             "bitchord.probeAutoplay",
             "bitchord.probeOpenPlayer",
+            "bitchord.probeDestination",
+            "bitchord.shot",
+            "bitchord.shotMs",
             "bitchord.autoExitMs",
             "bitchord.windowWidth",
             "bitchord.windowHeight",

@@ -1,0 +1,19 @@
+<resources>
+    <!-- 桌面专属字符串的中文半边，见 values/strings.xml 的说明。 -->
+
+    <!-- 侧边栏 -->
+    <string name="browse">浏览</string>
+    <string name="sidebar_youtube_music">YouTube Music</string>
+    <string name="recently_added">最近添加</string>
+
+    <!-- 工具栏 -->
+    <string name="forward">前进</string>
+    <string name="volume">音量</string>
+
+    <!-- 播放状态，PlaybackStatus 的措辞 -->
+    <string name="status_resolving">正在解析…</string>
+    <string name="status_opening">正在打开%1$s…</string>
+    <string name="status_nothing_playable">%1$s 里没有可播放的内容</string>
+    <string name="status_resolve_failed">无法加载这首曲目</string>
+    <string name="status_engine_error">播放出错：%1$s</string>
+</resources>
