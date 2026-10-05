@@ -67,7 +67,7 @@ import com.music.bitchord.desktop.resources.*
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.components.topBarContentPadding
+import com.music.bitchord.ui.shell.PAGE_TOP_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
@@ -155,11 +155,10 @@ fun SearchScreen(
     Column(modifier = modifier.fillMaxSize()) {
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
-        // away with the results or recent searches beneath them.
-        // The FrostedTopBar is visible on this tab (showing "Search"), so we
-        // clear it fully — status bar inset + bar height + breathing gap — so
-        // the search field sits cleanly below the bar instead of overlapping it.
-        Column(modifier = Modifier.padding(top = topBarContentPadding())) {
+        // away with the results or recent searches beneath them. The toolbar
+        // is beside the content column now rather than over it, so the field
+        // starts at the page's own gutter.
+        Column(modifier = Modifier.padding(top = PAGE_TOP_GUTTER)) {
             SearchField(
                 query = query,
                 onQueryChange = onQueryChange,

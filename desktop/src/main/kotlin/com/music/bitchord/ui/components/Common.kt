@@ -94,31 +94,14 @@ fun Modifier.thumbnailBorder(shape: Shape): Modifier = composed {
 /**
  * The left and right inset every page's content sits at.
  *
- * It is the same inset the mini player and the tab bar float at, so the edge of
- * a track row, a card or a heading lines up with the edge of the bars stacked
- * below them rather than stepping in from them. One constant, shared by the
- * bars and the pages, is what keeps that true.
+ * It used to be the inset the floating tab bar and mini player floated at too;
+ * the sidebar shell has no floating bars, and the pages keep the inset so
+ * every row, card and heading still lines up edge to edge across them.
  */
 val PAGE_GUTTER = 10.dp
 
 /** Where a divider under a track row starts: clear of the 52dp of artwork. */
 val ROW_DIVIDER_INSET = PAGE_GUTTER + 68.dp
-
-/**
- * How wide the floating bars at the foot of the page — the tab bar and the mini
- * player above it — are ever allowed to get.
- *
- * Both are fixed rows of controls with a fixed amount to say, not content that
- * benefits from room, and a phone is the width they were spaced for. Run right
- * across a tablet the four tabs end up a hand apart with their labels marooned
- * in the middle of nothing, and the mini player puts its artwork and its buttons
- * at opposite ends of the screen with a lake of frosted glass between. Past this
- * they stop growing and centre themselves over the page instead.
- *
- * Set clear of the widest phone (448dp less the two [PAGE_GUTTER]s is 428dp), so
- * on a phone it does nothing and the bars still line up with the page's content.
- */
-val FLOATING_BAR_MAX_WIDTH = 440.dp
 
 /**
  * Width of a card in the compact carousels — home shelves, library shelves and

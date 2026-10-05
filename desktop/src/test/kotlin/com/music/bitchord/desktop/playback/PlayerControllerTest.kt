@@ -3,6 +3,7 @@ package com.music.bitchord.desktop.playback
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.RepeatMode
 import kotlinx.coroutines.CancellationException
@@ -316,7 +317,7 @@ class PlayerControllerTest {
         assertEquals(1, player.state.value.queueIndex)
         assertEquals(listOf("https://test/a"), engine.playedUrls)
         assertFalse(player.state.value.isLoading)
-        assertTrue(player.status.value!!.startsWith("resolve failed"))
+        assertTrue(player.status.value is PlaybackStatus.ResolveFailed)
     }
 
     @Test
@@ -404,14 +405,14 @@ class PlayerControllerTest {
         // and a's fetch is still out.
         engine.finish()
         assertTrue(held.isInFlight("b"))
-        assertEquals("resolving…", player.status.value)
+        assertEquals(PlaybackStatus.Resolving, player.status.value)
         assertTrue(player.state.value.isLoading)
         // a comes back. It is a row the playhead has already left, so none of it may land: not the
         // URL, and not the status/spinner writes that belong with it — those two are what would
-        // silence *b*'s "resolving…" and stop *b*'s spinner.
+        // silence *b*'s "resolving" and stop *b*'s spinner.
         held.complete("a")
         assertEquals(emptyList(), engine.playedUrls)
-        assertEquals("resolving…", player.status.value)
+        assertEquals(PlaybackStatus.Resolving, player.status.value)
         assertTrue(player.state.value.isLoading)
         // b, the row that is actually current, still reports for itself.
         held.complete("b")
@@ -432,8 +433,8 @@ class PlayerControllerTest {
         held.fail("a", IllegalStateException("no stream"))
         // Discarded, so the failure path never ran: b's message is still the one on screen, and
         // there is no "resolve failed" for a row nobody is listening to.
-        assertFalse(player.status.value!!.startsWith("resolve failed"))
-        assertEquals("resolving…", player.status.value)
+        assertFalse(player.status.value is PlaybackStatus.ResolveFailed)
+        assertEquals(PlaybackStatus.Resolving, player.status.value)
         assertTrue(player.state.value.isLoading)
         assertEquals(emptyList(), engine.playedUrls)
         held.complete("b")
@@ -449,10 +450,10 @@ class PlayerControllerTest {
         player.resolveUrl = { throw CancellationException("the resolve was called off") }
         player.playOneOff(song("a"), PlaybackSourceType.SEARCH, "S", null)
         assertEquals(emptyList(), engine.playedUrls)
-        assertFalse(player.status.value!!.startsWith("resolve failed"))
+        assertFalse(player.status.value is PlaybackStatus.ResolveFailed)
         // Nothing was reported at all: the row is still the one it was, still waiting, and the
         // reporting belongs to whoever replaces it.
-        assertEquals("resolving…", player.status.value)
+        assertEquals(PlaybackStatus.Resolving, player.status.value)
         assertTrue(player.state.value.isLoading)
     }
 }

@@ -17,13 +17,13 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.ui.SearchViewModel
-import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.screens.SearchScreen
 
 /**
- * Search, wired the way MainActivity wires it, with the same rule the home
- * feed learned: a row that names a collection asks it what it holds and plays
- * the first of it, because the page that would otherwise open is a later slice.
+ * Search, wired the way MainActivity wires it, with the sidebar shell's rule
+ * instead of the old one: a collection result opens its page — search feeds
+ * the navigator, and the page's own play button does the playing — while a
+ * track plays where it stands, as always.
  *
  * What a tap records in history is the entity that was tapped — a track carries
  * its videoId, a collection its browseId — so the recents list can render real
@@ -37,6 +37,7 @@ import com.music.bitchord.ui.screens.SearchScreen
 fun SearchPage(
     vm: SearchViewModel,
     player: PlayerController,
+    nav: NavState,
     initialQuery: String = "",
     autoPlayFirst: Boolean = false,
 ) {
@@ -73,7 +74,15 @@ fun SearchPage(
     }
 
     fun openCollection(item: BrowseItem) {
-        player.playCollection(item.browseId, item.title)
+        nav.open(
+            Destination.Detail(
+                kind = if (item.type == BrowseType.OTHER) BrowseType.PLAYLIST else item.type,
+                browseId = item.browseId,
+                title = item.title,
+                subtitle = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+            ),
+        )
         vm.record(
             SearchHistoryEntity(
                 id = item.browseId,
@@ -144,14 +153,26 @@ fun SearchPage(
                     ),
                 )
             } else {
-                player.playCollection(entity.id, entity.title)
+                nav.open(
+                    Destination.Detail(
+                        kind = when (entity.entityType) {
+                            EntityType.ALBUM -> BrowseType.ALBUM
+                            EntityType.ARTIST -> BrowseType.ARTIST
+                            else -> BrowseType.PLAYLIST
+                        },
+                        browseId = entity.id,
+                        title = entity.title,
+                        subtitle = entity.subtitle,
+                        thumbnailUrl = entity.artworkUrl,
+                    ),
+                )
             }
         },
         onHistoryRemove = vm::removeHistory,
         onHistoryClear = vm::clearHistory,
         contentPadding = PaddingValues(
-            top = topBarContentPadding(),
-            bottom = if (snapshot.song != null) 210.dp else 140.dp,
+            top = PAGE_TOP_GUTTER,
+            bottom = 60.dp,
         ),
     )
 }

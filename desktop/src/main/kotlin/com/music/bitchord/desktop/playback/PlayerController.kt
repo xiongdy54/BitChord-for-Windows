@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.PlaybackPosition
+import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.PlayerState
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
@@ -122,9 +123,10 @@ class PlayerController(
 
     /** What went wrong, or what is being waited on — and always the *current* row's, never a
      * superseded one's: see [playGeneration]. Null when there is nothing to report, which is the
-     * case both for a row that sounded and for the tail the queue walked out to. */
-    private val _status = MutableStateFlow<String?>(null)
-    val status: StateFlow<String?> = _status.asStateFlow()
+     * case both for a row that sounded and for the tail the queue walked out to. The wording is
+     * the UI's job — this is the structured fact, a [PlaybackStatus]. */
+    private val _status = MutableStateFlow<PlaybackStatus?>(null)
+    val status: StateFlow<PlaybackStatus?> = _status.asStateFlow()
 
     /** Shuffle lives in [QueueShuffle], process-wide, so the UI reads that flow directly. */
     val shuffleEnabled: StateFlow<Boolean> = QueueShuffle.enabled
@@ -147,7 +149,7 @@ class PlayerController(
         engine.onPlayingChanged = { playing -> onQueue { setPlaying(playing) } }
         engine.onError = { message ->
             onQueue {
-                _status.value = message
+                _status.value = PlaybackStatus.EngineError(message)
                 setPlaying(false)
             }
         }
@@ -289,7 +291,7 @@ class PlayerController(
     fun playCollection(browseId: String, label: String) {
         onQueue {
             setLoading(true)
-            _status.value = "opening $label…"
+            _status.value = PlaybackStatus.Opening(label)
             // Out to IO for the round trip and back to the queue thread for the mutation:
             // `withContext` returns to the context it was called from.
             val fetched = withContext(Dispatchers.IO) { YtMusicRepository.browseSongs(browseId) }
@@ -300,7 +302,7 @@ class PlayerController(
                 // rather than lifted above it, because on the way out to play a queue a
                 // `setLoading(false)` here would only drop the spinner for a frame.
                 setLoading(false)
-                _status.value = "nothing playable in $label"
+                _status.value = PlaybackStatus.NothingPlayable(label)
                 // The empty message is what the user sees; the cause is what makes it recoverable.
                 // `getOrNull()` alone erases it, and "nothing playable" is then indistinguishable
                 // from "the request failed" — so say which, and put the throwable where the
@@ -464,7 +466,7 @@ class PlayerController(
         position.positionMs = 0
         // Whatever length the snapshot still carries belongs to the row that just ended.
         _state.update { it.copy(durationMs = 0L) }
-        _status.value = "resolving…"
+        _status.value = PlaybackStatus.Resolving
         setLoading(true)
         scope.launch {
             // Not `runCatching`: that would swallow a [CancellationException] and hand it to the
@@ -496,7 +498,7 @@ class PlayerController(
                     }
                     .onFailure { error ->
                         setLoading(false)
-                        _status.value = "resolve failed: ${error.message ?: error.javaClass.simpleName}"
+                        _status.value = PlaybackStatus.ResolveFailed(error.message)
                     }
             }
         }

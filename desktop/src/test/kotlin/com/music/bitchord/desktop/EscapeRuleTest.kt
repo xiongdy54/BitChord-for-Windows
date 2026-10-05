@@ -2,6 +2,7 @@ package com.music.bitchord.desktop
 
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import com.music.bitchord.ui.shell.spaceTogglesPlayback
 import java.awt.Panel
 import java.awt.event.KeyEvent as AwtKeyEvent
 import kotlin.test.Test
@@ -152,6 +153,46 @@ class EscapeRuleTest {
     fun `a real Escape release with the player shut is left alone`() {
         val (key, type) = fromAwt(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_ESCAPE)
         assertFalse(escapeClosesPlayer(key, type, playerIsOpen = false))
+    }
+
+    // ---- the space rule ------------------------------------------------------------------
+    //
+    // The window's other key rule (`spaceTogglesPlayback`, Shell.kt), pinned as its own
+    // truth table. The press is the event it acts on and the release is deliberately dead:
+    // a text field or a focused button consumes the press before the bubble phase reaches
+    // the shell's root, so the root only ever sees a space the rest of the app declined —
+    // and acting on the release as well would double every toggle.
+
+    @Test
+    fun `space pressed is the toggle`() {
+        assertTrue(spaceTogglesPlayback(Key.Spacebar, KeyEventType.KeyDown))
+    }
+
+    @Test
+    fun `space released is dead, or a toggle would fire twice`() {
+        assertFalse(spaceTogglesPlayback(Key.Spacebar, KeyEventType.KeyUp))
+        assertFalse(spaceTogglesPlayback(Key.Spacebar, KeyEventType.Unknown))
+    }
+
+    @Test
+    fun `no other key toggles`() {
+        assertFalse(spaceTogglesPlayback(Key.Escape, KeyEventType.KeyDown))
+        assertFalse(spaceTogglesPlayback(Key.Enter, KeyEventType.KeyDown))
+    }
+
+    // ---- the Alt+arrow rule --------------------------------------------------------------
+
+    @Test
+    fun `Alt with an arrow released navigates`() {
+        assertTrue(altArrowNavigates(Key.DirectionLeft, KeyEventType.KeyUp, altPressed = true))
+        assertTrue(altArrowNavigates(Key.DirectionRight, KeyEventType.KeyUp, altPressed = true))
+    }
+
+    @Test
+    fun `arrows without Alt, and other keys with it, stay put`() {
+        assertFalse(altArrowNavigates(Key.DirectionLeft, KeyEventType.KeyUp, altPressed = false))
+        assertFalse(altArrowNavigates(Key.DirectionLeft, KeyEventType.KeyDown, altPressed = true))
+        assertFalse(altArrowNavigates(Key.Escape, KeyEventType.KeyUp, altPressed = true))
     }
 }
 

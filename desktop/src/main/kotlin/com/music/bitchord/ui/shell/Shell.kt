@@ -5,274 +5,356 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.desktop.resources.Res
-import com.music.bitchord.desktop.resources.explore
-import com.music.bitchord.desktop.resources.home
-import com.music.bitchord.desktop.resources.library
-import com.music.bitchord.desktop.resources.search
+import com.music.bitchord.desktop.resources.recently_added
+import com.music.bitchord.desktop.resources.songs
+import com.music.bitchord.ui.DetailPages
+import com.music.bitchord.ui.ExploreViewModel
 import com.music.bitchord.ui.HomeViewModel
+import com.music.bitchord.ui.LibraryViewModel
 import com.music.bitchord.ui.SearchViewModel
-import com.music.bitchord.ui.components.BottomFadeScrim
-import com.music.bitchord.ui.components.BottomTab
-import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
-import com.music.bitchord.ui.components.FloatingBottomBar
-import com.music.bitchord.ui.components.FrostedTopBar
-import com.music.bitchord.ui.components.MiniPlayer
-import com.music.bitchord.ui.components.TopBarBlur
-import com.music.bitchord.ui.icons.BitChordIcons
-import com.music.bitchord.ui.screens.NotPortedPlaceholder
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
+import com.music.bitchord.ui.screens.DetailScreen
+import com.music.bitchord.ui.screens.ExploreScreen
+import com.music.bitchord.ui.screens.LibraryPlaylistsPage
+import com.music.bitchord.ui.screens.LibrarySongsPage
+import com.music.bitchord.ui.screens.RecentlyAddedPage
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * How wide the page column is allowed to get.
- *
- * The Android layout has no such cap because a phone never needs one. A desktop
- * window does: the shelves are fixed-width cards, so letting them run the full
- * width of a maximised window turns six cards into twenty and loses the
- * composition. Past this the margins grow instead of the layout.
- */
-const val CONTENT_MAX_WIDTH = 1080
-
-/**
- * Which of the shell's surfaces is up, and which row's menu is open.
+ * Which of the player's two surfaces is up, and which row's menu is open.
  *
  * Lives outside every composable because the window's own key handler has to
  * reach it: [androidx.compose.ui.window.Window]'s `onPreviewKeyEvent` is a
  * parameter of the window, evaluated before its content, so it can read and
- * write this but nothing built inside the content lambda could. Esc closing the
- * player is the whole reason — see Main.kt.
- *
- * Observable properties rather than plain fields, so a tab change recomposes the
- * pages and a player toggle recomposes the chrome that draws the player: two
- * independent questions, one object answering them, and only the readers of each
- * hear about it.
+ * write this but nothing built inside the content lambda could. Esc closing
+ * the player is the whole reason — see Main.kt.
  */
 class ShellState {
-    /** Index into [Shell]'s tab list. */
-    var selectedTab by mutableIntStateOf(0)
-
     /** The full-screen player, over everything. */
     var showPlayer by mutableStateOf(false)
 
-    /** The row whose action menu is up — Task 12 renders it; the player's ⋮ already sets it. */
+    /** The row whose action menu is up — the action sheet is a later slice. */
     var menuSong: Song? = null
 }
 
 /**
- * The app's chrome, assembled the way MainActivity assembles it: a frosted top
- * bar, the page below it, and the floating bottom bar with the mini player
- * stacked above it — both capped at the width the Android app caps them at, and
- * centred in whatever window they find themselves in.
+ * The app's chrome, the way Apple Music assembles it: a toolbar across the
+ * top — navigation, transport, the now-playing display, volume, search — the
+ * sidebar under it, and the content column beside that. Where the phone
+ * layout floated a tab pill and a mini player over each page, both jobs now
+ * belong to chrome that never overlaps the content: the sidebar navigates,
+ * the toolbar carries the transport and the LCD, and no page has to reserve
+ * room for what floats over it.
  *
- * The glass branch of those bars is compiled but never taken (see
- * ui/components/LiquidGlass.kt), so this is the pair of surfaces the Android app
- * itself shows on API < 31.
- *
- * Above all of that, when [ShellState.showPlayer], the full-screen player. On
- * Android that surface is the deck MainActivity reveals from the bottom, and it
- * is dismissed with the back button; neither exists on this platform, so spec
- * decision 4 replaced both with this overlay and with Esc (Main.kt) — the last
- * child of the same Box, and the whole window.
+ * The player, when [ShellState.showPlayer], is still the last child of the
+ * same box, over everything, closed with Esc — slice 2's overlay unchanged,
+ * because a full-screen player is not a phone idea and survived the redesign
+ * untouched.
  */
 @Composable
 fun Shell(
     player: PlayerController,
     home: HomeViewModel,
     search: SearchViewModel,
+    library: LibraryViewModel,
+    explore: ExploreViewModel,
+    detailPages: DetailPages,
+    nav: NavState,
     state: ShellState,
     initialQuery: String = "",
     autoPlayFirst: Boolean = false,
     autoOpenPlayer: Boolean = false,
 ) {
-    val hazeState = remember { HazeState() }
-    // One snapshot for the whole chrome. The three slice-1 flows this used to collect
-    // (`current` / `playing` / `loading`) were copies of fields of this, kept only while
-    // the screens were being ported; they are gone from the controller now, and reading
-    // `state` is cheaper as well as honest — the playhead is not in it, so a tick still
-    // recomposes the scrubber alone.
+    // One snapshot for the whole chrome. The playhead is not in it, so a tick
+    // still recomposes the scrubber alone; the toolbar shows no position.
     val snapshot by player.state.collectAsState()
     val status by player.status.collectAsState()
     val song = snapshot.song
 
-    val tabs = listOf(
-        BottomTab(stringResource(Res.string.home), BitChordIcons.Home),
-        BottomTab(stringResource(Res.string.explore), BitChordIcons.Explore),
-        BottomTab(stringResource(Res.string.library), BitChordIcons.Library),
-        BottomTab(stringResource(Res.string.search), BitChordIcons.Search),
-    )
-    val title = tabs[state.selectedTab].label
+    val current by nav.current.collectAsState()
+    val canGoBack by nav.canGoBack.collectAsState()
+    val canGoForward by nav.canGoForward.collectAsState()
+    val playlistsState by library.playlists.collectAsState()
+    val query by search.query.collectAsState()
+    val shuffle by player.shuffleEnabled.collectAsState()
 
-    // Debug hook — see Main.kt. Opens the player the first time there is a track to open it
-    // on, so the full-screen branch can be screenshotted without a hand on the mouse. It is
-    // keyed on `song?.videoId`, so it re-arms once per track: with the flag on, a track
-    // ending or an auto-advance raises the overlay again even after Escape has closed it.
-    // That is only ever true of the debug flag — a real open comes from the mini player's tap
-    // — and the keying stays as it is, because Task 13's screenshot pass may depend on the
-    // player coming back up on its own after a track ends.
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val mode = sidebarMode(windowWidth)
+    val playlists = (playlistsState as? UiState.Success)?.data.orEmpty()
+
+    // Debug hook — see Main.kt. Opens the player the first time there is a track
+    // to open it on, so the full-screen branch can be screenshotted without a hand
+    // on the mouse. Keyed on `song?.videoId`, so it re-arms once per track.
     LaunchedEffect(autoOpenPlayer, song?.videoId) {
         if (autoOpenPlayer && song != null) state.showPlayer = true
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize()) {
-            FrostedTopBar(title = title, scrolled = false)
+    // The sidebar's playlist section is the one thing the chrome itself needs:
+    // load it once, quietly, whether or not the playlists page is ever opened.
+    LaunchedEffect(Unit) { library.ensurePlaylists() }
+
+    // The playback source titles the content router hands the player. Read
+    // here, once, rather than in each page that needs one.
+    val songsSourceTitle = stringResource(Res.string.songs)
+    val recentsSourceTitle = stringResource(Res.string.recently_added)
+
+    Row(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            // Space toggles playback from anywhere that did not consume it —
+            // a focused button or text field eats the key first, so the
+            // bubble phase is what keeps this off the search field's typing.
+            .onKeyEvent { event ->
+                if (spaceTogglesPlayback(event.key, event.type)) {
+                    player.togglePlayPause()
+                    true
+                } else {
+                    false
+                }
+            },
+    ) {
+        Sidebar(
+            current = current,
+            playlists = playlists,
+            mode = mode,
+            onSelect = nav::open,
+            query = query,
+            onQueryChange = search::onQueryChange,
+            onSearchFocus = { nav.open(Destination.Search) },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Box(
+            Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+        )
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Toolbar(
+                songTitle = song?.title,
+                songArtist = song?.artist,
+                songThumbnailUrl = song?.thumbnailUrl,
+                isPlaying = snapshot.isPlaying,
+                status = status,
+                shuffleEnabled = shuffle,
+                repeatMode = snapshot.repeatMode,
+                volumePercent = volumePercent(player),
+                onVolumeChange = player::setVolume,
+                canGoBack = canGoBack,
+                canGoForward = canGoForward,
+                onBack = nav::goBack,
+                onForward = nav::goForward,
+                onToggleShuffle = player::toggleShuffle,
+                onPrevious = player::previous,
+                onPlayPause = player::togglePlayPause,
+                onNext = player::next,
+                onCycleRepeat = player::cycleRepeat,
+                onOpenPlayer = { if (song != null) state.showPlayer = true },
+                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            )
             Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
-                    Modifier.widthIn(max = CONTENT_MAX_WIDTH.dp).fillMaxWidth()
-                        .hazeSource(hazeState),
+                    Modifier
+                        .widthIn(max = CONTENT_MAX_WIDTH)
+                        .fillMaxWidth(),
                 ) {
-                    when (state.selectedTab) {
-                        0 -> HomePage(vm = home, player = player, autoPlayFirst = autoPlayFirst)
-                        1 -> NotPortedPlaceholder(title = title)
-                        2 -> NotPortedPlaceholder(title = title)
-                        else -> SearchPage(
+                    when (val destination = current) {
+                        Destination.Home -> HomePage(
+                            vm = home,
+                            player = player,
+                            onOpenDetail = nav::open,
+                            autoPlayFirst = autoPlayFirst,
+                        )
+
+                        Destination.Explore -> ExploreScreen(
+                            viewModel = explore,
+                            onOpenGenre = explore::openGenre,
+                            onShelfItemClick = { item ->
+                                openShelfItem(item, player, onOpenDetail = nav::open)
+                            },
+                        )
+
+                        Destination.Search -> SearchPage(
                             vm = search,
                             player = player,
+                            nav = nav,
                             initialQuery = initialQuery,
                             autoPlayFirst = autoPlayFirst,
+                        )
+
+                        Destination.RecentlyAdded -> RecentlyAddedPage(
+                            viewModel = library,
+                            onPlayFrom = { songs, index ->
+                                player.playFrom(
+                                    songs,
+                                    index,
+                                    PlaybackSourceType.HISTORY,
+                                    recentsSourceTitle,
+                                    null,
+                                )
+                            },
+                        )
+
+                        Destination.LibrarySongs -> LibrarySongsPage(
+                            viewModel = library,
+                            onPlayFrom = { songs, index ->
+                                player.playFrom(
+                                    songs,
+                                    index,
+                                    PlaybackSourceType.BROWSE,
+                                    songsSourceTitle,
+                                    null,
+                                )
+                            },
+                        )
+
+                        Destination.LibraryPlaylists -> LibraryPlaylistsPage(
+                            viewModel = library,
+                            onOpenPlaylist = { playlist ->
+                                nav.open(
+                                    Destination.Detail(
+                                        kind = BrowseType.PLAYLIST,
+                                        browseId = playlist.browseId,
+                                        title = playlist.title,
+                                        subtitle = playlist.subtitle,
+                                        thumbnailUrl = playlist.thumbnailUrl,
+                                    ),
+                                )
+                            },
+                        )
+
+                        is Destination.Detail -> DetailRoute(
+                            destination = destination,
+                            detailPages = detailPages,
+                            player = player,
+                            nav = nav,
                         )
                     }
                 }
             }
         }
-
-        // The fades either end, in the order MainActivity paints them: content,
-        // then the top scrim — the bottom floor turned upside down, so both
-        // edges share one curve — then the bar's own blur, then the bottom
-        // scrim, then the bottom surfaces themselves.
-        BottomFadeScrim(
-            pageColor = MaterialTheme.colorScheme.background,
-            modifier = Modifier.align(Alignment.TopCenter).rotate(180f),
-        )
-        TopBarBlur(hazeState = hazeState, modifier = Modifier.align(Alignment.TopCenter))
-        BottomFadeScrim(
-            withMiniPlayer = song != null,
-            pageColor = MaterialTheme.colorScheme.background,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
-
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter)
-                .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Opening a collection takes a request round-trip before there is a
-            // track to put a mini player around, so the page says so rather than
-            // sitting silent for a second after the tap.
-            if (song == null && status != null) {
-                Text(
-                    status!!,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(50))
-                        .padding(horizontal = 16.dp, vertical = 9.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            song?.let { current ->
-                MiniPlayer(
-                    song = current,
-                    isPlaying = snapshot.isPlaying,
-                    isLoading = snapshot.isLoading,
-                    hazeState = hazeState,
-                    onPlayPause = player::togglePlayPause,
-                    // Both halves of the transport, and the 72dp swipe the bar already
-                    // carries (`MiniPlayer.kt:123-159`), which was wired to nothing until
-                    // the player existed to move the queue.
-                    onNext = player::next,
-                    onPrevious = player::previous,
-                    // The full-screen player this slice built. A tap on the bar's body
-                    // opens it; Esc closes it (Main.kt), which is the desktop equivalent
-                    // of the sheet's own drag-down.
-                    onExpand = { state.showPlayer = true },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            FloatingBottomBar(
-                tabs = tabs,
-                selectedIndex = state.selectedTab,
-                onTabSelected = { state.selectedTab = it },
-                hazeState = hazeState,
-            )
-        }
-
-        // The player paints last, over the fades and the bottom surfaces. It is
-        // deliberately not registered as a haze source: it brings its own gradient
-        // backdrop, and a second frost over the content column is how you end up
-        // seeing a ghost of the tab bar through the sleeve. The one `hazeSource`
-        // above stays the only one — the MiniPlayer and the tab bar under it are
-        // covered, not blurred into the player.
-        //
-        // Covered is not the same as unreachable. Compose hit-traversal only offers a
-        // region to the layers that own a pointer node, and `NowPlayingScreen`'s root
-        // boxes (`NowPlayingScreen.kt:1094`, `:1220`) own none of their own: without the
-        // consumer below, a press in any dead area of the full-screen player — the gutters
-        // around the sleeve, the space under the transport — falls straight through to the
-        // chrome painted beneath it, which switches tabs (`FloatingBottomBar`'s
-        // `onTabSelected` above) or taps a row in the home/search list and starts a
-        // different song, all under a player that is still up. The overlay would be modal
-        // to the eye only.
-        //
-        // So the root swallows every press inside its bounds. `awaitFirstDown` +
-        // `consume()` rather than `Modifier.clickable(indication = null)`, because a
-        // clickable root would also publish itself as one giant button in the semantics
-        // tree and take keyboard focus (and with it Enter/Space) on the first click,
-        // none of which is wanted here; consuming the pointer is the whole of the job.
-        // The consumer sits on the *parent*, so the player's own controls still get
-        // their presses first — a child that consumes stops the downward propagation,
-        // and only what no control claims ever reaches this line.
-        //
-        // Swallowing at the overlay, instead of not mounting the chrome beneath it, is
-        // deliberate: the player shares this composition with the content column
-        // because that column is the haze source its backdrop layers read, and the
-        // bars are painted for the frame the overlay closes on. Unmounting them to
-        // make the player modal would take the frost with it.
-        if (state.showPlayer) {
-            PlayerPage(
-                player = player,
-                state = state,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false).consume()
-                        }
-                    },
-            )
-        }
     }
+
+    // The player paints last, over the chrome. It is deliberately not
+    // registered as a haze source — it brings its own gradient backdrop, and a
+    // second frost over the content column is how a ghost of the sidebar ends
+    // up showing through the sleeve. Covered is not the same as unreachable:
+    // Compose hit-traversal only offers a region to the layers that own a
+    // pointer node, and the player's root boxes own none of their own, so the
+    // consumer below swallows every press no control claims. Without it, a
+    // press in any dead area of the full-screen player falls straight through
+    // to the chrome painted beneath it. The consumer sits on the *parent*, so
+    // the player's own controls still get their presses first. Swallowing at
+    // the overlay, instead of not mounting the chrome beneath it, is
+    // deliberate: unmounting the toolbar to make the player modal would make
+    // the transport vanish for the frame the overlay closes on.
+    if (state.showPlayer) {
+        PlayerPage(
+            player = player,
+            state = state,
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false).consume()
+                    }
+                },
+        )
+    }
+}
+
+/**
+ * One detail destination, bound to its session-scoped view model. The list
+ * state is remembered per browse id too, so coming back to an album you
+ * scrolled lands where you left it — the same reason the view model survives.
+ */
+@Composable
+private fun DetailRoute(
+    destination: Destination.Detail,
+    detailPages: DetailPages,
+    player: PlayerController,
+    nav: NavState,
+) {
+    val viewModel = remember(destination.browseId) { detailPages.viewModelFor(destination) }
+    val listState = remember(destination.browseId) { LazyListState() }
+    DetailScreen(
+        viewModel = viewModel,
+        listState = listState,
+        onPlayFrom = { songs, index ->
+            player.playFrom(
+                songs,
+                index,
+                PlaybackSourceType.BROWSE,
+                destination.title,
+                destination.browseId,
+            )
+        },
+        onShufflePlay = { songs ->
+            // Both halves post onto the player's one queue dispatcher, so the
+            // shuffle is applied before the queue is built — the FIFO is the
+            // ordering guarantee, not a happens-before anyone can see.
+            player.toggleShuffle()
+            player.playFrom(
+                songs,
+                0,
+                PlaybackSourceType.BROWSE,
+                destination.title,
+                destination.browseId,
+            )
+        },
+        onShelfItemClick = { item -> openShelfItem(item, player, onOpenDetail = nav::open) },
+    )
+}
+
+/**
+ * The window's space rule: `true` when this event is the one that toggles
+ * playback. Acted on the press, ignored on the release — a text field or a
+ * focused button consumes the press, and anything that let it through has
+ * already agreed the space bar meant nothing to it.
+ */
+internal fun spaceTogglesPlayback(key: Key, type: KeyEventType): Boolean =
+    key == Key.Spacebar && type == KeyEventType.KeyDown
+
+@Composable
+private fun volumePercent(player: PlayerController): Int {
+    val volume by player.volume.collectAsState()
+    return volume
 }

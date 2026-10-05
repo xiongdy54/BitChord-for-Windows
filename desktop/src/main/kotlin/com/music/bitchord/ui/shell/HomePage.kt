@@ -11,67 +11,44 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
-import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.model.ShelfItem
-import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.listen_now
 import com.music.bitchord.ui.HomeViewModel
-import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.screens.HomeScreen
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * The home feed, wired the way MainActivity wires it: the same title, the same
- * content insets — which have to clear the top bar and whichever of the two
- * bottom surfaces is up — and the same derivation of a card's artist from its
- * subtitle.
+ * The home feed, wired the way MainActivity wires it: the same title and the
+ * same derivation of a card's artist from its subtitle, with the content
+ * padding the sidebar shell needs — the toolbar is beside the page now, not
+ * over it, so the page starts at its own gutter and reserves room for nothing
+ * floating above it.
  *
- * Tapping a track card plays it. Upstream starts a radio seeded by the shelf the
- * card came from; that is the queue's job and arrives with it. Tapping a card
- * that points at a collection opens its page — the detail screen, a later slice —
- * and does nothing until then.
+ * Tapping a track card plays it. Tapping a collection card opens its page —
+ * [openShelfItem] has the whole rule; the phone layout played collections
+ * outright because it had nowhere for a page to open into.
  */
 @Composable
-fun HomePage(vm: HomeViewModel, player: PlayerController, autoPlayFirst: Boolean = false) {
+fun HomePage(
+    vm: HomeViewModel,
+    player: PlayerController,
+    onOpenDetail: (Destination.Detail) -> Unit,
+    autoPlayFirst: Boolean = false,
+) {
     val state by vm.home.collectAsState()
     val refreshing by vm.refreshing.collectAsState()
     val loadingMore by vm.loadingMore.collectAsState()
     val recentlyPlayedLoading by vm.recentlyPlayedLoading.collectAsState()
-    // Playback is read here for one thing: whether to clear the mini player's height
-    // at the foot of the list. Slice 1 had a `current` flow of its own for that; it
-    // was a copy of this snapshot's `song` field, and the copy is gone.
-    val snapshot by player.state.collectAsState()
     val listState = rememberLazyListState()
     val pullState = rememberPullToRefreshState()
 
     LaunchedEffect(Unit) { vm.loadHome() }
 
-    /**
-     * What a card tap does.
-     *
-     * A track card plays its track. A collection card — and on the signed-out
-     * feed that is every card: the shelves come back as playlists, each with a
-     * browseId and no videoId — asks the collection what it holds and plays the
-     * first of it. Upstream opens the collection's own page on that tap and
-     * plays from there; this is that without the page, which a later slice
-     * brings.
-     */
     fun openCard(item: ShelfItem) {
-        when {
-            item.videoId != null -> player.play(
-                Song(
-                    videoId = item.videoId,
-                    title = item.title,
-                    artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                    thumbnailUrl = item.thumbnailUrl,
-                ),
-            )
-
-            item.browseId != null -> player.playCollection(item.browseId, item.title)
-        }
+        openShelfItem(item, player, onOpenDetail)
     }
 
     // Debug hook — see Main.kt: the same path a tap takes, so the screenshot
@@ -99,10 +76,7 @@ fun HomePage(vm: HomeViewModel, player: PlayerController, autoPlayFirst: Boolean
         refreshing = refreshing,
         onRefresh = vm::refresh,
         pullState = pullState,
-        contentPadding = PaddingValues(
-            top = topBarContentPadding(),
-            bottom = if (snapshot.song != null) 210.dp else 140.dp,
-        ),
+        contentPadding = PaddingValues(top = PAGE_TOP_GUTTER, bottom = 60.dp),
         onLoadMore = vm::loadMore,
         loadingMore = loadingMore,
         recentlyPlayedLoading = recentlyPlayedLoading,

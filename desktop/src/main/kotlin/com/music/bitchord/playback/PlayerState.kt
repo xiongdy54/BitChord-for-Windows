@@ -19,6 +19,31 @@ object RepeatMode {
 }
 
 /**
+ * What the player is waiting on or stumbled over, in structured form.
+ *
+ * Slice 1 published this as ready-made English strings, which left the UI two
+ * choices — print a foreign sentence, or parse it back apart. The words are the
+ * UI's business; the controller only knows *which* thing happened and the
+ * label/reason it happened to, so that is all it says.
+ */
+sealed interface PlaybackStatus {
+    /** A stream URL is being resolved for the row under the needle. */
+    data object Resolving : PlaybackStatus
+
+    /** A collection was tapped and its tracks are being fetched. */
+    data class Opening(val label: String) : PlaybackStatus
+
+    /** The collection opened, but held no playable track. */
+    data class NothingPlayable(val label: String) : PlaybackStatus
+
+    /** The stream URL resolve failed — [reason] is the underlying message, when there was one. */
+    data class ResolveFailed(val reason: String?) : PlaybackStatus
+
+    /** The engine reported a playback error of its own; the message is the engine's. */
+    data class EngineError(val message: String) : PlaybackStatus
+}
+
+/**
  * The playhead, deliberately kept out of [PlayerState].
  *
  * It moves twice a second; everything else on [PlayerState] moves on a track
