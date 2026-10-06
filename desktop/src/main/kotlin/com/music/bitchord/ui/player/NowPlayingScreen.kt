@@ -1364,35 +1364,16 @@ fun NowPlayingScreen(
             // The only strip that passes drags through to the sheet, so the
             // player closes from the handle and the space around it — not from
             // a stray downward swipe on the artwork or the controls.
+            //
+            // The handle pill upstream draws in this strip is gone: it was the
+            // sheet's drag affordance, and a desktop window has no sheet to
+            // drag — the chevron and Esc are the way back.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(topStrip),
                 contentAlignment = Alignment.Center,
             ) {
-                // While the origin caption is present the handle belongs at
-                // the top of the strip. As the queue replaces the album-cover
-                // player, it glides into the now-empty strip's vertical centre
-                // alongside the caption's fade.
-                Box(
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .offset {
-                            IntOffset(
-                                x = 0,
-                                y = lerp(
-                                    6.dp,
-                                    (topStrip - 5.dp).coerceAtLeast(0.dp) / 2,
-                                    p(),
-                                ).roundToPx(),
-                            )
-                        }
-                        .width(38.dp)
-                        .height(5.dp)
-                        .shadow(2.dp, RoundedCornerShape(3.dp), clip = false)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color.White.copy(alpha = 0.70f)),
-                )
                 // [p] is the shared album-to-panel transition. Keeping this in
                 // composition until its final frame gives the caption a real
                 // fade on both entry and exit, but removes its click target

@@ -249,17 +249,9 @@ internal fun LandscapePlayerLayout(
             }
 
             // The sheet closes from a downward drag anywhere nothing else
-            // claims, as it does in portrait; this is only the promise.
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = 8.dp)
-                    .width(38.dp)
-                    .height(5.dp)
-                    .shadow(2.dp, RoundedCornerShape(3.dp), clip = false)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color.White.copy(alpha = 0.70f)),
-            )
+            // claims, as it does in portrait. The handle pill upstream drew
+            // here as the promise of that drag is gone: a desktop window has
+            // no sheet, and the chevron and Esc are the way back.
         }
     }
 }

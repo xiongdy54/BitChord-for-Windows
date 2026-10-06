@@ -181,6 +181,47 @@ private fun saveWindowShot(window: java.awt.Window, path: String) {
 /** PrintWindow's flag that renders the window's live (DWM) content. */
 private const val PW_RENDERFULLCONTENT = 2
 
+// ---- the Windows backdrop ------------------------------------------------------------
+//
+// DWM attributes by number — the documented ones, from dwmapi's own header.
+private const val DWMWA_WINDOW_CORNER_PREFERENCE = 33
+private const val DWMWCP_ROUND = 2
+private const val DWMWA_SYSTEMBACKDROP_TYPE = 38
+private const val DWMSBT_MAINWINDOW = 2
+
+/** The two dwmapi calls the backdrop needs; loaded late, used defensively. */
+private interface DwmApi : com.sun.jna.Library {
+    fun DwmSetWindowAttribute(hwnd: com.sun.jna.Pointer, attribute: Int, value: com.sun.jna.Pointer, size: Int): Int
+    fun DwmExtendFrameIntoClientArea(hwnd: com.sun.jna.Pointer, margins: com.sun.jna.Pointer): Int
+}
+
+/**
+ * Mica behind the window, and the platform's rounded corners and shadow over it.
+ *
+ * Three writes, each useless without the last window being transparent and the
+ * chrome being drawn at partial alpha (Shell's business): the frame extended
+ * across the whole client area is what lets a DWM backdrop show behind the
+ * window's own pixels, the backdrop type is what asks for Mica (a no-op before
+ * Windows 11), and the corner preference rounds the frame and brings the
+ * standard shadow with it.
+ *
+ * Every call is allowed to fail — an older Windows just gets a square,
+ * opaque-windowed app — which is why nothing here throws.
+ */
+private fun applyWindowBackdrop(window: java.awt.Window) {
+    runCatching {
+        val hwnd = com.sun.jna.Native.getComponentPointer(window) ?: return
+        val dwm = com.sun.jna.Native.load("dwmapi", DwmApi::class.java)
+        val margins = com.sun.jna.Memory(16)
+        for (i in 0 until 4) margins.setInt((i * 4).toLong(), -1)
+        dwm.DwmExtendFrameIntoClientArea(hwnd, margins)
+        val backdrop = com.sun.jna.Memory(4).apply { setInt(0, DWMSBT_MAINWINDOW) }
+        dwm.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, backdrop, 4)
+        val round = com.sun.jna.Memory(4).apply { setInt(0, DWMWCP_ROUND) }
+        dwm.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, round, 4)
+    }
+}
+
 fun main() {
     // Before anything reads a string resource: the resource environment follows
     // the JVM default locale, which is what makes the English pass possible on
@@ -272,11 +313,14 @@ fun main() {
         Window(
             onCloseRequest = quit,
             state = windowState,
-            // No native frame: the toolbar is the title bar. The window is
-            // still resizable (Compose's undecorated resizer takes the
-            // edges) and still draggable (the toolbar row is the drag
-            // area); the three buttons it lost live at the toolbar's end.
+            // No native frame, and a translucent one: the toolbar is the title
+            // bar, the chrome paints over the DWM backdrop at partial alpha,
+            // and [applyWindowBackdrop] asks Windows for Mica behind it, with
+            // the platform's rounded corners and shadow on top. The window is
+            // still resizable (Compose's undecorated resizer takes the edges)
+            // and still draggable (the toolbar row is the drag area).
             undecorated = true,
+            transparent = true,
             title = "BitChord for Windows",
             // Escape closes the full-screen player; Alt+←/→ walk the navigation
             // stack. Both belong at the window rather than in the pages, where
@@ -310,6 +354,10 @@ fun main() {
                     quit()
                 }
             }
+            // The window's backdrop, applied once the frame exists to apply it
+            // to: Mica behind the chrome, rounded corners and the standard
+            // shadow over everything.
+            LaunchedEffect(Unit) { applyWindowBackdrop(window) }
             if (shotPath.isNotBlank() && shotMs != null) {
                 LaunchedEffect(Unit) {
                     delay(shotMs)

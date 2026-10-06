@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -140,7 +141,9 @@ fun Shell(
     Column(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            // Deliberately unpainted: the window is transparent over the
+            // DWM backdrop (Mica), and the chrome paints at partial alpha
+            // to let it through. Only the content column is solid.
             // Space toggles playback from anywhere that did not consume it —
             // a focused button or text field eats the key first, so the
             // bubble phase is what keeps this off the search field's typing.
@@ -182,7 +185,7 @@ fun Shell(
             onToggleMaximize = onToggleMaximize,
             onClose = onClose,
             windowScope = windowScope,
-            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier.background(chromeColor()),
         )
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Sidebar(
@@ -193,7 +196,7 @@ fun Shell(
                 query = query,
                 onQueryChange = search::onQueryChange,
                 onSearchFocus = { nav.open(Destination.Search) },
-                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.background(chromeColor()),
             )
             Box(
                 Modifier
@@ -204,7 +207,10 @@ fun Shell(
             Box(
                 Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
+                    .fillMaxHeight()
+                    // The one solid surface: the backdrop lives behind the
+                    // chrome, the pages live on their own colour.
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
@@ -359,6 +365,18 @@ private fun DetailRoute(
         onShelfItemClick = { item -> openShelfItem(item, player, onOpenDetail = nav::open) },
     )
 }
+
+/**
+ * The chrome's own colour: the surface tone at partial alpha, so the DWM
+ * backdrop behind the transparent window reads through it — the window
+ * material doing what a flat fill used to.
+ */
+@Composable
+private fun chromeColor(): Color =
+    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = CHROME_ALPHA)
+
+/** How much of the chrome covers the backdrop. Apple's app sits near seven tenths. */
+private const val CHROME_ALPHA = 0.72f
 
 /**
  * The window's space rule: `true` when this event is the one that toggles

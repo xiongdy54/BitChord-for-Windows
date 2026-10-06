@@ -2,6 +2,9 @@ package com.music.bitchord.ui.shell
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,10 +33,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -129,9 +137,23 @@ fun Toolbar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(TOOLBAR_HEIGHT)
-                    .padding(horizontal = 12.dp),
+                    // The title bar's own gesture, on the chrome that replaced
+                    // it: a double-click maximizes or restores. The buttons and
+                    // the LCD consume their own clicks, so the shortcut belongs
+                    // to the empty chrome between them and never fires by
+                    // accident on a control.
+                    .pointerInput(Unit) {
+                        detectTapGestures(onDoubleTap = { onToggleMaximize() })
+                    },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
         // Back and forward. A desktop navigation has both, the same two glyphs
         // every other desktop app reaches for; disabled rather than hidden so
         // the row's rhythm does not shift when a stack empties.
@@ -231,7 +253,7 @@ fun Toolbar(
             onVolumeChange = onVolumeChange,
         )
 
-        // The window's own three, where the reference app keeps them: the
+        // The window's own three, flush at the frame's right edge: the
         // undecorated window has no title bar, so they live at the row's end
         // and the close button calls the same path as the frame's close.
         Spacer(Modifier.width(10.dp))
@@ -241,14 +263,17 @@ fun Toolbar(
             onToggleMaximize = onToggleMaximize,
             onClose = onClose,
         )
-            }
+                }
         }
     }
+}
 }
 
 /**
  * Minimize, maximize/restore, close — the window's own chrome, drawn to sit
- * on this dark toolbar the way the native buttons never did.
+ * on this dark toolbar the way the native buttons never did. The hover fill
+ * is a plain rectangle spanning the toolbar's full height, the shape the
+ * platform's own buttons use, rather than a pill floating in the row.
  */
 @Composable
 private fun WindowButtons(
@@ -257,31 +282,39 @@ private fun WindowButtons(
     onToggleMaximize: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onMinimize, modifier = Modifier.size(38.dp)) {
-            Icon(
-                Icons.Rounded.Remove,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(15.dp),
+    WindowButton(Icons.Rounded.Remove, onMinimize)
+    WindowButton(if (maximized) Icons.Rounded.FilterNone else Icons.Rounded.CropSquare, onToggleMaximize)
+    WindowButton(Icons.Rounded.Close, onClose)
+}
+
+@Composable
+private fun WindowButton(icon: ImageVector, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Box(
+        modifier = Modifier
+            .width(44.dp)
+            .fillMaxHeight()
+            .background(
+                if (hovered) {
+                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.09f)
+                } else {
+                    Color.Transparent
+                },
             )
-        }
-        IconButton(onClick = onToggleMaximize, modifier = Modifier.size(38.dp)) {
-            Icon(
-                if (maximized) Icons.Rounded.FilterNone else Icons.Rounded.CropSquare,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(14.dp),
-            )
-        }
-        IconButton(onClick = onClose, modifier = Modifier.size(38.dp)) {
-            Icon(
-                Icons.Rounded.Close,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(17.dp),
-            )
-        }
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.size(15.dp),
+        )
     }
 }
 
