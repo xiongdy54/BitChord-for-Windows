@@ -143,7 +143,10 @@ fun Toolbar(
             .pointerInput(Unit) {
                 detectTapGestures(onDoubleTap = { onToggleMaximize() })
             }
-            .pointerInput(window) {
+            // Keyed on the maximised flag too: the restore-on-drag below reads
+            // it, and a lambda keyed only on `window` would go on holding the
+            // value from before the double-click that maximised the window.
+            .pointerInput(window, windowMaximized) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     // A control that claimed the press owns the gesture; the
@@ -153,6 +156,10 @@ fun Toolbar(
                         ?: return@awaitEachGesture
                     val startWindow = window.location
                     var moved = false
+                    // Distance summed across events, not per event: a mouse
+                    // delivers many small moves, and no single one of them
+                    // crosses the slop a hand-drawn drag must.
+                    var travel = 0f
                     while (true) {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.firstOrNull { it.pressed }
@@ -160,10 +167,22 @@ fun Toolbar(
                         // A child that claims the drag — the volume slider's
                         // pull — ends ours.
                         if (pressed.isConsumed) break
-                        if (!moved && pressed.positionChange().getDistance() >
-                            viewConfiguration.touchSlop
-                        ) {
-                            moved = true
+                        if (!moved) {
+                            travel += pressed.positionChange().getDistance()
+                            if (travel > viewConfiguration.touchSlop) {
+                                moved = true
+                                // A maximised frame is not dragged — it is
+                                // restored, the way dragging a title bar off a
+                                // maximised window restores it. The restore
+                                // lands at bounds this gesture cannot know, so
+                                // the drag ends here and the next one moves the
+                                // window.
+                                if (windowMaximized) {
+                                    onToggleMaximize()
+                                    pressed.consume()
+                                    break
+                                }
+                            }
                         }
                         if (moved) {
                             // By screen coordinates, never by deltas: the
@@ -377,7 +396,36 @@ private fun NowPlayingDisplay(
         modifier = modifier
             .clip(RoundedCornerShape(7.dp))
             .background(MaterialTheme.colorScheme.background)
-            .clickable(onClick = onOpen)
+            // The tap is handled by hand rather than by `clickable` because
+            // the LCD sits in the drag area: a clickable consumes the press,
+            // and a consumed press is exactly what the toolbar's drag
+            // gesture stands down on. This one consumes nothing on the way
+            // down — so a press-drag here moves the window — and claims only
+            // the release of a genuine tap, which also keeps the toolbar's
+            // double-click detector from reading a single tap as its first
+            // half.
+            .pointerInput(onOpen) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                            ?: return@awaitEachGesture
+                        if (!change.pressed) {
+                            change.consume()
+                            onOpen()
+                            return@awaitEachGesture
+                        }
+                        // The window drag carried the pointer away — past the
+                        // slop, or claimed outright — so this was no tap.
+                        if (change.isConsumed ||
+                            change.positionChange().getDistance() > viewConfiguration.touchSlop
+                        ) {
+                            return@awaitEachGesture
+                        }
+                    }
+                }
+            }
             .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         // Idle, the wordmark sits centred in the panel the way the reference

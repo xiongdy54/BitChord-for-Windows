@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -315,6 +316,17 @@ private fun SearchBox(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    // The well the field sits in. On a light chrome the page's own white is
+    // the inset; on a dark chrome pure black would punch a hole in the
+    // sidebar rather than dent it — a well is a step down from the surface
+    // around it, not a void — so the dark side takes the chrome's own tone
+    // dimmed a step instead.
+    val chrome = MaterialTheme.colorScheme.surfaceVariant
+    val fieldFill = if (chrome.luminance() < 0.5f) {
+        Color.Black.copy(alpha = 0.30f)
+    } else {
+        MaterialTheme.colorScheme.background
+    }
     // The field on the chrome wants a selection colour that reads against the
     // page's own background colour it sits on, so the default is overridden
     // for this one field.
@@ -334,7 +346,7 @@ private fun SearchBox(
             decorationBox = { inner ->
                 Row(
                     modifier = Modifier
-                        .background(MaterialTheme.colorScheme.background, shape)
+                        .background(fieldFill, shape)
                         .padding(horizontal = 9.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

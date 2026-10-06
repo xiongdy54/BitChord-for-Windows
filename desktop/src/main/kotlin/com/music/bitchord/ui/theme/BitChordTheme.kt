@@ -25,6 +25,12 @@ import androidx.compose.ui.unit.sp
 // spots (Replay's rank badge) that want that specific red regardless of theme.
 val AccentRed = Color(0xFFFA2D48)
 
+// The dark ramp is the depth ladder the whole shell hangs off: the content
+// column sits on true black, cards and wells lift to 0D0D0F, the chrome
+// (toolbar + sidebar) composites near-opaque 1C1C1E over the Mica backdrop,
+// and the selection/border tone sits one step above the chrome so a selected
+// row reads as *raised*, not painted. No divider strokes anywhere — the step
+// between planes is the separation.
 private val DarkColors = darkColorScheme(
     primary = Color.White,
     onPrimary = Color.Black,
@@ -34,7 +40,7 @@ private val DarkColors = darkColorScheme(
     onSurface = Color.White,
     surfaceVariant = Color(0xFF1C1C1E),
     onSurfaceVariant = Color(0xFF8E8E93),
-    outline = Color(0xFF2C2C2E),
+    outline = Color(0xFF323234),
 )
 
 private val LightColors = lightColorScheme(

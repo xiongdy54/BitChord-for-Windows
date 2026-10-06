@@ -181,6 +181,9 @@ private fun saveWindowShot(window: java.awt.Window, path: String) {
 /** PrintWindow's flag that renders the window's live (DWM) content. */
 private const val PW_RENDERFULLCONTENT = 2
 
+/** The icon sizes the shell draws at, smallest slot to largest. */
+private val ICON_SIZES = intArrayOf(16, 24, 32, 48, 64, 128, 256)
+
 // ---- the Windows backdrop ------------------------------------------------------------
 //
 // DWM attributes by number — the documented ones, from dwmapi's own header.
@@ -361,11 +364,39 @@ fun main() {
             // leave with the JVM's coffee cup.
             LaunchedEffect(Unit) {
                 applyWindowBackdrop(window)
+                // The mark at every size the shell asks for — 16 for the
+                // taskbar, 32 for alt-tab, and up — scaled once, off the one
+                // 512 original, so Windows never has to shrink a single huge
+                // bitmap for a 16-pixel slot. A lone wordmark here was the bug
+                // that drew a sliver of a logo on the taskbar: the icon is the
+                // square mark, the wordmark belongs to the toolbar.
                 runCatching {
-                    val logo = Thread.currentThread().contextClassLoader
-                        ?.getResourceAsStream("bitchord_logo.png")
+                    val icon = Thread.currentThread().contextClassLoader
+                        ?.getResourceAsStream("bitchord_icon.png")
                         ?.use { javax.imageio.ImageIO.read(it) }
-                    if (logo != null) window.iconImage = logo
+                    if (icon != null) {
+                        val variants = ICON_SIZES.map { size ->
+                            java.awt.image.BufferedImage(
+                                size,
+                                size,
+                                java.awt.image.BufferedImage.TYPE_INT_ARGB,
+                            ).also { scaled ->
+                                val g = scaled.createGraphics()
+                                g.setRenderingHint(
+                                    java.awt.RenderingHints.KEY_INTERPOLATION,
+                                    java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC,
+                                )
+                                g.setRenderingHint(
+                                    java.awt.RenderingHints.KEY_RENDERING,
+                                    java.awt.RenderingHints.VALUE_RENDER_QUALITY,
+                                )
+                                g.drawImage(icon, 0, 0, size, size, null)
+                                g.dispose()
+                            }
+                        }
+                        window.iconImage =
+                            java.awt.image.BaseMultiResolutionImage(*variants.toTypedArray())
+                    }
                 }
             }
             if (shotPath.isNotBlank() && shotMs != null) {

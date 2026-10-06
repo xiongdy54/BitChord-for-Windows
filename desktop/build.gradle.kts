@@ -207,9 +207,12 @@ compose.desktop {
             packageName = "BitChord"
             packageVersion = "0.1.0"
             description = "BitChord for Windows"
-            // The project's own mark, on the Start-menu entry and the EXE.
+            // The project's own mark, on the Start-menu entry and the EXE —
+            // a real multi-size .ico (16..256), generated from the original
+            // repo's own 512 mark. Logo.png here was the wide wordmark, and a
+            // titlebar slot squishes that into a sliver.
             windows {
-                iconFile.set(rootProject.file("../Logo.png"))
+                iconFile.set(rootProject.file("package/bitchord.ico"))
             }
         }
     }

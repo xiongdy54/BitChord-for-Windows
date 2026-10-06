@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -31,7 +31,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -199,12 +198,6 @@ fun Shell(
             )
             Box(
                 Modifier
-                    .width(1.dp)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
-            )
-            Box(
-                Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     // The one solid surface: the backdrop lives behind the
@@ -369,13 +362,26 @@ private fun DetailRoute(
  * The chrome's own colour: the surface tone at partial alpha, so the DWM
  * backdrop behind the transparent window reads through it — the window
  * material doing what a flat fill used to.
+ *
+ * How much it lets through is a per-theme decision, because the backdrop's
+ * own colour is not ours to know — Mica follows the desktop wallpaper. A
+ * light chrome over a light backdrop can afford the full vibrancy; a dark
+ * chrome must stay dark whatever sits behind it, or the wallpaper's tone
+ * leaks into the navigation and the toolbar turns the wallpaper's grey. So
+ * dark mode composites near-opaque and leaves Mica only a whisper of life.
  */
 @Composable
-private fun chromeColor(): Color =
-    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = CHROME_ALPHA)
+private fun chromeColor(): Color {
+    val base = MaterialTheme.colorScheme.surfaceVariant
+    val alpha = if (base.luminance() < 0.5f) CHROME_ALPHA_DARK else CHROME_ALPHA_LIGHT
+    return base.copy(alpha = alpha)
+}
 
-/** How much of the chrome covers the backdrop. Apple's app sits near seven tenths. */
-private const val CHROME_ALPHA = 0.72f
+/** The light chrome's share of the backdrop. Apple's app sits near seven tenths. */
+private const val CHROME_ALPHA_LIGHT = 0.72f
+
+/** The dark chrome's share — high enough that no wallpaper can grey it out. */
+private const val CHROME_ALPHA_DARK = 0.92f
 
 /**
  * The window's space rule: `true` when this event is the one that toggles
