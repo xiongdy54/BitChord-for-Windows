@@ -32,7 +32,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.WindowScope
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -98,8 +97,8 @@ fun Shell(
     onMinimize: () -> Unit,
     onToggleMaximize: () -> Unit,
     onClose: () -> Unit,
-    /** The frame's scope — the toolbar's drag area is an extension on it. */
-    windowScope: WindowScope,
+    /** The frame — the toolbar's drag gesture moves it. */
+    window: java.awt.Window,
     initialQuery: String = "",
     autoPlayFirst: Boolean = false,
     autoOpenPlayer: Boolean = false,
@@ -184,7 +183,7 @@ fun Shell(
             onMinimize = onMinimize,
             onToggleMaximize = onToggleMaximize,
             onClose = onClose,
-            windowScope = windowScope,
+            window = window,
             modifier = Modifier.background(chromeColor()),
         )
         Row(Modifier.weight(1f).fillMaxWidth()) {

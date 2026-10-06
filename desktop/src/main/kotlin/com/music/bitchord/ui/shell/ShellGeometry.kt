@@ -31,12 +31,6 @@ val SIDEBAR_BREAKPOINT = 760.dp
  */
 val CONTENT_MAX_WIDTH = 1280.dp
 
-/** The now-playing display's widest form, so a maximised window keeps it an LCD and not a banner. */
-val LCD_MAX_WIDTH = 420.dp
-
-/** The toolbar search field's width. */
-val SEARCH_FIELD_WIDTH = 230.dp
-
 /** Where page content starts below the toolbar — the old bar's gap, minus the bar it cleared. */
 val PAGE_TOP_GUTTER = 12.dp
 

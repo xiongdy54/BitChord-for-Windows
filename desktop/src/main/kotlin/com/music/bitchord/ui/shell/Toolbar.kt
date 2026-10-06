@@ -2,6 +2,8 @@ package com.music.bitchord.ui.shell
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -18,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -42,11 +43,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.WindowScope
+import java.awt.MouseInfo
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -124,36 +126,68 @@ fun Toolbar(
     onToggleMaximize: () -> Unit,
     onClose: () -> Unit,
     /**
-     * The window's own scope, handed down so this row can be the drag area:
-     * [WindowDraggableArea] is an extension on it, and this is the one place
-     * a page needs the frame.
+     * The frame itself: the drag gesture below moves it, and it is the one
+     * thing a page needs of the window.
      */
-    windowScope: WindowScope,
+    window: java.awt.Window,
     modifier: Modifier = Modifier,
 ) {
-    with(windowScope) {
-        WindowDraggableArea(modifier = modifier) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(TOOLBAR_HEIGHT)
-                    // The title bar's own gesture, on the chrome that replaced
-                    // it: a double-click maximizes or restores. The buttons and
-                    // the LCD consume their own clicks, so the shortcut belongs
-                    // to the empty chrome between them and never fires by
-                    // accident on a control.
-                    .pointerInput(Unit) {
-                        detectTapGestures(onDoubleTap = { onToggleMaximize() })
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TOOLBAR_HEIGHT)
+            // The title bar's two gestures, on the chrome that replaced it:
+            // double-click maximizes or restores, a press-and-drag moves the
+            // window. The buttons and the LCD consume their own clicks, so
+            // neither fires by accident on a control.
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { onToggleMaximize() })
+            }
+            .pointerInput(window) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // A control that claimed the press owns the gesture; the
+                    // window moving under it is not what was asked for.
+                    if (down.isConsumed) return@awaitEachGesture
+                    val startMouse = MouseInfo.getPointerInfo().location
+                        ?: return@awaitEachGesture
+                    val startWindow = window.location
+                    var moved = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.firstOrNull { it.pressed }
+                        if (pressed == null) break
+                        // A child that claims the drag — the volume slider's
+                        // pull — ends ours.
+                        if (pressed.isConsumed) break
+                        if (!moved && pressed.positionChange().getDistance() >
+                            viewConfiguration.touchSlop
+                        ) {
+                            moved = true
+                        }
+                        if (moved) {
+                            // By screen coordinates, never by deltas: the
+                            // window moving under the pointer feeds back
+                            // into the next position otherwise.
+                            val now = MouseInfo.getPointerInfo().location ?: break
+                            window.setLocation(
+                                startWindow.x + now.x - startMouse.x,
+                                startWindow.y + now.y - startMouse.y,
+                            )
+                            pressed.consume()
+                        }
+                    }
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
         // Back and forward. A desktop navigation has both, the same two glyphs
         // every other desktop app reaches for; disabled rather than hidden so
         // the row's rhythm does not shift when a stack empties.
@@ -237,13 +271,18 @@ fun Toolbar(
 
         Spacer(Modifier.weight(0.5f))
 
+        // The LCD fills its whole share between the two weighted spacers —
+        // a wide panel, as the reference draws it. A fill=false weight here
+        // was the bug that pushed the volume and the window buttons left:
+        // an idle panel measures its content only, and the unused share
+        // leaks past everything placed after it.
         NowPlayingDisplay(
             title = songTitle,
             artist = songArtist,
             thumbnailUrl = songThumbnailUrl,
             status = status,
             onOpen = onOpenPlayer,
-            modifier = Modifier.weight(1.6f, fill = false).widthIn(max = LCD_MAX_WIDTH),
+            modifier = Modifier.weight(1.6f).height(38.dp),
         )
 
         Spacer(Modifier.weight(0.5f))
@@ -252,21 +291,17 @@ fun Toolbar(
             volumePercent = volumePercent,
             onVolumeChange = onVolumeChange,
         )
+        }
 
-        // The window's own three, flush at the frame's right edge: the
-        // undecorated window has no title bar, so they live at the row's end
-        // and the close button calls the same path as the frame's close.
-        Spacer(Modifier.width(10.dp))
+        // The window's own three, flush at the frame's right edge — outside
+        // the padded row above, so nothing stands between them and the frame.
         WindowButtons(
             maximized = windowMaximized,
             onMinimize = onMinimize,
             onToggleMaximize = onToggleMaximize,
             onClose = onClose,
         )
-                }
-        }
     }
-}
 }
 
 /**
@@ -340,13 +375,18 @@ private fun NowPlayingDisplay(
 ) {
     Row(
         modifier = modifier
-            .height(38.dp)
             .clip(RoundedCornerShape(7.dp))
             .background(MaterialTheme.colorScheme.background)
             .clickable(onClick = onOpen)
             .padding(horizontal = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        // Idle, the wordmark sits centred in the panel the way the reference
+        // app's does; playing, the artwork leads and the lines follow it.
+        horizontalArrangement = if (title == null) {
+            Arrangement.Center
+        } else {
+            Arrangement.spacedBy(9.dp)
+        },
     ) {
         when {
             title != null -> {
@@ -358,7 +398,9 @@ private fun NowPlayingDisplay(
                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
                         .thumbnailBorder(RoundedCornerShape(4.dp)),
                 )
-                Column(Modifier.widthIn(max = LCD_MAX_WIDTH - 80.dp)) {
+                // Weighted, so the marquees are bounded by the panel the
+                // caller allocated and actually scroll when they must.
+                Column(Modifier.weight(1f)) {
                     MarqueeText(
                         text = title,
                         style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),

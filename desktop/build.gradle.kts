@@ -207,6 +207,10 @@ compose.desktop {
             packageName = "BitChord"
             packageVersion = "0.1.0"
             description = "BitChord for Windows"
+            // The project's own mark, on the Start-menu entry and the EXE.
+            windows {
+                iconFile.set(rootProject.file("../Logo.png"))
+            }
         }
     }
 }

@@ -356,8 +356,18 @@ fun main() {
             }
             // The window's backdrop, applied once the frame exists to apply it
             // to: Mica behind the chrome, rounded corners and the standard
-            // shadow over everything.
-            LaunchedEffect(Unit) { applyWindowBackdrop(window) }
+            // shadow over everything — and the project's own mark in the
+            // taskbar and title, which the undecorated frame would otherwise
+            // leave with the JVM's coffee cup.
+            LaunchedEffect(Unit) {
+                applyWindowBackdrop(window)
+                runCatching {
+                    val logo = Thread.currentThread().contextClassLoader
+                        ?.getResourceAsStream("bitchord_logo.png")
+                        ?.use { javax.imageio.ImageIO.read(it) }
+                    if (logo != null) window.iconImage = logo
+                }
+            }
             if (shotPath.isNotBlank() && shotMs != null) {
                 LaunchedEffect(Unit) {
                     delay(shotMs)
@@ -390,7 +400,7 @@ fun main() {
                             }
                     },
                     onClose = quit,
-                    windowScope = this,
+                    window = window,
                     initialQuery = probeQuery,
                     autoPlayFirst = probeAutoplay,
                     autoOpenPlayer = probeOpenPlayer,
