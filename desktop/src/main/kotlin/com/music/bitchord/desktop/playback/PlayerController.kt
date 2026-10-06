@@ -316,6 +316,37 @@ class PlayerController(
         }
     }
 
+    /**
+     * What the row menu's "start radio" stands for: the song's watch queue
+     * (`radio()` — the same `next()` round trip upstream's Automix feeds from)
+     * played **as a queue**, first track first. Deliberately the ordinary
+     * [playFrom] semantics and not the queue's AUTOPLAY tier: filling that
+     * tier — "when the queue runs out, keep going" — is a later slice's
+     * decision, and this is only "play me a station seeded on this song".
+     *
+     * The queue's source title is the seed song's own title, since that is
+     * what the player screen will name as what the queue came from.
+     */
+    fun playRadio(song: Song) {
+        onQueue {
+            setLoading(true)
+            _status.value = PlaybackStatus.Opening(song.title)
+            val fetched = withContext(Dispatchers.IO) { YtMusicRepository.radio(song.videoId) }
+            val songs = fetched.getOrNull().orEmpty()
+            if (songs.isEmpty()) {
+                // Same reasoning as [playCollection]: the flag has no other
+                // hand to be cleared by on this branch.
+                setLoading(false)
+                _status.value = PlaybackStatus.NothingPlayable(song.title)
+                fetched.exceptionOrNull()?.let {
+                    TrackLog.w(TAG, "playRadio: ${song.title} (${song.videoId}) could not be opened", it)
+                }
+            } else {
+                playFrom(songs, 0, PlaybackSourceType.BROWSE, song.title, song.videoId)
+            }
+        }
+    }
+
     // ---- transport ------------------------------------------------------------------
 
     fun togglePlayPause() {

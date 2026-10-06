@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ import com.music.bitchord.desktop.resources.playlists
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.search
 import com.music.bitchord.desktop.resources.search_hint
+import com.music.bitchord.desktop.resources.settings
 import com.music.bitchord.desktop.resources.sidebar_youtube_music
 import com.music.bitchord.desktop.resources.songs
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -76,6 +78,7 @@ fun Sidebar(
     query: String,
     onQueryChange: (String) -> Unit,
     onSearchFocus: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (mode == SidebarMode.RAIL) {
@@ -83,6 +86,7 @@ fun Sidebar(
             current = current,
             onSelect = onSelect,
             onSearch = onSearchFocus,
+            onOpenSettings = onOpenSettings,
             modifier = modifier,
         )
         return
@@ -159,6 +163,17 @@ fun Sidebar(
             }
         }
 
+        // Settings, last and apart: it is not a destination — it opens a
+        // dialog over the shell — so it takes no section header and no
+        // selection state, the way the reference app's own gear sits at the
+        // foot of its sidebar.
+        Spacer(Modifier.height(8.dp))
+        SidebarRow(
+            icon = Icons.Rounded.Settings,
+            label = stringResource(Res.string.settings),
+            selected = false,
+        ) { onOpenSettings() }
+
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -173,6 +188,7 @@ private fun RailSidebar(
     current: Destination,
     onSelect: (Destination) -> Unit,
     onSearch: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -190,6 +206,7 @@ private fun RailSidebar(
         RailRow(BitChordIcons.Clock, current == Destination.RecentlyAdded) { onSelect(Destination.RecentlyAdded) }
         RailRow(BitChordIcons.MusicNote, current == Destination.LibrarySongs) { onSelect(Destination.LibrarySongs) }
         RailRow(BitChordIcons.Queue, current == Destination.LibraryPlaylists) { onSelect(Destination.LibraryPlaylists) }
+        RailRow(Icons.Rounded.Settings, selected = false, onClick = onOpenSettings)
     }
 }
 

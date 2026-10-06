@@ -49,6 +49,7 @@ import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.LibraryPlaylistsPage
 import com.music.bitchord.ui.screens.LibrarySongsPage
 import com.music.bitchord.ui.screens.RecentlyAddedPage
+import com.music.bitchord.ui.screens.SettingsDialog
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -63,6 +64,9 @@ import org.jetbrains.compose.resources.stringResource
 class ShellState {
     /** The full-screen player, over everything. */
     var showPlayer by mutableStateOf(false)
+
+    /** The settings dialog, over the chrome but under the player. */
+    var showSettings by mutableStateOf(false)
 
     /** The row whose action menu is up — the action sheet is a later slice. */
     var menuSong: Song? = null
@@ -194,6 +198,7 @@ fun Shell(
                 query = query,
                 onQueryChange = search::onQueryChange,
                 onSearchFocus = { nav.open(Destination.Search) },
+                onOpenSettings = { state.showSettings = true },
                 modifier = Modifier.background(chromeColor()),
             )
             Box(
@@ -285,6 +290,10 @@ fun Shell(
                 }
             }
         }
+    }
+
+    if (state.showSettings) {
+        SettingsDialog(onDismiss = { state.showSettings = false })
     }
 
     // The player paints last, over the chrome. It is deliberately not

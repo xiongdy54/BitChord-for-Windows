@@ -1,6 +1,10 @@
 package com.music.bitchord.desktop
 
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.Key
@@ -8,6 +12,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
@@ -18,8 +24,10 @@ import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.music.bitchord.data.AppFiles
+import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.FileStore
 import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.playback.QueueShuffle
@@ -28,12 +36,16 @@ import com.music.bitchord.ui.ExploreViewModel
 import com.music.bitchord.ui.HomeViewModel
 import com.music.bitchord.ui.LibraryViewModel
 import com.music.bitchord.ui.SearchViewModel
+import com.music.bitchord.ui.components.LocalSongActions
+import com.music.bitchord.ui.components.SongActions
 import com.music.bitchord.ui.shell.Destination
 import com.music.bitchord.ui.shell.NavState
 import com.music.bitchord.ui.shell.Shell
 import com.music.bitchord.ui.shell.ShellState
 import com.music.bitchord.ui.shell.WindowGeometry
 import com.music.bitchord.ui.theme.BitChordTheme
+import com.music.bitchord.ui.theme.resolveDarkTheme
+import com.music.bitchord.ui.shell.toggleSongLike
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -192,6 +204,13 @@ private const val DWMWCP_ROUND = 2
 private const val DWMWA_SYSTEMBACKDROP_TYPE = 38
 private const val DWMSBT_MAINWINDOW = 2
 
+/**
+ * The app's dark-mode declaration — `20` since Windows 20H1, `19` on the
+ * builds before it that already honoured the value under the old number.
+ */
+private const val DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+private const val DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19
+
 /** The two dwmapi calls the backdrop needs; loaded late, used defensively. */
 private interface DwmApi : com.sun.jna.Library {
     fun DwmSetWindowAttribute(hwnd: com.sun.jna.Pointer, attribute: Int, value: com.sun.jna.Pointer, size: Int): Int
@@ -208,10 +227,17 @@ private interface DwmApi : com.sun.jna.Library {
  * Windows 11), and the corner preference rounds the frame and brings the
  * standard shadow with it.
  *
+ * The fourth write is the dark-mode declaration: Mica renders its own light or
+ * dark material following what the app says it is, not what the user's Windows
+ * theme is — so a forced-dark BitChord on a light Windows has to say so, or
+ * the sliver of backdrop the dark chrome lets through shows the light
+ * material. Attribute 20 is the documented number; older builds numbered it
+ * 19, so a failed write retries there.
+ *
  * Every call is allowed to fail — an older Windows just gets a square,
  * opaque-windowed app — which is why nothing here throws.
  */
-private fun applyWindowBackdrop(window: java.awt.Window) {
+private fun applyWindowBackdrop(window: java.awt.Window, isDark: Boolean) {
     runCatching {
         val hwnd = com.sun.jna.Native.getComponentPointer(window) ?: return
         val dwm = com.sun.jna.Native.load("dwmapi", DwmApi::class.java)
@@ -222,14 +248,21 @@ private fun applyWindowBackdrop(window: java.awt.Window) {
         dwm.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, backdrop, 4)
         val round = com.sun.jna.Memory(4).apply { setInt(0, DWMWCP_ROUND) }
         dwm.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, round, 4)
+        val dark = com.sun.jna.Memory(4).apply { setInt(0, if (isDark) 1 else 0) }
+        if (dwm.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, dark, 4) != 0) {
+            dwm.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY, dark, 4)
+        }
     }
 }
 
 fun main() {
     // Before anything reads a string resource: the resource environment follows
     // the JVM default locale, which is what makes the English pass possible on
-    // a Chinese machine.
-    System.getProperty("bitchord.locale")
+    // a Chinese machine. An explicit property — the scripted screenshot pass's
+    // override — wins, exactly as the window-geometry probes do; the user's
+    // own choice in settings outranks the machine's locale but not the probe.
+    val propertyLocale = System.getProperty("bitchord.locale")
+    (propertyLocale ?: AppSettings.language.value)
         ?.let { Locale.setDefault(Locale.forLanguageTag(it)) }
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -357,13 +390,19 @@ fun main() {
                     quit()
                 }
             }
+            // The appearance switch, resolved once here: the same answer feeds
+            // the colour scheme and the window's Mica backdrop, so the two
+            // cannot drift out of step (see [resolveDarkTheme]).
+            val themeSetting by AppSettings.themeSetting.collectAsState()
+            val darkTheme = resolveDarkTheme(themeSetting, isSystemInDarkTheme())
             // The window's backdrop, applied once the frame exists to apply it
-            // to: Mica behind the chrome, rounded corners and the standard
-            // shadow over everything — and the project's own mark in the
-            // taskbar and title, which the undecorated frame would otherwise
-            // leave with the JVM's coffee cup.
+            // to, and re-declared whenever the appearance switch moves: Mica
+            // renders the material the app says it is, so the backdrop has to
+            // hear about a forced dark mode the same moment the chrome does.
+            LaunchedEffect(darkTheme) {
+                applyWindowBackdrop(window, darkTheme)
+            }
             LaunchedEffect(Unit) {
-                applyWindowBackdrop(window)
                 // The mark at every size the shell asks for — 16 for the
                 // taskbar, 32 for alt-tab, and up — scaled once, off the one
                 // 512 original, so Windows never has to shrink a single huge
@@ -407,8 +446,55 @@ fun main() {
                     quit()
                 }
             }
-            BitChordTheme {
-                Shell(
+            // The row menu's effects, bound to the player and the navigation
+            // stack this scope owns. The menu itself is pure surface — see
+            // SongContextMenu.kt — the rows' right-clicks land on these.
+            val clipboard = LocalClipboardManager.current
+            val songActions = remember(player, nav, clipboard) {
+                SongActions(
+                    playNext = player::enqueueNext,
+                    addToQueue = player::enqueueLast,
+                    toggleLike = ::toggleSongLike,
+                    startRadio = player::playRadio,
+                    openAlbum = { song ->
+                        song.albumId?.let { albumId ->
+                            nav.open(
+                                Destination.Detail(
+                                    kind = BrowseType.ALBUM,
+                                    browseId = albumId,
+                                    title = song.albumName ?: song.title,
+                                    subtitle = song.artist,
+                                    thumbnailUrl = song.thumbnailUrl,
+                                ),
+                            )
+                        }
+                    },
+                    openArtist = { song ->
+                        song.artistId?.let { artistId ->
+                            nav.open(
+                                Destination.Detail(
+                                    kind = BrowseType.ARTIST,
+                                    browseId = artistId,
+                                    title = song.artist,
+                                    subtitle = null,
+                                    thumbnailUrl = song.thumbnailUrl,
+                                ),
+                            )
+                        }
+                    },
+                    copyLink = { song ->
+                        clipboard.setText(
+                            AnnotatedString("https://music.youtube.com/watch?v=${song.videoId}"),
+                        )
+                    },
+                    copyLog = { clipboard.setText(AnnotatedString(DebugLog.dump())) },
+                    currentVideoId = { player.state.value.song?.videoId },
+                )
+            }
+
+            BitChordTheme(darkTheme = darkTheme) {
+                CompositionLocalProvider(LocalSongActions provides songActions) {
+                    Shell(
                     player = player,
                     home = home,
                     search = search,
@@ -436,6 +522,7 @@ fun main() {
                     autoPlayFirst = probeAutoplay,
                     autoOpenPlayer = probeOpenPlayer,
                 )
+                }
             }
         }
     }

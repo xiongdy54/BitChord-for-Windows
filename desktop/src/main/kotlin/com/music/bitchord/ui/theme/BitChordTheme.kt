@@ -6,6 +6,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -15,6 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 // the multiplatform expect, whose only overload wants an Android resId.
 import androidx.compose.ui.text.platform.Font as PlatformFont
 import androidx.compose.ui.unit.sp
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ThemeSetting
 
 // Ported from app/src/main/java/com/music/bitchord/ui/theme/Theme.kt. The
 // Android-only parts (SystemBarIcons / StatusBarIcons, which drive the system
@@ -105,12 +109,35 @@ private fun Typography.withFamily(family: FontFamily) = Typography(
 
 @Composable
 fun BitChordTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    /**
+     * An explicit answer wins — `Main.kt` resolves it once and hands the same
+     * value to the Mica backdrop, so the two cannot drift. Left null, the
+     * setting is observed here and the theme follows it live.
+     */
+    darkTheme: Boolean? = null,
     content: @Composable () -> Unit,
 ) {
+    val setting by AppSettings.themeSetting.collectAsState()
+    val resolved = darkTheme ?: resolveDarkTheme(setting, isSystemInDarkTheme())
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = if (resolved) DarkColors else LightColors,
         typography = bitChordTypography(),
         content = content,
     )
+}
+
+/**
+ * The user's appearance choice against what the machine is doing.
+ *
+ * A pure function rather than a `when` inside the theme's default argument
+ * because the same answer has two readers that must never disagree: the
+ * colour scheme above, and the window's Mica backdrop — DWM only renders its
+ * dark material if the app declares dark mode itself, so `Main.kt` feeds the
+ * same result to [com.music.bitchord.desktop.applyWindowBackdrop]. Pin it as
+ * a table instead of trusting two call sites to spell it alike.
+ */
+fun resolveDarkTheme(setting: ThemeSetting, systemDark: Boolean): Boolean = when (setting) {
+    ThemeSetting.SYSTEM -> systemDark
+    ThemeSetting.LIGHT -> false
+    ThemeSetting.DARK -> true
 }

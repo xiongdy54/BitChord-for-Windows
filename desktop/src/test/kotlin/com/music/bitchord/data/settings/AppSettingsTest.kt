@@ -48,4 +48,43 @@ class AppSettingsTest {
         assertEquals("true", reread.getString("shuffle_enabled", "false"))
         assertEquals("1", reread.getString("repeat_mode", "0"))
     }
+
+    @Test
+    fun `the theme setting round-trips by its enum name`() {
+        val file = tempFile()
+        FileStore(file).putString("theme_setting", ThemeSetting.DARK.name)
+        // The same expression AppSettings.themeSetting's initialiser reads.
+        val stored = FileStore(file).getString("theme_setting", ThemeSetting.SYSTEM.name)
+        assertEquals(
+            ThemeSetting.DARK,
+            ThemeSetting.entries.firstOrNull { it.name == stored } ?: ThemeSetting.SYSTEM,
+        )
+    }
+
+    @Test
+    fun `a stored theme the code no longer knows falls back to system`() {
+        // A settings file from a future or past build must not break the
+        // object's initialiser — the fallback is part of the read, not the
+        // caller's job.
+        val file = tempFile()
+        FileStore(file).putString("theme_setting", "OLED_BUT_MORE")
+        val stored = FileStore(file).getString("theme_setting", ThemeSetting.SYSTEM.name)
+        assertEquals(
+            ThemeSetting.SYSTEM,
+            ThemeSetting.entries.firstOrNull { it.name == stored } ?: ThemeSetting.SYSTEM,
+        )
+    }
+
+    @Test
+    fun `the language is absent when the stored tag is blank`() {
+        // `setLanguage(null)` writes the empty string; reading it back must be
+        // null again, not an empty tag that `Locale.forLanguageTag` would
+        // silently turn into the undetermined locale.
+        val file = tempFile()
+        FileStore(file).putString("language", "")
+        assertEquals(
+            null,
+            FileStore(file).getString("language", "").takeIf { it.isNotBlank() },
+        )
+    }
 }

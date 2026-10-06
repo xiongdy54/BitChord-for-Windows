@@ -95,6 +95,13 @@ tasks.test {
 // — so the copy goes where the plugin actually looks.
 val composeResourcesDir = layout.projectDirectory.dir("src/main/composeResources")
 val syncAppStrings by tasks.registering(Copy::class) {
+    // The desktop halves are merged in by the filters below, so an edit to
+    // them must re-run this task: a Copy task tracks what it copies, and
+    // these files are only read.
+    inputs.files(
+        layout.projectDirectory.file("src/main/desktopStrings/values/strings.xml"),
+        layout.projectDirectory.file("src/main/desktopStrings/values-zh/strings.xml"),
+    )
     from(rootProject.file("../app/src/main/res")) {
         include("values/strings.xml")
         include("values-zh/strings.xml")

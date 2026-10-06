@@ -101,6 +101,39 @@ object AppSettings {
     val shuffleEnabled = MutableStateFlow(prefs.getString(KEY_SHUFFLE_ENABLED, "false") == "true")
     val repeatMode = MutableStateFlow(prefs.getString(KEY_REPEAT_MODE, "0").toIntOrNull() ?: RepeatMode.OFF)
 
+    /**
+     * Which colour scheme the window paints, and the only way the desktop
+     * build's user gets a dark UI on a light Windows. Upstream has no
+     * equivalent switch — it follows the system, and the desktop build did too
+     * until this existed — so the names are the desktop's own. Persisted
+     * because a user who chose dark means it next launch too.
+     */
+    val themeSetting = MutableStateFlow(
+        prefs.getString(KEY_THEME_SETTING, ThemeSetting.SYSTEM.name)
+            .let { stored -> ThemeSetting.entries.firstOrNull { it.name == stored } }
+            ?: ThemeSetting.SYSTEM,
+    )
+
+    fun setThemeSetting(value: ThemeSetting) {
+        themeSetting.value = value
+        prefs.putString(KEY_THEME_SETTING, value.name)
+    }
+
+    /**
+     * The interface language as a BCP-47 tag (`"en"`, `"zh"`), or null to
+     * follow whatever the machine's JVM default is. Strings resolve from the
+     * JVM locale, which is decided once before composition — so a change here
+     * takes effect on the next launch, which is what the settings dialog says.
+     */
+    val language: MutableStateFlow<String?> = MutableStateFlow(
+        prefs.getString(KEY_LANGUAGE, "").takeIf { it.isNotBlank() },
+    )
+
+    fun setLanguage(value: String?) {
+        language.value = value
+        prefs.putString(KEY_LANGUAGE, value.orEmpty())
+    }
+
     fun setShuffleEnabled(value: Boolean) {
         shuffleEnabled.value = value
         prefs.putString(KEY_SHUFFLE_ENABLED, value.toString())
@@ -113,4 +146,18 @@ object AppSettings {
 
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
+    private const val KEY_THEME_SETTING = "theme_setting"
+    private const val KEY_LANGUAGE = "language"
+}
+
+/** Which colour scheme the window paints. See [AppSettings.themeSetting]. */
+enum class ThemeSetting {
+    /** Whatever the machine itself is set to — the behaviour before any switch existed. */
+    SYSTEM,
+
+    /** Light, whatever the machine says. */
+    LIGHT,
+
+    /** Dark, whatever the machine says. */
+    DARK,
 }
