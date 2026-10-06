@@ -372,6 +372,8 @@ internal fun LandscapeCredits(
     likeStatus: LikeStatus,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -381,17 +383,17 @@ internal fun LandscapeCredits(
             modifier = Modifier.weight(1f),
             label = "landscapeCredits",
         ) {
-            // The title and the artist carried `Modifier.opensPage(...)` upstream, tappable
-            // wherever YouTube handed over a browse id. Both pages are a later slice and no
-            // task in this one owns them, so the entry went along with the `onOpenAlbum` /
-            // `onOpenArtist` parameters rather than staying lit over an empty callback. The
-            // ledger is at the top of NowPlayingScreen.kt.
+            // The title and the artist carry `Modifier.opensPage(...)` again —
+            // tappable wherever YouTube handed over a browse id, now that slice
+            // 4's detail page exists to receive the tap. When the id is absent
+            // the helper is a no-op and the line simply stays text.
             Column {
                 var titleOverflowing by remember { mutableStateOf(false) }
                 MarqueeText(
                     text = song.title,
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
+                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
                     onOverflowChange = { titleOverflowing = it },
                     leading = if (song.isExplicit == true) {
                         { ExplicitBadge(Color.White) }
@@ -404,6 +406,7 @@ internal fun LandscapeCredits(
                     text = song.artist,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.W500),
                     color = Color.White.copy(alpha = 0.55f),
+                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
                     // A title that's also scrolling gets to go first — starting
                     // together reads as clutter, so the artist waits a beat.
                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,

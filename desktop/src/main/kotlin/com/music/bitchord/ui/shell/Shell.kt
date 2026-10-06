@@ -313,6 +313,38 @@ fun Shell(
         PlayerPage(
             player = player,
             state = state,
+            // The player overlay paints over every page, so a tap that means
+            // "take me to that album" has to dismiss it on the way through —
+            // the detail page opens underneath and the overlay would only
+            // keep the user from seeing it.
+            onOpenAlbum = { browseId ->
+                song?.let {
+                    nav.open(
+                        Destination.Detail(
+                            kind = BrowseType.ALBUM,
+                            browseId = browseId,
+                            title = it.albumName ?: it.title,
+                            subtitle = it.artist,
+                            thumbnailUrl = it.thumbnailUrl,
+                        ),
+                    )
+                    state.showPlayer = false
+                }
+            },
+            onOpenArtist = { browseId ->
+                song?.let {
+                    nav.open(
+                        Destination.Detail(
+                            kind = BrowseType.ARTIST,
+                            browseId = browseId,
+                            title = it.artist,
+                            subtitle = null,
+                            thumbnailUrl = it.thumbnailUrl,
+                        ),
+                    )
+                    state.showPlayer = false
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {

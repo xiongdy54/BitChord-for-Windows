@@ -418,13 +418,12 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 //    scrubber's `loading` has nothing left to be true for, and `InlineQueue` is
 //    handed `autoplayEnabled = false` — the AUTOPLAY tier renders because nothing
 //    fills it, which is decision 6's stated implementation.
-//  * **The album and the artist page** (a later slice, and no task in this one) —
-//    `onOpenAlbum` / `onOpenArtist` and the four `Modifier.opensPage(...)` wraps they hung on
-//    the title and the artist line, two here and two in `LandscapePlayer.kt`. Task 11's
-//    adapter had nothing to hand them: this build opens no browse page, and slice 1's rule is
-//    that the entry goes rather than the tap staying live over an empty callback. The helper
-//    survives at `PlayerControls.kt:846` with no caller, in the company of
-//    `VOLUME_ROW_HEIGHT`.
+//  * **The album and the artist page** — `onOpenAlbum` / `onOpenArtist` and the four
+//    `Modifier.opensPage(...)` wraps they hung on the title and the artist line, two
+//    here and two in `LandscapePlayer.kt`, came back in slice 4 once the shell's
+//    detail page existed to receive the tap (the entries had gone rather than stay
+//    live over an empty callback, which was slice 1's rule). `opensPage` itself
+//    never left: `PlayerControls.kt:846`.
 //
 // Settings this file used to read and does not have on this platform — desktop
 // `AppSettings` carries seven fields, none of them the player's — so each of these
@@ -575,6 +574,14 @@ fun NowPlayingScreen(
     onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
     onOpenMenu: () -> Unit,
+    /**
+     * The credits lead somewhere again: slice 3 delivered the detail page
+     * these two parameters were waiting for, and the title and the artist
+     * line carry `Modifier.opensPage(...)` once more — a missing browse id
+     * simply keeps the line text.
+     */
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String) -> Unit,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -1147,6 +1154,8 @@ fun NowPlayingScreen(
                                 likeStatus = likeStatus,
                                 onToggleLike = onToggleLike,
                                 onOpenMenu = onOpenMenu,
+                                onOpenAlbum = onOpenAlbum,
+                                onOpenArtist = onOpenArtist,
                             )
                         },
                         scrubber = {
@@ -1870,14 +1879,11 @@ fun NowPlayingScreen(
                             animationSpec = tween(durationMillis = 300),
                             label = "playerCredits",
                         ) {
-                            // Upstream wrapped both lines in `Modifier.opensPage(...)`, which
-                            // made a title tappable for its album page and an artist for theirs
-                            // wherever YouTube handed over the browse id. Neither page exists in
-                            // this build and no task in this slice owns one, so the entries went
-                            // with the `onOpenAlbum` / `onOpenArtist` parameters rather than
-                            // staying on screen as two lines that light up under a pointer and
-                            // answer nothing. The helper is still there (`PlayerControls.kt:846`)
-                            // for the slice that brings the pages back; it has no caller today.
+                            // The credits carry `Modifier.opensPage(...)` again: the title
+                            // opens its album page and the artist theirs, wherever YouTube
+                            // handed over the browse id — the pages `onOpenAlbum` /
+                            // `onOpenArtist` waited for exist as of slice 3. A missing id
+                            // keeps the helper a no-op and the line text.
                             Column {
                                 MarqueeText(
                                     text = song.title,
@@ -1885,6 +1891,7 @@ fun NowPlayingScreen(
                                         fontSize = 20.sp,
                                     ),
                                     color = Color.White,
+                                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
                                     enabled = scrolls,
                                     leading = if (song.isExplicit == true) {
                                         { ExplicitBadge(color = Color.White) }
@@ -1900,6 +1907,7 @@ fun NowPlayingScreen(
                                         fontSize = 20.sp,
                                     ),
                                     color = Color.White.copy(alpha = 0.55f),
+                                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
                                     enabled = scrolls,
                                     // A title that's also scrolling gets to go first —
                                     // starting together reads as clutter, so the artist

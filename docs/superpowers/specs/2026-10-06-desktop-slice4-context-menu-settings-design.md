@@ -63,3 +63,18 @@
 ## 6. 本切片不做
 
 登录、下载、歌单增删（要登录）、分享、睡眠定时/歌词偏移菜单项（无功能背书）、设置页高级项（音频质量族——与下载/本地音乐同片）、语言热切换、⋮ 按钮入口、行内多选。
+
+## 7. 实施记录（2026-10-07 回填）
+
+**交付**：决策 1–10 全部落地。行右键菜单（`SongContextMenuArea` + `songActions` 能力表）、`PlayerController.playRadio`、播放页 `onOpenAlbum/onOpenArtist` 四处 `opensPage` 回挂（竖屏两处 + `LandscapeCredits` 两处，`PlayerPage` 适配层 + Shell 接 `nav.open(Detail(...))`，打开时顺带收起播放页覆盖层——它盖着一切，不收起用户看不到新页）、设置对话框四组（外观/语言/nerd stats/关于）、侧边栏底部齿轮行（rail 同）、`resolveDarkTheme` + `DWMWA_USE_IMMERSIVE_DARK_MODE(=20，失败回退 19)`、语言经 `bitchord.locale` 管道重启生效、`DebugLog` 200 行环形。
+
+**与设计的偏离**：
+
+1. **`ContextMenuArea` 在 foundation，不在 ui.window**——设计时假设的 `ui.window` 版（带 `ContextMenuState`/图标）随桌面上下文菜单重构被移除了；现行公开 API 是 `androidx.compose.foundation.ContextMenuArea(items: () -> List<ContextMenuItem>)`，自带右键检测与菜单绘制。决策 1 的自绘回退**没有用上**，但决策 1 的核心（纯函数构建、组件可换）原样成立。这也意味着"单一宿主 + 锚点坐标"的中间方案被放弃：Area 自己处理定位，行直接包 Area 更简单。
+2. **菜单是平铺的**：foundation 的 `ContextMenuItem` 列表没有分隔符，设计的"两组"用条目顺序表达。
+3. **`PointerEventType.SecondaryClick` 与 `buttons.isSecondaryPressed` 在 CMP 1.12.1 均不可公开调用**（skiko 侧扩展是 internal 的，编译期探针证实）——这正是必须走 `ContextMenuArea` 的原因，也写进了 SongContextMenu.kt 的注释。
+4. **队列行不包菜单**（§3 曾列 PlayerQueue.kt）：队列行的自定义拖拽布局不动，且"下一首播放"在队列里语义重复；等实测反馈再定。
+5. **语言优先级与风险表相反**：`bitchord.locale` 探针属性**赢过**设置项（与窗口几何探针"显式覆盖记忆值"的既有语义一致）；设置项赢过系统 locale。
+6. **探针扩展**：`probeDestination=settings` 打开设置对话框；`bitchord.theme=LIGHT|DARK|SYSTEM` 只读覆盖主题（不写用户设置文件），供截图强制明暗两态。
+
+**验证**：22 套件 / 201 测试全绿（新增：`songActions` 能力表 6、`resolveDarkTheme` 判定表 2、`LogRing` 6、AppSettings 往返 +2）；截图四张（`.shots/slice4/`）：设置对话框中英双语、强制浅色在深色 Windows 下全窗口生效（chrome/内容/窗框一致）、主页回归正常。右键菜单与电台开播是鼠标交互，探针无法代替人手——实机待验。

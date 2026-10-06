@@ -44,3 +44,7 @@ keystore.properties
 
 # AI agent configuration
 AGENTS.md
+
+# Local-only build helper (a Maven Central mirror for this machine's network;
+# see the file itself). Never part of the project's build.
+.local-mirror.init.gradle

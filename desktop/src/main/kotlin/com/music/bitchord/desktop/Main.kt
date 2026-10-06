@@ -79,6 +79,16 @@ private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull
 private val probeDestination = System.getProperty("bitchord.probeDestination").orEmpty()
 
 /**
+ * The appearance the screenshot pass wants — `SYSTEM`, `LIGHT` or `DARK` — as a
+ * read-only override of [AppSettings.themeSetting]. Read-only because a probe
+ * must not leave a mark on the user's settings file; it answers to the same
+ * [resolveDarkTheme] the switch does, so a forced dark run exercises the real
+ * path, backdrop included.
+ */
+private val probeTheme = System.getProperty("bitchord.theme")
+    ?.let { stored -> com.music.bitchord.data.settings.ThemeSetting.entries.firstOrNull { it.name == stored } }
+
+/**
  * The scripted screenshot pair: `shot=<path>` + `shotMs=<delay>` takes one
  * capture of the window's own bounds after the delay — long enough for the
  * page's requests to land — and quits. A screen capture rather than a scene
@@ -297,6 +307,9 @@ fun main() {
         // its content: nothing `remember`ed inside that content would be reachable from here.
         // A debug query opens on search, since that is the screen it drives.
         val shellState = remember { ShellState() }
+        // The settings dialog is window-level, not a destination — but the
+        // scripted screenshot pass opens it the same way it opens pages.
+        if (probeDestination == "settings") shellState.showSettings = true
         val nav = remember {
             NavState().apply {
                 if (probeQuery.isNotBlank()) open(Destination.Search)
@@ -392,9 +405,10 @@ fun main() {
             }
             // The appearance switch, resolved once here: the same answer feeds
             // the colour scheme and the window's Mica backdrop, so the two
-            // cannot drift out of step (see [resolveDarkTheme]).
+            // cannot drift out of step (see [resolveDarkTheme]). The probe's
+            // theme, when given, rides in front of the stored one.
             val themeSetting by AppSettings.themeSetting.collectAsState()
-            val darkTheme = resolveDarkTheme(themeSetting, isSystemInDarkTheme())
+            val darkTheme = resolveDarkTheme(probeTheme ?: themeSetting, isSystemInDarkTheme())
             // The window's backdrop, applied once the frame exists to apply it
             // to, and re-declared whenever the appearance switch moves: Mica
             // renders the material the app says it is, so the backdrop has to

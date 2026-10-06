@@ -47,7 +47,18 @@ import kotlin.math.roundToInt
  * that stops being verifiable against the app.
  */
 @Composable
-fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier = Modifier) {
+fun PlayerPage(
+    player: PlayerController,
+    state: ShellState,
+    /**
+     * Where the credits lead: the album page for the title, the artist page
+     * for the artist line. The screen hands over the browse id; the shell
+     * owns the navigation stack, so the destination is built up there.
+     */
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val snapshot by player.state.collectAsState()
     val shuffle by player.shuffleEnabled.collectAsState()
     val volumePercent by player.volume.collectAsState()
@@ -104,6 +115,8 @@ fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier =
             // `state.menuSong` in Shell. The player's ⋮ is upstream's own glyph and is live from
             // the moment that lands; until then this is the only half of it that exists.
             onOpenMenu = { state.menuSong = song },
+            onOpenAlbum = onOpenAlbum,
+            onOpenArtist = onOpenArtist,
             windowWidth = windowWidth,
             windowHeight = windowHeight,
             // `PlayerController.volume` is 0..100 and the bar is 0f..1f, because `ThinSlider` wants

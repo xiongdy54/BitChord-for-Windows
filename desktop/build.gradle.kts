@@ -202,6 +202,7 @@ compose.desktop {
             "bitchord.windowWidth",
             "bitchord.windowHeight",
             "bitchord.locale",
+            "bitchord.theme",
             // DebugLog's own gate. It defaults to on, so nothing breaks without it, but a
             // verification pass that says `-Pbitchord.debug=true` has to be able to mean it —
             // and the player's first screenshots are read out of this log.
