@@ -1,10 +1,22 @@
 package com.music.bitchord.ui.shell
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
@@ -15,11 +27,14 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.back
 import com.music.bitchord.ui.player.NowPlayingScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.stringResource
 import kotlin.math.roundToInt
 
 /**
@@ -52,52 +67,74 @@ fun PlayerPage(player: PlayerController, state: ShellState, modifier: Modifier =
 
     val (windowWidth, windowHeight) = windowDimensions()
 
-    NowPlayingScreen(
-        song = song,
-        isPlaying = snapshot.isPlaying,
-        isLoading = snapshot.isLoading,
-        // The object, never a value read up here: the playhead ticks twice a second and this
-        // scope is the whole player. See `PlaybackPosition`.
-        position = player.position,
-        durationMs = snapshot.durationMs,
-        queue = snapshot.queue,
-        queueIndex = snapshot.queueIndex,
-        hasPrevious = snapshot.hasPrevious,
-        hasNext = snapshot.hasNext,
-        repeatMode = snapshot.repeatMode,
-        shuffleEnabled = shuffle,
-        likeStatus = overrides[song.videoId] ?: LikeStatus.INDIFFERENT,
-        onToggleLike = { toggleSongLike(song, overrides[song.videoId] == LikeStatus.LIKE) },
-        onPlayPause = player::togglePlayPause,
-        onNext = player::next,
-        onPrevious = player::previous,
-        onSeekFraction = player::seekToFraction,
-        onToggleShuffle = player::toggleShuffle,
-        onCycleRepeat = player::cycleRepeat,
-        onJumpTo = player::jumpTo,
-        onRemoveFromQueue = player::removeFromQueue,
-        onMoveInQueue = player::moveInQueue,
-        // Upstream pressed the player's own swipe gestures down while a queue row was being
-        // dragged (app :575), because on Android the two gestures compete for the same vertical
-        // drag. A desktop window has no swipe-to-dismiss on the player, so there is nothing to
-        // suppress; it renders nothing either, which is what makes an empty lambda honest here
-        // rather than a dead control.
-        onQueueDragActiveChange = { },
-        onClearQueue = player::clearQueue,
-        // Task 12 renders this menu — play next, add to queue, like, copy log — out of
-        // `state.menuSong` in Shell. The player's ⋮ is upstream's own glyph and is live from
-        // the moment that lands; until then this is the only half of it that exists.
-        onOpenMenu = { state.menuSong = song },
-        windowWidth = windowWidth,
-        windowHeight = windowHeight,
-        // `PlayerController.volume` is 0..100 and the bar is 0f..1f, because `ThinSlider` wants
-        // the fraction — so the scale is mapped here, at the one seam that knows both sides.
-        // `setVolume` coerces to 0..100 itself, so nothing else is needed at the seam, and the
-        // write stays continuous with the drag for the reason recorded on the parameter.
-        volume = volumePercent / 100f,
-        onVolumeChange = { player.setVolume((it * 100).roundToInt()) },
-        modifier = modifier,
-    )
+    Box(modifier) {
+        NowPlayingScreen(
+            song = song,
+            isPlaying = snapshot.isPlaying,
+            isLoading = snapshot.isLoading,
+            // The object, never a value read up here: the playhead ticks twice a second and this
+            // scope is the whole player. See `PlaybackPosition`.
+            position = player.position,
+            durationMs = snapshot.durationMs,
+            queue = snapshot.queue,
+            queueIndex = snapshot.queueIndex,
+            hasPrevious = snapshot.hasPrevious,
+            hasNext = snapshot.hasNext,
+            repeatMode = snapshot.repeatMode,
+            shuffleEnabled = shuffle,
+            likeStatus = overrides[song.videoId] ?: LikeStatus.INDIFFERENT,
+            onToggleLike = { toggleSongLike(song, overrides[song.videoId] == LikeStatus.LIKE) },
+            onPlayPause = player::togglePlayPause,
+            onNext = player::next,
+            onPrevious = player::previous,
+            onSeekFraction = player::seekToFraction,
+            onToggleShuffle = player::toggleShuffle,
+            onCycleRepeat = player::cycleRepeat,
+            onJumpTo = player::jumpTo,
+            onRemoveFromQueue = player::removeFromQueue,
+            onMoveInQueue = player::moveInQueue,
+            // Upstream pressed the player's own swipe gestures down while a queue row was being
+            // dragged (app :575), because on Android the two gestures compete for the same vertical
+            // drag. A desktop window has no swipe-to-dismiss on the player, so there is nothing to
+            // suppress; it renders nothing either, which is what makes an empty lambda honest here
+            // rather than a dead control.
+            onQueueDragActiveChange = { },
+            onClearQueue = player::clearQueue,
+            // Task 12 renders this menu — play next, add to queue, like, copy log — out of
+            // `state.menuSong` in Shell. The player's ⋮ is upstream's own glyph and is live from
+            // the moment that lands; until then this is the only half of it that exists.
+            onOpenMenu = { state.menuSong = song },
+            windowWidth = windowWidth,
+            windowHeight = windowHeight,
+            // `PlayerController.volume` is 0..100 and the bar is 0f..1f, because `ThinSlider` wants
+            // the fraction — so the scale is mapped here, at the one seam that knows both sides.
+            // `setVolume` coerces to 0..100 itself, so nothing else is needed at the seam, and the
+            // write stays continuous with the drag for the reason recorded on the parameter.
+            volume = volumePercent / 100f,
+            onVolumeChange = { player.setVolume((it * 100).roundToInt()) },
+            modifier = Modifier.fillMaxSize(),
+        )
+        // The player's way back. Esc has always closed this overlay, but a key
+        // is not an affordance — the chevron sits where the phone layout's
+        // drag-down handle is, over the artwork's backdrop, and the button
+        // stays clear of the press-swallowing overlay because a child that
+        // consumes a press stops it from ever reaching the parent.
+        IconButton(
+            onClick = { state.showPlayer = false },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 22.dp, top = 22.dp)
+                .size(42.dp)
+                .background(Color.White.copy(alpha = 0.12f), CircleShape),
+        ) {
+            Icon(
+                Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                contentDescription = stringResource(Res.string.back),
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.size(26.dp),
+            )
+        }
+    }
 }
 
 /**

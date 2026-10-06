@@ -15,9 +15,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CropSquare
+import androidx.compose.material.icons.rounded.FilterNone
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.VolumeDown
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
@@ -33,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.WindowScope
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -70,9 +76,13 @@ import org.jetbrains.compose.resources.stringResource
 /**
  * The Apple Music toolbar, laid out the way the Windows app lays it out:
  * shuffle / previous / play / next / repeat on the left, the now-playing
- * display as a floating panel in the middle, the volume at the right — one
- * row of [TOOLBAR_HEIGHT], painted in the sidebar's chrome colour so the two
- * read as one surface.
+ * display as a floating panel in the middle, the volume at the right, and the
+ * window's own three buttons closing the row — one row of [TOOLBAR_HEIGHT],
+ * painted in the sidebar's chrome colour so the two read as one surface.
+ *
+ * The whole row is the window's drag area (the undecorated window has no
+ * title bar left to drag), and it spans the full window width: the sidebar
+ * starts below it, exactly as the reference app draws it.
  *
  * Everything here is a *junction*, not a surface of its own: every value it
  * shows arrives as a parameter and every gesture leaves as a callback, so the
@@ -101,15 +111,27 @@ fun Toolbar(
     onNext: () -> Unit,
     onCycleRepeat: () -> Unit,
     onOpenPlayer: () -> Unit,
+    windowMaximized: Boolean,
+    onMinimize: () -> Unit,
+    onToggleMaximize: () -> Unit,
+    onClose: () -> Unit,
+    /**
+     * The window's own scope, handed down so this row can be the drag area:
+     * [WindowDraggableArea] is an extension on it, and this is the one place
+     * a page needs the frame.
+     */
+    windowScope: WindowScope,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(TOOLBAR_HEIGHT)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    with(windowScope) {
+        WindowDraggableArea(modifier = modifier) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(TOOLBAR_HEIGHT)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
         // Back and forward. A desktop navigation has both, the same two glyphs
         // every other desktop app reaches for; disabled rather than hidden so
         // the row's rhythm does not shift when a stack empties.
@@ -208,6 +230,58 @@ fun Toolbar(
             volumePercent = volumePercent,
             onVolumeChange = onVolumeChange,
         )
+
+        // The window's own three, where the reference app keeps them: the
+        // undecorated window has no title bar, so they live at the row's end
+        // and the close button calls the same path as the frame's close.
+        Spacer(Modifier.width(10.dp))
+        WindowButtons(
+            maximized = windowMaximized,
+            onMinimize = onMinimize,
+            onToggleMaximize = onToggleMaximize,
+            onClose = onClose,
+        )
+            }
+        }
+    }
+}
+
+/**
+ * Minimize, maximize/restore, close — the window's own chrome, drawn to sit
+ * on this dark toolbar the way the native buttons never did.
+ */
+@Composable
+private fun WindowButtons(
+    maximized: Boolean,
+    onMinimize: () -> Unit,
+    onToggleMaximize: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onMinimize, modifier = Modifier.size(38.dp)) {
+            Icon(
+                Icons.Rounded.Remove,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+        IconButton(onClick = onToggleMaximize, modifier = Modifier.size(38.dp)) {
+            Icon(
+                if (maximized) Icons.Rounded.FilterNone else Icons.Rounded.CropSquare,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(38.dp)) {
+            Icon(
+                Icons.Rounded.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(17.dp),
+            )
+        }
     }
 }
 

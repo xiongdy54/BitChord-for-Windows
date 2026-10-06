@@ -272,6 +272,11 @@ fun main() {
         Window(
             onCloseRequest = quit,
             state = windowState,
+            // No native frame: the toolbar is the title bar. The window is
+            // still resizable (Compose's undecorated resizer takes the
+            // edges) and still draggable (the toolbar row is the drag
+            // area); the three buttons it lost live at the toolbar's end.
+            undecorated = true,
             title = "BitChord for Windows",
             // Escape closes the full-screen player; Alt+←/→ walk the navigation
             // stack. Both belong at the window rather than in the pages, where
@@ -323,6 +328,21 @@ fun main() {
                     detailPages = detailPages,
                     nav = nav,
                     state = shellState,
+                    // The window buttons' half of the frame. Read here, in the
+                    // composable scope that owns the window state, so a
+                    // maximize/restore recomposes the toolbar's glyph.
+                    windowMaximized = windowState.placement == WindowPlacement.Maximized,
+                    onMinimize = { windowState.isMinimized = true },
+                    onToggleMaximize = {
+                        windowState.placement =
+                            if (windowState.placement == WindowPlacement.Maximized) {
+                                WindowPlacement.Floating
+                            } else {
+                                WindowPlacement.Maximized
+                            }
+                    },
+                    onClose = quit,
+                    windowScope = this,
                     initialQuery = probeQuery,
                     autoPlayFirst = probeAutoplay,
                     autoOpenPlayer = probeOpenPlayer,

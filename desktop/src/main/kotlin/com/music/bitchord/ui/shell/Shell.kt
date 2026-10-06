@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.WindowScope
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -92,6 +93,12 @@ fun Shell(
     detailPages: DetailPages,
     nav: NavState,
     state: ShellState,
+    windowMaximized: Boolean,
+    onMinimize: () -> Unit,
+    onToggleMaximize: () -> Unit,
+    onClose: () -> Unit,
+    /** The frame's scope — the toolbar's drag area is an extension on it. */
+    windowScope: WindowScope,
     initialQuery: String = "",
     autoPlayFirst: Boolean = false,
     autoOpenPlayer: Boolean = false,
@@ -130,7 +137,7 @@ fun Shell(
     val songsSourceTitle = stringResource(Res.string.songs)
     val recentsSourceTitle = stringResource(Res.string.recently_added)
 
-    Row(
+    Column(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
@@ -146,49 +153,58 @@ fun Shell(
                 }
             },
     ) {
-        Sidebar(
-            current = current,
-            playlists = playlists,
-            mode = mode,
-            onSelect = nav::open,
-            query = query,
-            onQueryChange = search::onQueryChange,
-            onSearchFocus = { nav.open(Destination.Search) },
+        // The toolbar spans the full window width, the sidebar starting
+        // below it — the undecorated window has no title bar of its own, so
+        // this row *is* the top of the frame: drag area, transport, and the
+        // window's three buttons at its end.
+        Toolbar(
+            songTitle = song?.title,
+            songArtist = song?.artist,
+            songThumbnailUrl = song?.thumbnailUrl,
+            isPlaying = snapshot.isPlaying,
+            status = status,
+            shuffleEnabled = shuffle,
+            repeatMode = snapshot.repeatMode,
+            volumePercent = volumePercent(player),
+            onVolumeChange = player::setVolume,
+            canGoBack = canGoBack,
+            canGoForward = canGoForward,
+            onBack = nav::goBack,
+            onForward = nav::goForward,
+            onToggleShuffle = player::toggleShuffle,
+            onPrevious = player::previous,
+            onPlayPause = player::togglePlayPause,
+            onNext = player::next,
+            onCycleRepeat = player::cycleRepeat,
+            onOpenPlayer = { if (song != null) state.showPlayer = true },
+            windowMaximized = windowMaximized,
+            onMinimize = onMinimize,
+            onToggleMaximize = onToggleMaximize,
+            onClose = onClose,
+            windowScope = windowScope,
             modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
         )
-        Box(
-            Modifier
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
-        )
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            Toolbar(
-                songTitle = song?.title,
-                songArtist = song?.artist,
-                songThumbnailUrl = song?.thumbnailUrl,
-                isPlaying = snapshot.isPlaying,
-                status = status,
-                shuffleEnabled = shuffle,
-                repeatMode = snapshot.repeatMode,
-                volumePercent = volumePercent(player),
-                onVolumeChange = player::setVolume,
-                canGoBack = canGoBack,
-                canGoForward = canGoForward,
-                onBack = nav::goBack,
-                onForward = nav::goForward,
-                onToggleShuffle = player::toggleShuffle,
-                onPrevious = player::previous,
-                onPlayPause = player::togglePlayPause,
-                onNext = player::next,
-                onCycleRepeat = player::cycleRepeat,
-                onOpenPlayer = { if (song != null) state.showPlayer = true },
+        Row(Modifier.weight(1f).fillMaxWidth()) {
+            Sidebar(
+                current = current,
+                playlists = playlists,
+                mode = mode,
+                onSelect = nav::open,
+                query = query,
+                onQueryChange = search::onQueryChange,
+                onSearchFocus = { nav.open(Destination.Search) },
                 modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant),
             )
             Box(
                 Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+            )
+            Box(
+                Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxHeight(),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
