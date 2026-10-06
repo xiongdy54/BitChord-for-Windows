@@ -117,3 +117,15 @@ class NavState {   // 可观察属性 + 纯函数历史操作（NavHistory 可�
 ## 6. 本切片不做
 
 登录 UI 与账号切换；歌词面板；下载/本地音乐；设置页；广播 tab；播放页重新挂 `onOpenAlbum/onOpenArtist`；行右键菜单（SongActionsSheet 桌面化的切片 4 候选）。
+
+## 7. 实施记录（2026-10-06 回填）
+
+**交付**：§3 全部落地——`NavState`/`NavHistory`（NavHistoryTest）、`Shell`/`Sidebar`/`Toolbar` 重写、`DetailScreen`/`LibraryPages`/`ExploreScreen` 加三个 ViewModel、`WindowGeometry` 窗口几何持久化（WindowGeometryTest，只存大小+最大化，按风险表既定）、`PlaybackStatus` 枚举（Resolving/Opening/…）、desktopStrings 中英合并、七件退役文件已从源树消失（FloatingBottomBar/FrostedTopBar/MiniPlayer/BottomFadeScrim/TopBarBlur/LiquidGlass/OptimizedHaze）、Esc/Alt+方向键/空格（EscapeRuleTest）。R1–R5 修订全部生效：五键传输、悬浮 LCD、搜索框在侧栏顶、单色图标红缘条、rail 搜索图标。
+
+**与设计的偏离（含 2026-10-06 的收尾打磨，cc4a421）**：
+
+1. **Mica 上的暗色 chrome**：单一 `CHROME_ALPHA = 0.72` 在暗色下让壁纸的灰透进导航——改为按明暗分档（light 0.72 / dark 0.92），暗色搜索框改用黑色 30% 内凹而非 background 穿孔，暗色 outline 提一档（2C2C2E→323234），侧栏分隔线撤除：暗色下平面高差即分隔。
+2. **窗口图标**：打包图标原本取自横版 `Logo.png`，被任务栏 16px 槽压成长条。改为仓库自有 512 方形记号生成的多尺寸 `package/bitchord.ico`（进打包器）+ 运行时 `BaseMultiResolutionImage` 七档（16–256）；字标回归工具栏。
+3. **工具栏拖拽**：touchSlop 判定改为跨事件累计行程（鼠标一次位移不越阈）；`pointerInput` 需同时 keyed 在 `windowMaximized`（否则双击最大化后 lambda 仍握旧值）；LCD 点击手势重写为"按下不消费、真 tap 认领、被拖走即放手"。
+
+**验证**：19 套件 / 184 测试全绿（2026-10-06 构建）；四项几何常量在 DesktopLayoutTest；NavHistory 前后指针、WindowGeometry 编解码往返、EscapeRule 各有专测。
