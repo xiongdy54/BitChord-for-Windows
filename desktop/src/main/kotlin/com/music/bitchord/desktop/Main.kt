@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -16,6 +17,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
@@ -113,6 +116,14 @@ private val probeDestination = System.getProperty("bitchord.probeDestination").o
  */
 private val probeTheme = System.getProperty("bitchord.theme")
     ?.let { stored -> com.music.bitchord.data.settings.ThemeSetting.entries.firstOrNull { it.name == stored } }
+
+/**
+ * The window's translucency as a read-only override — `false` shoots the
+ * opaque window, `true` the Mica one — so both modes can be screenshotted
+ * without leaving a mark on the settings file, for the same reason
+ * [probeTheme] is read-only: a probe must not write the user's choices.
+ */
+private val probeTranslucent = System.getProperty("bitchord.translucent")?.toBooleanStrictOrNull()
 
 /**
  * The scripted screenshot pair: `shot=<path>` + `shotMs=<delay>` takes one
@@ -241,6 +252,34 @@ private fun saveWindowShot(window: java.awt.Window, path: String) {
 /** PrintWindow's flag that renders the window's live (DWM) content. */
 private const val PW_RENDERFULLCONTENT = 2
 
+/**
+ * The screen's work area, in physical pixels — bounds minus the taskbar and any other
+ * reserved edge. Null when AWT will not say: a headless or half-ready configuration gets
+ * no opinion, and the callers that clamp then simply do not.
+ */
+private fun workAreaOf(config: java.awt.GraphicsConfiguration): IntSize? = runCatching {
+    val bounds = config.bounds
+    val insets = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(config)
+    IntSize(
+        bounds.width - insets.left - insets.right,
+        bounds.height - insets.top - insets.bottom,
+    )
+}.getOrNull()
+
+/** The work area of the screen [window] sits on — the honest clamp for that window. */
+private fun workAreaOf(window: java.awt.Window): IntSize? =
+    window.graphicsConfiguration?.let { workAreaOf(it) }
+
+/**
+ * The default screen's work area — the shape a save-time clamp checks against, running
+ * as it does above the window's own scope. The window's screen is the more honest
+ * answer, but the launch clamp reads exactly that and corrects any drift the moment
+ * the next session opens.
+ */
+private fun defaultWorkArea(): IntSize? = runCatching {
+    workAreaOf(java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration)
+}.getOrNull()
+
 /** The icon sizes the shell draws at, smallest slot to largest. */
 private val ICON_SIZES = intArrayOf(16, 24, 32, 48, 64, 128, 256)
 
@@ -268,14 +307,17 @@ private interface DwmApi : com.sun.jna.Library {
 /**
  * Mica behind the window, and the platform's rounded corners and shadow over it.
  *
- * Three writes, each useless without the last window being transparent and the
+ * Three writes, each useless without the window being transparent and the
  * chrome being drawn at partial alpha (Shell's business): the frame extended
  * across the whole client area is what lets a DWM backdrop show behind the
  * window's own pixels, the backdrop type is what asks for Mica (a no-op before
  * Windows 11), and the corner preference rounds the frame and brings the
- * standard shadow with it.
+ * standard shadow with it. The first two stay off in the opaque mode the
+ * settings switch selects — there is nothing behind an opaque window's pixels
+ * for them to reveal — while the corner preference is a frame property and
+ * rounds both modes.
  *
- * The fourth write is the dark-mode declaration: Mica renders its own light or
+ * The last write is the dark-mode declaration: Mica renders its own light or
  * dark material following what the app says it is, not what the user's Windows
  * theme is — so a forced-dark BitChord on a light Windows has to say so, or
  * the sliver of backdrop the dark chrome lets through shows the light
@@ -285,15 +327,17 @@ private interface DwmApi : com.sun.jna.Library {
  * Every call is allowed to fail — an older Windows just gets a square,
  * opaque-windowed app — which is why nothing here throws.
  */
-private fun applyWindowBackdrop(window: java.awt.Window, isDark: Boolean) {
+private fun applyWindowBackdrop(window: java.awt.Window, isDark: Boolean, translucent: Boolean) {
     runCatching {
         val hwnd = com.sun.jna.Native.getComponentPointer(window) ?: return
         val dwm = com.sun.jna.Native.load("dwmapi", DwmApi::class.java)
-        val margins = com.sun.jna.Memory(16)
-        for (i in 0 until 4) margins.setInt((i * 4).toLong(), -1)
-        dwm.DwmExtendFrameIntoClientArea(hwnd, margins)
-        val backdrop = com.sun.jna.Memory(4).apply { setInt(0, DWMSBT_MAINWINDOW) }
-        dwm.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, backdrop, 4)
+        if (translucent) {
+            val margins = com.sun.jna.Memory(16)
+            for (i in 0 until 4) margins.setInt((i * 4).toLong(), -1)
+            dwm.DwmExtendFrameIntoClientArea(hwnd, margins)
+            val backdrop = com.sun.jna.Memory(4).apply { setInt(0, DWMSBT_MAINWINDOW) }
+            dwm.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, backdrop, 4)
+        }
         val round = com.sun.jna.Memory(4).apply { setInt(0, DWMWCP_ROUND) }
         dwm.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, round, 4)
         val dark = com.sun.jna.Memory(4).apply { setInt(0, if (isDark) 1 else 0) }
@@ -393,19 +437,41 @@ fun main() {
                 WindowPlacement.Floating
             },
         )
+        // The window's translucency, pinned for the session. The platform cannot
+        // change a window's transparency once the window is displayable, so the
+        // setting is next-launch by design — the settings row says so — and a
+        // value that moved under a live `Window(transparent = …)` would ask for
+        // exactly the thing it refuses to do. The probe's override rides in front.
+        val translucentWindow = remember { probeTranslucent ?: AppSettings.translucentWindow.value }
+        // What the frame measured the last time it was a floating window. On this
+        // platform `windowState.size` tracks whatever pixels the window currently
+        // is — restore bounds included — so a session closed while maximised or
+        // fullscreen would otherwise record the *screen's* shape as the next
+        // session's floating one, and the restored frame would open covering the
+        // screen with its title bar above it. Only floating sizes pass this gate.
+        var floatingSize by remember { mutableStateOf(windowState.size) }
+        LaunchedEffect(Unit) {
+            snapshotFlow { windowState.placement to windowState.size }
+                .collect { (placement, size) ->
+                    if (placement == WindowPlacement.Floating) floatingSize = size
+                }
+        }
         val quit = {
-            // The size as it is at close — a maximised window still remembers
-            // the bounds it will return to, and those bounds are what
-            // `windowState.size` reports, so maximisation rides along as its
-            // own flag rather than being folded into the numbers.
-            windowStore.putString(
-                "geometry",
-                WindowGeometry(
-                    windowState.size.width.value.toInt(),
-                    windowState.size.height.value.toInt(),
-                    windowState.placement == WindowPlacement.Maximized,
-                ).encode(),
-            )
+            // The last floating size, not today's: a maximised or fullscreen close
+            // would otherwise save the whole screen as the shape to come back to.
+            // Maximisation rides along as its own flag; a fullscreen close reads as
+            // simply not maximised, because the screen's bounds are not a shape
+            // worth restoring to. The clamp is the last gate — a geometry file
+            // written here must be one the next launch can open into.
+            val work = defaultWorkArea()
+            val geometry = WindowGeometry(
+                floatingSize.width.value.toInt(),
+                floatingSize.height.value.toInt(),
+                windowState.placement == WindowPlacement.Maximized,
+            ).let { shape ->
+                if (work != null) shape.clampedInto(work.width, work.height) else shape
+            }
+            windowStore.putString("geometry", geometry.encode())
             player.release()
             scope.cancel()
             exitApplication()
@@ -413,14 +479,17 @@ fun main() {
         Window(
             onCloseRequest = quit,
             state = windowState,
-            // No native frame, and a translucent one: the toolbar is the title
-            // bar, the chrome paints over the DWM backdrop at partial alpha,
-            // and [applyWindowBackdrop] asks Windows for Mica behind it, with
-            // the platform's rounded corners and shadow on top. The window is
-            // still resizable (Compose's undecorated resizer takes the edges)
-            // and still draggable (the toolbar row is the drag area).
+            // No native frame; translucent when the settings switch says so. In
+            // the translucent window the toolbar is the title bar, the chrome
+            // paints over the DWM backdrop at partial alpha, and
+            // [applyWindowBackdrop] asks Windows for Mica behind it, with the
+            // platform's rounded corners and shadow on top. With the switch off
+            // the chrome paints solid on an opaque frame — no Mica, and the
+            // cheaper per-pixel path that makes resizing smoother. Either way
+            // the window is still resizable (Compose's undecorated resizer takes
+            // the edges) and still draggable (the toolbar row is the drag area).
             undecorated = true,
-            transparent = true,
+            transparent = translucentWindow,
             title = "BitChord for Windows",
             // Escape closes the full-screen player; Alt+←/→ walk the navigation
             // stack. Both belong at the window rather than in the pages, where
@@ -445,6 +514,28 @@ fun main() {
                 }
             },
         ) {
+            // The size on disk, or the default above, can still overshoot the screen
+            // the window opens on — a display swapped or re-scaled since the last
+            // session, or a shape an undecorated frame allowed a drag to build past
+            // the screen's edge. Every arrival in Floating re-clamps against that
+            // screen's work area and re-centres: the first composition, and each
+            // restore out of maximised or fullscreen, whose bounds the platform
+            // reports as the screen's own. Pixel units, because `WindowState` on
+            // this platform carries the window's pixel measure in its `Dp` fields —
+            // the same values the geometry file stores.
+            LaunchedEffect(windowState.placement) {
+                if (windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
+                val work = workAreaOf(window) ?: return@LaunchedEffect
+                val width = windowState.size.width.value.toInt()
+                val height = windowState.size.height.value.toInt()
+                if (width > work.width || height > work.height) {
+                    windowState.size = DpSize(
+                        width.coerceAtMost(work.width).dp,
+                        height.coerceAtMost(work.height).dp,
+                    )
+                    windowState.position = WindowPosition.Aligned(Alignment.Center)
+                }
+            }
             // Coil has no network fetcher off Android; artwork is all remote.
             setSingletonImageLoaderFactory { context ->
                 ImageLoader.Builder(context)
@@ -467,8 +558,10 @@ fun main() {
             // to, and re-declared whenever the appearance switch moves: Mica
             // renders the material the app says it is, so the backdrop has to
             // hear about a forced dark mode the same moment the chrome does.
+            // The translucency rides along because an opaque window has no
+            // backdrop behind it to ask for.
             LaunchedEffect(darkTheme) {
-                applyWindowBackdrop(window, darkTheme)
+                applyWindowBackdrop(window, darkTheme, translucentWindow)
             }
             LaunchedEffect(Unit) {
                 // The mark at every size the shell asks for — 16 for the
@@ -585,17 +678,27 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     detailPages = detailPages,
                     nav = nav,
                     state = shellState,
+                    // The chrome's own half of the same switch — whether the
+                    // toolbar and the sidebar paint at partial alpha or solid.
+                    translucentWindow = translucentWindow,
                     // The window buttons' half of the frame. Read here, in the
                     // composable scope that owns the window state, so a
-                    // maximize/restore recomposes the toolbar's glyph.
-                    windowMaximized = windowState.placement == WindowPlacement.Maximized,
+                    // maximize/restore recomposes the toolbar's glyph. Fullscreen
+                    // counts as maximised for the glyph and the drag-restore: a
+                    // frame the shell took over the whole screen for should still
+                    // answer its title bar the way a maximised one does.
+                    windowMaximized = windowState.placement != WindowPlacement.Floating,
                     onMinimize = { windowState.isMinimized = true },
                     onToggleMaximize = {
+                        // Floating goes to maximised; either overlaid placement —
+                        // maximised or the shell's fullscreen — comes back to
+                        // floating, which is what every title bar's middle button
+                        // and every drag off a maximised frame means.
                         windowState.placement =
-                            if (windowState.placement == WindowPlacement.Maximized) {
-                                WindowPlacement.Floating
-                            } else {
+                            if (windowState.placement == WindowPlacement.Floating) {
                                 WindowPlacement.Maximized
+                            } else {
+                                WindowPlacement.Floating
                             }
                     },
                     onClose = quit,

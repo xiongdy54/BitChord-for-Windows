@@ -28,6 +28,8 @@
     <!-- Settings dialog -->
     <string name="light_theme">Light</string>
     <string name="dark_theme">Dark</string>
+    <string name="translucent_window">Translucent window (Mica)</string>
+    <string name="translucent_window_subtitle">Let the desktop’s Mica material show through the toolbar and sidebar. Off draws an opaque window, which resizes more smoothly.</string>
     <string name="restart_to_apply">Takes effect the next time BitChord starts</string>
     <string name="about">About</string>
     <string name="about_upstream">A desktop build of BitChord, upstream kushagrasinghx/BitChord. Music from YouTube Music.</string>

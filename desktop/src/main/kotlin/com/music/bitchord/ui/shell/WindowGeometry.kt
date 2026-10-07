@@ -16,6 +16,25 @@ data class WindowGeometry(
 ) {
     fun encode(): String = "$width,$height,${if (maximized) 1 else 0}"
 
+    /**
+     * This placement with both dimensions coerced inside a screen's work area.
+     *
+     * The size this app persists is the window's own pixel measure, and nothing
+     * in the pipeline that produces it is bounded by the screen: an undecorated
+     * frame can be dragged taller than the display that holds it, and a session
+     * closed while maximised or fullscreen records the *screen's* bounds through
+     * the platform's own write-back (the component-resize listener stores whatever
+     * pixels the window currently is, restore bounds or not). Either poison
+     * restores as a centred frame taller than the work area — its top edge, and
+     * with it the toolbar that is the title bar, above the screen's top. Every
+     * write therefore passes through here, so a shape the OS could not open into
+     * is never asked for in the first place.
+     */
+    fun clampedInto(workWidth: Int, workHeight: Int): WindowGeometry = copy(
+        width = width.coerceIn(1, workWidth.coerceAtLeast(1)),
+        height = height.coerceIn(1, workHeight.coerceAtLeast(1)),
+    )
+
     companion object {
         /**
          * @return the placement encoded in [raw], or null — an absent, empty or

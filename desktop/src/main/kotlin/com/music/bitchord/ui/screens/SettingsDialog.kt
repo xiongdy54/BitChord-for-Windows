@@ -53,6 +53,8 @@ import com.music.bitchord.desktop.resources.show_nerd_stats
 import com.music.bitchord.desktop.resources.show_nerd_stats_subtitle
 import com.music.bitchord.desktop.resources.system
 import com.music.bitchord.desktop.resources.theme
+import com.music.bitchord.desktop.resources.translucent_window
+import com.music.bitchord.desktop.resources.translucent_window_subtitle
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -63,11 +65,13 @@ import org.jetbrains.compose.resources.stringResource
  * second meaning.
  *
  * Four groups, each one a switch or a small radio list over [AppSettings]:
- * appearance (the theme override the desktop build has never had), language,
- * the nerd-stats switch the player has been reading since slice 2 without a
- * way to turn it on, and the about box. Everything else upstream's sheet
- * carries waits for the slices that can serve it — audio quality is bound to
- * the resolver, downloads to the download manager.
+ * appearance (the theme override the desktop build has never had, and the
+ * window's translucency — the one setting the platform cannot apply to a
+ * window it is already showing), language, the nerd-stats switch the player
+ * has been reading since slice 2 without a way to turn it on, and the about
+ * box. Everything else upstream's sheet carries waits for the slices that can
+ * serve it — audio quality is bound to the resolver, downloads to the download
+ * manager.
  */
 @Composable
 fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
@@ -115,6 +119,24 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                     selected = themeSetting == ThemeSetting.DARK,
                 ) { AppSettings.setThemeSetting(ThemeSetting.DARK) }
 
+                // The window material: Mica behind translucent chrome, or an
+                // opaque frame without it — the opaque frame being the one that
+                // resizes smoothly, which the subtitle says. Next-launch by
+                // design; the platform cannot re-cut a shown window's
+                // transparency, which is what the note under the row says.
+                val translucentWindow by AppSettings.translucentWindow.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.translucent_window),
+                    subtitle = stringResource(Res.string.translucent_window_subtitle),
+                    checked = translucentWindow,
+                ) { AppSettings.setTranslucentWindow(it) }
+                Text(
+                    text = stringResource(Res.string.restart_to_apply),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+
                 GroupDivider()
 
                 GroupHeader(stringResource(Res.string.language))
@@ -141,30 +163,11 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                 GroupDivider()
 
                 val showNerdStats by AppSettings.showNerdStats.collectAsState()
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { AppSettings.setShowNerdStats(!showNerdStats) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(Res.string.show_nerd_stats),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = stringResource(Res.string.show_nerd_stats_subtitle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Switch(
-                        checked = showNerdStats,
-                        onCheckedChange = { AppSettings.setShowNerdStats(it) },
-                    )
-                }
+                SwitchRow(
+                    title = stringResource(Res.string.show_nerd_stats),
+                    subtitle = stringResource(Res.string.show_nerd_stats_subtitle),
+                    checked = showNerdStats,
+                ) { AppSettings.setShowNerdStats(it) }
 
                 GroupDivider()
 
@@ -199,30 +202,11 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                 // two pickers are dialogs of their own, opened from here.
                 GroupHeader(stringResource(Res.string.lyrics))
                 val syncedLyrics by AppSettings.syncedLyrics.collectAsState()
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { AppSettings.setSyncedLyrics(!syncedLyrics) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(Res.string.synced_lyrics),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = stringResource(Res.string.synced_lyrics_subtitle),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Switch(
-                        checked = syncedLyrics,
-                        onCheckedChange = { AppSettings.setSyncedLyrics(it) },
-                    )
-                }
+                SwitchRow(
+                    title = stringResource(Res.string.synced_lyrics),
+                    subtitle = stringResource(Res.string.synced_lyrics_subtitle),
+                    checked = syncedLyrics,
+                ) { AppSettings.setSyncedLyrics(it) }
                 Text(
                     text = stringResource(Res.string.lyrics_sources),
                     style = MaterialTheme.typography.bodyLarge,
@@ -290,6 +274,45 @@ private fun RadioRow(label: String, selected: Boolean, onSelect: () -> Unit) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+}
+
+/**
+ * The title-and-subtitle switch row the dialog's toggles share. The whole row
+ * answers a click, not just the switch on its end — a control this small is a
+ * narrow target otherwise — which is also why the switch itself takes no
+ * special treatment here.
+ */
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChecked: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChecked(!checked) }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onChecked,
         )
     }
 }

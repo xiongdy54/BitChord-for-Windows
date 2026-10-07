@@ -167,6 +167,28 @@ object AppSettings {
     }
 
     /**
+     * Whether the window is translucent over the desktop's Mica material — the
+     * toolbar and sidebar paint at partial alpha and the wallpaper's material
+     * shows through — at the cost of the per-pixel compositing that makes
+     * dragging the window's edges stutter. Off, the chrome paints solid on an
+     * opaque window: no Mica, and the cheaper resize path.
+     *
+     * Read once per launch, on purpose: the platform refuses to change a
+     * window's transparency once it is on screen (`setWindowTransparent`
+     * throws for a displayable window), so the switch rebuilds the window the
+     * next time BitChord starts, which is what the settings row says. The
+     * window code pins the value for the session rather than collecting it,
+     * because a value that moved under a live `Window(transparent = …)` would
+     * be asking the platform for exactly the thing it refuses to do.
+     */
+    val translucentWindow = MutableStateFlow(prefs.getString(KEY_TRANSLUCENT_WINDOW, "true") == "true")
+
+    fun setTranslucentWindow(value: Boolean) {
+        translucentWindow.value = value
+        prefs.putString(KEY_TRANSLUCENT_WINDOW, value.toString())
+    }
+
+    /**
      * The interface language as a BCP-47 tag (`"en"`, `"zh"`), or null to
      * follow whatever the machine's JVM default is. Strings resolve from the
      * JVM locale, which is decided once before composition — so a change here
@@ -341,6 +363,7 @@ object AppSettings {
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_THEME_SETTING = "theme_setting"
+    private const val KEY_TRANSLUCENT_WINDOW = "translucent_window"
     private const val KEY_LANGUAGE = "language"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"

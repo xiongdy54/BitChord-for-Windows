@@ -115,6 +115,8 @@ fun Shell(
     detailPages: DetailPages,
     nav: NavState,
     state: ShellState,
+    /** The settings switch this chrome paints for — partial alpha over Mica, or solid. */
+    translucentWindow: Boolean,
     windowMaximized: Boolean,
     onMinimize: () -> Unit,
     onToggleMaximize: () -> Unit,
@@ -171,10 +173,11 @@ fun Shell(
     Column(
         Modifier
             .fillMaxSize()
-            // Deliberately unpainted: the window is transparent over the
-            // DWM backdrop (Mica), and the chrome paints at partial alpha
-            // to let it through. Only the content column is solid.
-            // Space toggles playback from anywhere that did not consume it —
+        // Unpainted either way: with the translucent window on, the chrome at
+        // partial alpha is what lets the DWM backdrop (Mica) through; with it
+        // off, the chrome paints solid and this column stays bare beneath the
+        // same children that cover it completely.
+        // Space toggles playback from anywhere that did not consume it —
             // a focused button or text field eats the key first, so the
             // bubble phase is what keeps this off the search field's typing.
             .onKeyEvent { event ->
@@ -213,7 +216,7 @@ fun Shell(
             windowMaximized = windowMaximized,
             onToggleMaximize = onToggleMaximize,
             window = window,
-            modifier = Modifier.background(chromeColor()),
+            modifier = Modifier.background(chromeColor(translucentWindow)),
         )
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Sidebar(
@@ -225,7 +228,7 @@ fun Shell(
                 onQueryChange = search::onQueryChange,
                 onSearchFocus = { nav.open(Destination.Search) },
                 onOpenSettings = { state.showSettings = true },
-                modifier = Modifier.background(chromeColor()),
+                modifier = Modifier.background(chromeColor(translucentWindow)),
             )
             Box(
                 Modifier
@@ -482,7 +485,10 @@ private fun DetailRoute(
 /**
  * The chrome's own colour: the surface tone at partial alpha, so the DWM
  * backdrop behind the transparent window reads through it — the window
- * material doing what a flat fill used to.
+ * material doing what a flat fill used to. The opaque mode the settings
+ * switch selects has no backdrop behind it to read through, so there the
+ * tone paints solid: partial alpha over nothing would just blend the chrome
+ * with whatever the frame's own background colour is.
  *
  * How much it lets through is a per-theme decision, because the backdrop's
  * own colour is not ours to know — Mica follows the desktop wallpaper. A
@@ -492,8 +498,9 @@ private fun DetailRoute(
  * dark mode composites near-opaque and leaves Mica only a whisper of life.
  */
 @Composable
-private fun chromeColor(): Color {
+private fun chromeColor(translucent: Boolean): Color {
     val base = MaterialTheme.colorScheme.surfaceVariant
+    if (!translucent) return base
     val alpha = if (base.luminance() < 0.5f) CHROME_ALPHA_DARK else CHROME_ALPHA_LIGHT
     return base.copy(alpha = alpha)
 }
