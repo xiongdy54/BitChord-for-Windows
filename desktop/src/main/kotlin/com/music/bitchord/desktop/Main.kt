@@ -78,6 +78,12 @@ import java.util.Locale
 private val probeQuery = System.getProperty("bitchord.probeQuery").orEmpty()
 private val probeAutoplay = System.getProperty("bitchord.probeAutoplay") == "true"
 private val probeOpenPlayer = System.getProperty("bitchord.probeOpenPlayer") == "true"
+/**
+ * Opens the lyric sheet as soon as the player is up — the same job as
+ * [probeOpenPlayer], one surface deeper: nothing reaches the sheet except
+ * its glyph and its strip, and a scripted pass has no mouse.
+ */
+private val probeOpenLyrics = System.getProperty("bitchord.probeOpenLyrics") == "true"
 private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull()
 
 /**
@@ -544,6 +550,7 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     Shell(
                     player = player,
                     lyrics = lyrics,
+                    autoOpenLyrics = probeOpenLyrics,
                     home = home,
                     search = search,
                     library = library,

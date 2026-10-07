@@ -2,7 +2,7 @@
 
 日期：2026-10-07
 分支：`desktop-slice2-now-playing`
-状态：设计中
+状态：已完成（实施记录见 §7）
 
 ## 1. 背景
 
@@ -73,3 +73,23 @@
 ## 6. 本切片不做
 
 `EmbeddedLyrics`/`LrcWriter`（随下载/本地音乐切片）；通知栏歌词与 SMTC（媒体会话切片）；AUTOPLAY 按钮（切片 7）；运动封面 Canvas 族；Equalizer/Replay 附属页；行内多选与 ⋮ 入口（切片 4 既定）。
+
+
+## 7. 实施记录（2026-10-07 回填）
+
+**交付**：决策 1–12 全部落地。数据层 25 文件逐字移植（`data/lyrics/`），`LyricsTranslation` 的两处 Android 耦合换成 `File` 缓存根（`AppFiles.cacheDir`，`BitChord/cache/lyrics_translation_v3/`）与 12 条 LinkedHashMap LRU；`AppSettings` 八键 + `readLyricsSources`/`readLyricsSourceOrder` 的升级语义（升级语义抽成可测纯函数 `lyricsSourcesFrom`/`lyricsSourceOrderFrom`）；`LyricsCoordinator`（四流 + loadLyrics 门 + provider 选择器，fetch 可注入）随 `PlayerController` 装配；`PlayerLyrics.kt` 全家（面板/单行条/圆钮/粒子换装/翻译状态机/时钟对账）+ `LyricClock`/`LyricFocus`/`LyricsControlsGesture`（canvas 半边不搬，随运动封面切片）+ `PlaybackPositionScope`；播放页接线（面板/单行条三分支/圆钮/五秒 stand-down/上游三级 prewarm 复原）+ 横屏第三栏（`PlayerPane.Lyrics` + `lyricStrip` 槽 + `LandscapeLyricsPane` 逐字）+ `onSeek(ms)` 复活；Esc 先歌词后播放页；设置对话框歌词组 + `LyricsSourcesDialog`/`TranslationLanguageDialog`/`LyricsProviderDialog`/`LyricsOffsetDialog`。
+
+**与设计的偏离**：
+
+1. **Esc 规则的本体没变，变的是处理器**：`escapeClosesPlayer` 的判定不需要 `lyricsOpen` 这个输入（播放器开着 Esc 就该被消费），给它加参数就是死参数。两段关闭（先歌词后播放页）落在 Main.kt 的键处理里，EscapeRuleTest 原表不动。
+2. **provider/offset 对话框是播放页内部状态**，不是窗口级参数——设计表里的 `lyricsOffsetOpen/onDismissLyricsOffset` 两参数没有落地。上游把 offset 状态放在 MainActivity 是因为它的 ⋯ 菜单在那；桌面的 ⋯ 菜单属于 Shell，于是两处状态都归播放页，入口是状态行 → provider 对话框 → 底部"歌词偏移"行——一个话题一张表面。
+3. **来源对话框的两处桌面化**：拖拽排序换成每行上/下箭头（`ReorderableSourceList` 是按手指与固定行距设计的，鼠标下箭头是更诚实的目标）；PaxSenix key 是内联文本框而非带 save/cancel 的子弹窗。顺序与键的落盘语义不变。
+4. **翻译目标的跟随语义**：`Locale.getDefault().toLanguageTag()` 取不到时落 `"en"`（上游落到系统首语言，同义）。
+5. **`lyricsBlur` 有读无键**：面板模糊在 Skia 下实测合格（截图可见焦外衰减），字段带着上游默认值（开）进了 `AppSettings`，但落盘键等它的设置行出现再写——没人写的键不是节省。
+6. **`rememberIsForeground` → 常量 `true`**：桌面窗口没有"进程退到后台"，时钟无后台可停；两处门照搬结构、值恒真。
+7. **竖屏单行条少一个分支**：上游的三分支里有一支是 `hideSongStatus` 设置（桌面无此设置），桌面条数仍是三（条/nbsp 占位/状态行），但不会有关掉它的设置项出现。
+8. **探针扩展**：`bitchord.probeOpenLyrics=true`——与 `probeOpenPlayer` 同族，歌词面板没有鼠标进不去，截图链路因此多一环（build.gradle.kts 转发表同步）。
+9. **`PlayerQueue` 交还了代管品**：切片 2 寄存在 `rememberPlayerControlsOnScroll` + `CONTROLS_SCROLL_SLOP` 的交接注记（"谁搬 PlayerLyrics 进来谁删"）兑现，PlayerLyrics 自己的声明成为唯一一份。
+10. **测试框架换算**：上游 4 份歌词测试是 JUnit4 断言，桌面是 kotlin.test——import 行换算，正文逐字。
+
+**验证**：28 套件 / 250 测试全绿（新增：移植 `LyricClockTest`/`LyricFocusTest`/`NewLyricsSourceTest`/`ProviderLyricsTest` 4 套 + 新写 `LyricsCoordinatorTest` 8 例（假源注入：去重门/时长门/代际退役/选择器三态/未找到惰性）+ `LyricsSettingsTest` 6 例（升级判定表/空集保真/未知名剔除/FileStore 可空读取））。截图四张（`.shots/slice5/`，gitignore 内）：横屏歌词面板（中文深色，BiniLyrics 词、活动行亮/焦外衰减/注音符、双圆钮、署名状态行）、英文浅色（"Lyrics by BiniLyrics · Change" 本地化）、设置对话框歌词组（同步歌词开关）、竖屏单行条（scrubber 正上方当前句 + › 入口）。诊断插曲：首拍显示"正在排列歌词"是截图时机（搜索+解析约 10s）而非链路故障——临时 JVM 诊断证实仓库竞速 8s 出词（BINI_LYRICS 44 行），诊断已删。行点击 seek、圆钮切换、偏移步进、来源切换为鼠标交互，探针无法代替人手——实机待验。

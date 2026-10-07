@@ -123,6 +123,7 @@ fun Shell(
     initialQuery: String = "",
     autoPlayFirst: Boolean = false,
     autoOpenPlayer: Boolean = false,
+    autoOpenLyrics: Boolean = false,
 ) {
     // One snapshot for the whole chrome. The playhead is not in it, so a tick
     // still recomposes the scrubber alone; the toolbar shows no position.
@@ -150,6 +151,11 @@ fun Shell(
     // on the mouse. Keyed on `song?.videoId`, so it re-arms once per track.
     LaunchedEffect(autoOpenPlayer, song?.videoId) {
         if (autoOpenPlayer && song != null) state.showPlayer = true
+    }
+    // The sheet's own half of the same hook, one surface deeper: keyed the
+    // same way, gated on the player it lives inside.
+    LaunchedEffect(autoOpenLyrics, song?.videoId) {
+        if (autoOpenLyrics && song != null && state.showPlayer) state.lyricsOpen = true
     }
 
     // The sidebar's playlist section is the one thing the chrome itself needs:
