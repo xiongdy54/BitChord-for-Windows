@@ -23,6 +23,15 @@ class VlcAudioPlayer : AudioEngine {
     override var onPlayingChanged: ((Boolean) -> Unit)? = null
     override var onFinished: (() -> Unit)? = null
     override var onError: ((String) -> Unit)? = null
+    override var onAudioStats: ((AudioStats) -> Unit)? = null
+
+    /**
+     * Whether this media has already had its say about what it is. libvlc opens
+     * an input lazily, so the track description is not ready at `playing` — the
+     * first ticks are the earliest honest moment. One report per media; a row
+     * that never opens simply never reports.
+     */
+    private var statsReported = false
 
     init {
         player.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
@@ -36,14 +45,17 @@ class VlcAudioPlayer : AudioEngine {
 
             override fun stopped(mediaPlayer: MediaPlayer) {
                 onPlayingChanged?.invoke(false)
+                statsReported = false
             }
 
             override fun finished(mediaPlayer: MediaPlayer) {
                 onPlayingChanged?.invoke(false)
+                statsReported = false
                 onFinished?.invoke()
             }
 
             override fun timeChanged(mediaPlayer: MediaPlayer, newTime: Long) {
+                if (!statsReported) reportAudioStats(mediaPlayer)
                 onTime?.invoke(newTime)
             }
 
@@ -52,9 +64,33 @@ class VlcAudioPlayer : AudioEngine {
             }
 
             override fun error(mediaPlayer: MediaPlayer) {
+                statsReported = false
                 onError?.invoke("libvlc reported a playback error")
             }
         })
+    }
+
+    /**
+     * Read what libvlc has opened so far and say it once. The audio track can
+     * still be absent on the first tick — the flag stays down and the next
+     * tick asks again, which is what makes a late-opening stream report rather
+     * than a missed one.
+     */
+    private fun reportAudioStats(mediaPlayer: MediaPlayer) {
+        val info = runCatching { mediaPlayer.media().info() }.getOrNull() ?: return
+        val track = runCatching { info.audioTracks().firstOrNull() }.getOrNull() ?: return
+        statsReported = true
+        onAudioStats?.invoke(
+            AudioStats(
+                codecName = track.codecName(),
+                // libvlc states the track bitrate in bits per second, and a
+                // container that does not know reports zero — which is no
+                // figure, not a slow one.
+                bitrateKbps = track.bitRate().takeIf { it > 0 }?.div(1000),
+                sampleRateHz = track.rate().takeIf { it > 0 },
+                channels = track.channels().takeIf { it > 0 },
+            ),
+        )
     }
 
     /** What the player is doing right now, for callers that want to ask rather than wait. */
@@ -69,6 +105,7 @@ class VlcAudioPlayer : AudioEngine {
             headers["Referer"]?.let { add(":http-referrer=$it") }
             headers["User-Agent"]?.let { add(":http-user-agent=$it") }
         }
+        statsReported = false
         player.media().play(url, *options.toTypedArray())
     }
 

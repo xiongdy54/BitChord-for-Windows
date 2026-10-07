@@ -1,6 +1,22 @@
 package com.music.bitchord.desktop.playback
 
 /**
+ * What the decoder is feeding on, as the engine observed it — the desktop
+ * form of the ExoPlayer `AnalyticsListener` figures upstream's NerdStats
+ * measured. Every field is optional because a stream or an engine can simply
+ * not know: a figure nobody reported is left out of the display rather than
+ * guessed at.
+ */
+data class AudioStats(
+    /** The codec name the engine reports ("opus", "flac", "mp4a"...). */
+    val codecName: String? = null,
+    /** The track's own bitrate figure, in kbps, where the engine states one. */
+    val bitrateKbps: Int? = null,
+    val sampleRateHz: Int? = null,
+    val channels: Int? = null,
+)
+
+/**
  * The sound card, seen as an interface.
  *
  * What the slice-1 VLC wrapper already was — five callbacks and seven verbs —
@@ -30,6 +46,15 @@ interface AudioEngine {
 
     /** The engine could not play, or stopped being able to. */
     var onError: ((String) -> Unit)?
+
+    /**
+     * The decoder has opened the media far enough to say what it is being fed.
+     *
+     * Expected once per row, after the first ticks — a stream that never opens
+     * reports nothing, which [com.music.bitchord.data.NerdStats] treats as no
+     * measurement rather than as a guess.
+     */
+    var onAudioStats: ((AudioStats) -> Unit)?
 
     /** What the engine is doing right now, for callers that ask rather than wait. */
     val isPlaying: Boolean

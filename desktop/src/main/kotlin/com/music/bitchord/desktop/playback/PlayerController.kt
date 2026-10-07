@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop.playback
 
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
@@ -173,6 +174,30 @@ class PlayerController(
         engine.onTime = { ms -> position.positionMs = ms }
         engine.onLength = { ms -> onQueue { _state.update { it.copy(durationMs = ms) } } }
         engine.onPlayingChanged = { playing -> onQueue { setPlaying(playing) } }
+        // The decoder's verdict on what it is being fed, once per row. The
+        // publish goes through the queue thread like every other state write —
+        // vlcj reports from its own event dispatcher — and the videoId it is
+        // bound to is read there too, so a late report from a row the needle
+        // has left cannot land on the new one.
+        engine.onAudioStats = { stats ->
+            onQueue {
+                val videoId = queue.songAt(queue.currentIndex)?.videoId
+                NerdStats.onMeasured(
+                    videoId,
+                    NerdStats.Snapshot(
+                        mimeType = stats.codecName,
+                        // A track bitrate the engine could not state falls back
+                        // to the resolver's figure: measured over recorded, but
+                        // a recorded figure beats an absent one.
+                        bitrateKbps = stats.bitrateKbps
+                            ?: videoId?.let { NerdStats.pickedKbps(it) },
+                        sampleRateHz = stats.sampleRateHz,
+                        channels = stats.channels,
+                        sourceName = videoId?.let { NerdStats.pickedSource(it) },
+                    ),
+                )
+            }
+        }
         engine.onError = { message ->
             onQueue {
                 _status.value = PlaybackStatus.EngineError(message)
@@ -710,6 +735,10 @@ class PlayerController(
         val generation = ++playGeneration
         engine.stop()
         position.positionMs = 0
+        // The old row's measured figures leave with it: a badge that still said
+        // the previous track's codec while this one opens would be exactly the
+        // lie upstream nulled its snapshot across transitions to stop.
+        NerdStats.clear()
         // Whatever length the snapshot still carries belongs to the row that just ended.
         _state.update { it.copy(durationMs = 0L) }
         _status.value = PlaybackStatus.Resolving

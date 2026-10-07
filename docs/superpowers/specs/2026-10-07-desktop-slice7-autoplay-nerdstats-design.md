@@ -2,7 +2,7 @@
 
 日期：2026-10-07
 分支：`desktop-slice2-now-playing`
-状态：设计中
+状态：已完成（实施记录见 §7）
 
 ## 1. 背景
 
@@ -72,3 +72,19 @@
 ## 6. 本切片不做
 
 SMTC/媒体会话（媒体键、系统覆盖层、位置上报——独立切片，Windows 侧要走 WinRT interop，工程量与风险自成一片）；音质升级引擎与无损竞速（上游 `QualityUpgrade.kt` 802 行 + 隐藏播放器试听 + 无缝换流，桌面需要第二 `AudioEngine` 实例与换流接缝，随 SMTC 一起排切片 8）；`dontRepeatSuggestions`（决策 7）；Android Auto 浏览树、媒体通知、Discord RPC、Scrobble、桌面小组件（无对应物或无服务面）；音质切换中对当前曲目的 audition 接缝（同属切片 8）。
+
+## 7. 实施记录（2026-10-07 回填）
+
+**交付**：决策 1–12 落地。`playback/Autoplay.kt` 桌面形（四函数一常量 + 空结果重试两常量从 PlaybackService 上提）；`AppSettings.autoplay`/`showNerdStats` 双键落盘；`PlayerController` 补给循环（种子铭牌 + 空结果一次虚拟延迟重试 + 开关收集器在 [queueDispatcher] 上做剪除/再补给）；`QueueTimeline` 增 `appendAutoplay`/`dropAutoplayTail`；repeat-all 的 stash/restore 随 `applyRepeat` 走；`NerdStats` 扩为测量/记录两路（`Snapshot` + `current` 流 + `clear()` 换曲清空）；`AudioEngine.onAudioStats` + vlcj 实现（首个 `timeChanged` 时读 `media().info()` 的音轨与码率，一次一报）；质量徽章换用测量状态机（Dolby/Hi-Res/无损/高音质/Data saver/中档码率，竞速两态随引擎缺席而缺席）；`SleeveNerdStats` 升级为 codec·码率·采样率·声道·来源测量行；队列标题开关 + 设置页"播放"组。
+
+**与设计的偏离**：
+
+1. **`Snapshot.claimed`/`downgraded` 未移植**（设计决策 8 说"桌面形"）：桌面无模块来源，唯一来源是 YouTube 解析器，其声明的 MIME 就是实际播放的流——没有可对照的"承诺"，两个随来源族而生的字段不成立。声明侧以 `pickedMimeType`（`StreamResolver` 传 `stream.mimeType`）的形式进 `NerdStats`，供 `SleeveNerdStats` 在测量未到时标注 codec。
+2. **`racingLossless` 直接缺席而非保留空集**：空集是死代码；升级引擎（切片 8）落地时随引擎一起加，徽章的接入面（测量快照 + `currentVideoId` 绑定）已就位。
+3. **`mimeType` 实际是 libvlc 的 codec 名**（"opus"/"flac"/"araw"）：libvlc 不交 MIME 类型，而 codec 名恰好落进 `isLosslessMime` 的后缀表——字段名保留上游语义档案，KDoc 写明实情。
+4. **`bitDepth` 恒 null**（设计决策 9 预告的风险成真）：vlcj 不暴露位深，Hi-Res 判定退化为采样率门，KDoc 如实声明。
+5. **补给触发点**：设计说"钩在 resolveAndPlay 成功路径"，实现另有 `applyAutoplay(true)`（开关打开）与 `restoreAutoplayTracks()`（stash 放回）两处入口，与上游"repeat 模式变 OFF、开关打开时触发"对齐。
+6. **编译器 bug 绕行**：Kotlin 2.4.10 对"suspend 函数类型默认参数"触发 IR lowering 崩溃（`Autoplay.kt`），`loadAutoplayTracks` 的 `radio` 参数改为无默认值显式传递，测试直接注入。
+7. **测试依赖**：`desktop/build.gradle.kts` 增 `kotlinx-coroutines-test`（与 1.11.0 对齐）——空答案重试的 2s 延迟用虚拟时间，套件不付墙钟。
+
+**验证**：37 个测试类全绿（含 `AutoplayTest`/`AutoplayTopUpTest`/`NerdStatsSnapshotTest`/`PlayerStatsTest` 四份新表）；实机探针播放真实曲目，质量徽章读出 VLC 测得的 160kbps Opus（中档显示码率），`.shots/slice7-badge.png`。

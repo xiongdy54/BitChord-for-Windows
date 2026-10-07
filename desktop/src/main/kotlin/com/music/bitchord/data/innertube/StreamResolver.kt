@@ -270,8 +270,10 @@ object StreamResolver {
         val stream = coalescedResolve(videoId)
 
         // The container carries no bitrate field, so this is the only place the
-        // real figure is ever known.
-        NerdStats.onStreamPicked(videoId, stream.kbps)
+        // real figure is ever known. The MIME type rides along as the declared
+        // word for what the stream is — the decoder's own report lands on top
+        // of it in [NerdStats.current] once the input opens.
+        NerdStats.onStreamPicked(videoId, stream.kbps, mimeType = stream.mimeType)
         stream.loudnessDb?.let { loudness[videoId] = it }
         remember(videoId, stream.url)
         return stream.url

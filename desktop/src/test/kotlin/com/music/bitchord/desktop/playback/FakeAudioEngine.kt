@@ -14,6 +14,12 @@ class FakeAudioEngine : AudioEngine {
     override var onPlayingChanged: ((Boolean) -> Unit)? = null
     override var onFinished: (() -> Unit)? = null
     override var onError: ((String) -> Unit)? = null
+    override var onAudioStats: ((AudioStats) -> Unit)? = null
+
+    /** What the engine reports once the input has opened, for the stats tests. */
+    fun reportStats(codecName: String?, bitrateKbps: Int?, sampleRateHz: Int?, channels: Int?) {
+        onAudioStats?.invoke(AudioStats(codecName, bitrateKbps, sampleRateHz, channels))
+    }
     override var isPlaying: Boolean = false
     override var timeMs: Long = 0L
     val playedUrls = mutableListOf<String>()

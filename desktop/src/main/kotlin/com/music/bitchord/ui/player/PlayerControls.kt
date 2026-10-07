@@ -228,7 +228,8 @@ internal fun PlayerScrubber(
  * allowed and whether a module was still racing YouTube for a lossless copy.
  * A desktop is one machine on one connection with no second source to race,
  * so there is one rung — [AppSettings.effectiveAudioQuality] — and the badge
- * reports only what this process actually recorded.
+ * reports what the decoder measured the moment the engine could say it; until
+ * then it holds the load-time statement the loading state already earned.
  */
 @Composable
 internal fun PlaybackQualityLabel(
@@ -239,17 +240,22 @@ internal fun PlaybackQualityLabel(
     // Collected rather than read off `effectiveAudioQuality` so the badge follows
     // a quality change; that property is this same flow's accessor (:45).
     val effectiveQuality by AppSettings.audioQuality.collectAsState()
+    // Collected, not read: the snapshot is what the decoder reported, and it
+    // lands a moment after the row starts — the badge has to move when it does.
+    val measured by NerdStats.current.collectAsState()
     LosslessOrStats(
+        song = song,
         isLoading = isLoading,
         losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
-        pickedKbps = NerdStats.pickedKbps(song.videoId),
+        measured = measured?.takeIf { NerdStats.currentVideoId() == song.videoId },
         modifier = modifier,
     )
 }
 
 /**
- * Stats for nerds, on the foot of the sleeve: what the resolver settled on for
- * this track. Nothing at all while the setting is off.
+ * Stats for nerds, on the foot of the sleeve: what the decoder is feeding on
+ * for this track, with the resolver's record underneath. Nothing at all while
+ * the setting is off.
  *
  * Upstream drew two lines here — the measured stream, and under it what
  * Automix's analysis was doing. The second needed the smart-fade switch, its
@@ -258,22 +264,16 @@ internal fun PlaybackQualityLabel(
  *
  * What remains is a short " · "-joined line in the upstream's own style — a
  * figure that is not known is dropped, never filled in. The gate is upstream's
- * own [AppSettings.showNerdStats] (app `:280-281`), not a substitute: it starts
- * off here as it does there, so this draws for nobody until the settings sheet
- * arrives with a switch to flip it.
- *
- * Read the fields for what they are: the first is the ceiling this app *asked*
- * the resolver for, the rest are what the resolver recorded. Neither is a
- * statement about the machine's audio path or about the format of the bytes
- * that reach it, which nothing here can observe.
+ * own [AppSettings.showNerdStats] (app `:280-281`), now persisted like every
+ * other switch the settings dialog owns.
  */
 @Composable
 internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
     val showNerdStats by AppSettings.showNerdStats.collectAsState()
     if (!showNerdStats) return
+    val measured by NerdStats.current.collectAsState()
+    val snapshot = measured?.takeIf { NerdStats.currentVideoId() == song.videoId }
     val effectiveQuality by AppSettings.audioQuality.collectAsState()
-    val kbps = NerdStats.pickedKbps(song.videoId)
-    val source = NerdStats.pickedSource(song.videoId)
     // A plain white line reads fine over the usual dark tile, but a light
     // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
     // entirely. The shadow costs nothing on a dark background and is what
@@ -286,9 +286,14 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
         ),
     )
     val line = listOfNotNull(
-        effectiveQuality.label,
-        kbps?.let { "$it kbps" },
-        source,
+        NerdStats.codecLabel(snapshot?.mimeType ?: NerdStats.pickedMimeType(song.videoId)),
+        snapshot?.bitrateKbps?.let { "$it kbps" },
+        snapshot?.sampleRateHz?.let { "%.1f kHz".format(it / 1000f) },
+        snapshot?.channels?.let { "$it ch" },
+        snapshot?.sourceName ?: NerdStats.pickedSource(song.videoId),
+        // The ceiling this app *asked* the resolver for — last, as the claim
+        // the measured figures above either honoured or didn't.
+        if (snapshot == null) effectiveQuality.label else null,
     ).joinToString(" · ")
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1042,46 +1047,64 @@ private fun formatTime(ms: Long): String {
 }
 
 /**
- * The gap between the two timestamps under the seek bar: the rate of the stream
- * the resolver picked, once it has picked one, and the wait for it while it has
- * not.
+ * The gap between the two timestamps under the seek bar: what the decoder says
+ * it is feeding on, and the wait for it while the input has not opened yet.
  *
- * Upstream this badge had six branches and read every one of them off a measured
- * stream: lossless, Hi-Res lossless, Dolby Atmos, a module's 320kbps tier, the
- * data-saver rung, the medium one — with a highlight sweeping across the two
- * that had been asked for *and confirmed*. The measurement came in through the
- * platform's decoder callback and a cross-process snapshot of it; this process
- * has neither, so nothing here can say a format was verified. Which is also why
- * no branch shimmers: shimmer is the word upstream used for "confirmed", and
- * what `data/innertube/StreamResolver.kt:274` records is the figure the *source*
- * stated for the stream it chose — source metadata, not a decoder's report and
- * not the machine's path.
- *
- * [pickedKbps] is read at composition rather than collected — the resolver's
- * record is a lookup, not a flow. It lands while the badge is recomposing for
- * the load that fetched it, which is the same moment it would have landed any
- * other way.
+ * Upstream's six branches are here in substance, and they now read off a
+ * measured stream again — [NerdStats.Snapshot] arrives from libvlc's own
+ * track description the way they arrived from ExoPlayer's `AnalyticsListener`.
+ * The race branches upstream carried ("Upgrading quality" while a module
+ * hunted a lossless copy) wait for an upgrade engine that desktop does not
+ * have; with nothing racing, the loading statement below is the only state
+ * left between "row started" and "input opened", and no branch shimmers,
+ * because nothing here has been asked for *and confirmed* — the word the
+ * shimmer was upstream's shorthand for.
  */
 @Composable
 private fun LosslessOrStats(
+    song: Song,
     isLoading: Boolean,
     losslessRequested: Boolean,
-    pickedKbps: Int?,
+    measured: NerdStats.Snapshot?,
     modifier: Modifier = Modifier,
 ) {
     when {
-        // Still resolving, and nothing recorded for this track yet. A statement
+        // The decoder has spoken: every label below is decided on the
+        // measurement alone, never on what a source promised.
+        measured != null -> when {
+            measured.isDolbyAtmos -> LosslessLabel(
+                text = stringResource(Res.string.dolby_atmos),
+                modifier = modifier,
+            )
+            measured.isHiRes -> LosslessLabel(
+                text = stringResource(Res.string.hi_res_lossless),
+                modifier = modifier,
+            )
+            measured.isLossless -> LosslessLabel(
+                text = stringResource(Res.string.lossless),
+                modifier = modifier,
+            )
+            measured.isHiQuality -> LosslessLabel(
+                text = stringResource(Res.string.high_quality),
+                modifier = modifier,
+            )
+            measured.isLowQuality -> LosslessLabel(
+                text = stringResource(Res.string.data_saver),
+                modifier = modifier,
+            )
+            // The medium rung keeps the bitrate it is, rather than a name: it
+            // is exactly the spread where a figure says more than a tier would.
+            measured.bitrateKbps != null -> LosslessLabel(
+                text = "${measured.bitrateKbps} kbps",
+                modifier = modifier,
+            )
+            else -> {}
+        }
+        // Still resolving, and nothing measured for this track yet. A statement
         // of what the app is asking the resolver for, not of what has arrived —
         // which is why this one is not animated either.
-        isLoading && losslessRequested && pickedKbps == null -> LosslessLabel(
+        isLoading && losslessRequested -> LosslessLabel(
             text = stringResource(Res.string.upgrading_quality),
-            modifier = modifier,
-        )
-        // The rate the resolver picked for this stream. Named as a rate, because
-        // a codec, a bit depth and a sample rate are all things the app's own
-        // badge could claim from a decoder it does not have here.
-        pickedKbps != null -> LosslessLabel(
-            text = "$pickedKbps kbps",
             modifier = modifier,
         )
         else -> {}
