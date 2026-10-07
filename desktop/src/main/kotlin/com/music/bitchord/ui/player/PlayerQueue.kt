@@ -25,18 +25,11 @@
 // difference, not a stub.
 //
 // One dependency the plan put elsewhere: `rememberPlayerControlsOnScroll`, the
-// "scroll the list, the controls stand down" connection, is declared upstream in
-// `PlayerLyrics.kt:1352-1387`. Lyrics do not ship here and this is the only
-// remaining consumer, so it and its `CONTROLS_SCROLL_SLOP` are carried into this
-// file rather than dropped along with the lyric panel. `collapsePlayerOnScroll`
-// is kept because collapsing the player on a scroll is real on a desktop window.
-//
-// CARRY TO SLICE 3 — whoever copies app/.../ui/player/PlayerLyrics.kt into this
-// package deletes BOTH pieces above (upstream: the helper at PlayerLyrics.kt:1358,
-// the constant at :401), not just the function. A second `internal` of the helper
-// collides at compile time; `CONTROLS_SCROLL_SLOP` does not — two file-private
-// top-levels with the same name never collide, so it would survive in both files,
-// silently free to diverge from 20.dp.
+// "scroll the list, the controls stand down" connection, was carried here from
+// `PlayerLyrics.kt:1352-1387` when the lyric panel was still a later slice.
+// The slice that copied PlayerLyrics in (5) has now come and gone, and with it
+// the carried copy — the panel file's own declaration is the only one again,
+// exactly as the carry note beside it once asked for.
 //
 // Row geometry, motion and the drag algorithm are verbatim, app line by line:
 // `QUEUE_ROW_MOTION` :123, `animateItem(fadeInSpec = null, …)` :203, the edge
@@ -153,56 +146,6 @@ internal fun keepScrollInList(listState: LazyListState) = object : NestedScrollC
     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
 }
 
-/**
- * How far a finger has to carry the lyric list before the player below it
- * gets out of the way — or comes back.
- *
- * Roughly a line of body text. Below that a scroll is a nudge to see one more
- * line rather than a decision to go reading, and answering every nudge put the
- * controls in and out on the same gesture.
- */
-private val CONTROLS_SCROLL_SLOP = 20.dp
-
-/**
- * Shared phone-panel gesture: moving forward through content hides the half
- * player, while reversing brings it back. Only direct finger input counts, so
- * the lyrics auto-follow and the queue's current-track jump cannot move chrome.
- *
- * Upstream this sits in `PlayerLyrics.kt`; see the header for why it lives here.
- * When slice 3 copies that file in, this function and its `CONTROLS_SCROLL_SLOP`
- * are both deleted from here — not left beside the original.
- */
-@Composable
-internal fun rememberPlayerControlsOnScroll(
-    enabled: Boolean = true,
-    onReveal: () -> Unit,
-    onHide: () -> Unit,
-): NestedScrollConnection {
-    val controlsSlopPx = with(LocalDensity.current) { CONTROLS_SCROLL_SLOP.toPx() }
-    val revealControls by rememberUpdatedState(onReveal)
-    val hideControls by rememberUpdatedState(onHide)
-    return remember(enabled, controlsSlopPx) {
-        object : NestedScrollConnection {
-            private var travel = 0f
-
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (enabled && source == NestedScrollSource.UserInput && available.y != 0f) {
-                    if (travel != 0f && (travel > 0f) != (available.y > 0f)) travel = 0f
-                    travel += available.y
-                    // Finger travelling up is the list going forward.
-                    if (travel <= -controlsSlopPx) {
-                        travel = 0f
-                        hideControls()
-                    } else if (travel >= controlsSlopPx) {
-                        travel = 0f
-                        revealControls()
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
-}
 
 /**
  * How a queue row moves when the running order changes under it.

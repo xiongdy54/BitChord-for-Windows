@@ -167,6 +167,18 @@ object AppSettings {
     val lyricsOffsetMs = MutableStateFlow(prefs.getString(KEY_LYRICS_OFFSET_MS, "0").toIntOrNull() ?: 0)
 
     /**
+     * Blurs unfocused lyric lines, keeping the active line sharp. Upstream
+     * persists this; the desktop takes the same default and defers the storage
+     * key until the settings row that flips it exists — a key nothing writes
+     * yet is not a saving.
+     */
+    val lyricsBlur = MutableStateFlow(true)
+
+    fun setLyricsBlur(value: Boolean) {
+        lyricsBlur.value = value
+    }
+
+    /**
      * Which language the lyrics translate button translates *into*.
      *
      * Blank — the default — means "whatever the app is set to", and is stored

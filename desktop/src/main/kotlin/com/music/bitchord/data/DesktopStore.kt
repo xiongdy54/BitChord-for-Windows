@@ -17,6 +17,14 @@ object AppFiles {
     /** A named subdirectory, created if it isn't there yet. */
     fun dir(name: String): File = File(root, name).apply { mkdirs() }
 
+    /**
+     * Where content the machine may throw away lives — the translated-lyrics
+     * cache's home. Android hands out a cacheDir the OS may reclaim; the
+     * desktop's closest analogue is a `cache` folder of its own, which the
+     * user may empty and nothing will mourn.
+     */
+    val cacheDir: File by lazy { dir("cache") }
+
     fun file(vararg parts: String): File = File(root, parts.joinToString(File.separator))
 }
 
