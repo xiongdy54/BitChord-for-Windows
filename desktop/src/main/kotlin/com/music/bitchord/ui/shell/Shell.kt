@@ -359,7 +359,10 @@ fun Shell(
     }
 
     if (state.showSettings) {
-        SettingsDialog(onDismiss = { state.showSettings = false })
+        SettingsDialog(
+            onDismiss = { state.showSettings = false },
+            onAudioQualityChanged = player::setAudioQuality,
+        )
     }
 
     // The player paints last, over the chrome. It is deliberately not

@@ -200,6 +200,8 @@ compose.desktop {
             "bitchord.probeOpenPlayer",
             "bitchord.probeOpenLyrics",
             "bitchord.probeDownload",
+            "bitchord.probeQualitySwitch",
+            "bitchord.probePlayVideoId",
             "bitchord.probeDestination",
             "bitchord.shot",
             "bitchord.shotMs",

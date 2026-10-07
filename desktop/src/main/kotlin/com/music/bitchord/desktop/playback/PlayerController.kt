@@ -8,6 +8,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.MAX_AUTOPLAY_EMPTY_REFRESHES
 import com.music.bitchord.playback.AUTOPLAY_EMPTY_REFRESH_DELAY_MS
@@ -22,10 +23,13 @@ import com.music.bitchord.playback.RepeatMode
 import com.music.bitchord.playback.autoplayQueueNeedsRefresh
 import com.music.bitchord.playback.loadAutoplayTracks
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +38,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 
 /**
  * Playback as the UI sees it, now that playback is a queue.
@@ -123,6 +129,30 @@ class PlayerController(
      */
     var loadAutoplay: suspend (List<Song>, Song, Int) -> Result<List<Song>> =
         { existing, seed, limit -> loadAutoplayTracks(existing, seed, limit) { YtMusicRepository.radio(it) } }
+
+    /**
+     * What the [quality][AppSettings.audioQuality] ladder would pick for
+     * [videoId] under a [maxKbps] ceiling, bypassing the resolver's latency
+     * cache — the question the swap asks before touching anything audible.
+     *
+     * Test seam: production walks [StreamResolver.repickFor], which asks the
+     * network; a test injects a table and drives the swap state machine.
+     */
+    var repickUrl: suspend (String, Int) -> String? = { videoId, maxKbps ->
+        StreamResolver.repickFor(videoId, maxKbps).url
+    }
+
+    /**
+     * The second, silent engine the swap proves a candidate on — upstream's
+     * hidden audition player (`buildAuditionPlayer`, `PlaybackService.kt:4308`),
+     * desktop form: a throwaway [VlcAudioPlayer], volume zero, released the
+     * moment the proof is in. A separate `MediaPlayerFactory` comes and goes
+     * with it, which is why swaps are minutes apart at most, not continuous.
+     *
+     * Test seam: production builds the real thing (VLC required); a test
+     * injects a fake and scripts its proof.
+     */
+    var auditionEngine: () -> AudioEngine = { VlcAudioPlayer() }
 
     /**
      * The playhead, held apart from [state] on purpose.
@@ -216,6 +246,28 @@ class PlayerController(
         onQueue {
             AppSettings.autoplay.collect { enabled -> applyAutoplay(enabled) }
         }
+        // The audio quality switch, unlike this one, is not a collected flow:
+        // its one production writer is the settings dialog, which now goes
+        // through [setAudioQuality] — an explicit act the queue thread can own
+        // end to end, with none of the subscribe-before-first-value timing a
+        // `drop(1)` collector would hang the trigger on.
+    }
+
+    // ---- audio quality ----------------------------------------------------------------
+
+    /**
+     * The audio quality switch, as the player sees it.
+     *
+     * Writing the setting is the listener's word; [applyQualityChange] is what
+     * the word costs the current track and the resolver's cache. One method
+     * owns both, so every surface that flips the switch lands in the same
+     * place, on the queue thread, whatever wrote it — the same shape
+     * [setAutoplay] gives the AutoPlay switch.
+     */
+    fun setAudioQuality(value: AudioQuality) {
+        if (AppSettings.audioQuality.value == value) return
+        AppSettings.setAudioQuality(value)
+        onQueue { applyQualityChange(value) }
     }
 
     // ---- autoplay -------------------------------------------------------------------
@@ -330,6 +382,156 @@ class PlayerController(
     private fun upcomingAutoplayCount(): Int =
         (queue.currentIndex + 1 until queue.itemCount)
             .count { queue.songAt(it)?.queueTier == QueueTier.AUTOPLAY }
+
+    // ---- quality swaps -----------------------------------------------------------------
+
+    /**
+     * The URL the audio half is actually working on — the yardstick the swap
+     * measures its candidate against, and the thing that changes when a swap
+     * lands. Null while nothing has sounded or the row is still resolving.
+     *
+     * Read and written only on [queueDispatcher], like every other member of
+     * that sentence.
+     */
+    private var playingUrl: String? = null
+
+    /**
+     * The running swap, if any. A second quality change cancels it and starts
+     * fresh: the user's latest word is the only one worth serving, and an
+     * audition mid-flight is a network walk nobody is waiting for any more.
+     * Also cancelled by [resolveAndPlay] — a row change invalidates the whole
+     * affair it was in aid of.
+     */
+    private var qualitySwapJob: Job? = null
+
+    /**
+     * What a quality change means for the track playing right now.
+     *
+     * Upstream, the answer is "nothing" — the setting reaches the next
+     * resolve, whenever the queue gets there. The desktop leans on that
+     * answer too and it breaks for two reasons this class can see: the
+     * setting is one switch here rather than a per-network pair, and
+     * [prefetchNext] has often resolved the next track *already*, parking its
+     * URL in the resolver's latency cache — so "next track" would not even
+     * mean next track until that cache expired. A switch made mid-queue could
+     * go unheard for twenty minutes.
+     *
+     * Hence two acts. [StreamResolver.onQualityChanged] clears the cache, so
+     * every future resolve asks the new ceiling. And the current track gets
+     * the desktop's own version of the upstream second look: re-pick the
+     * ladder under the new ceiling, and if it names a different stream,
+     * *prove* that stream on a silent second engine ([auditionProves]) before
+     * the playing one is touched. The proof failing — the ordinary case when
+     * a rung does not exist or a URL dies — changes nothing audible, which is
+     * the whole shape of the guards here: a missed swap is a quieter failure
+     * than an interrupted song.
+     */
+    private fun applyQualityChange(quality: AudioQuality) {
+        qualitySwapJob?.cancel()
+        StreamResolver.onQualityChanged()
+        val song = queue.songAt(queue.currentIndex) ?: return
+        val url = playingUrl ?: return
+        // Paused is the one state a swap cannot survive: the engine has no
+        // open-and-hold, so the swapped-in stream would *play*, un-pausing a
+        // track the listener had stopped. The next play or pause boundary
+        // re-evaluates nothing — this swap is simply declined.
+        if (!engine.isPlaying) return
+        val duration = _state.value.durationMs
+        if (duration > 0 && duration - engine.timeMs < MIN_SWAP_REMAINING_MS) return
+        qualitySwapJob = onQueue {
+            TrackLog.d(TAG, "quality swap starts for ${song.videoId} under ${quality.maxKbps}kbps")
+            val candidate = try {
+                withContext(resolveDispatcher) { repickUrl(song.videoId, quality.maxKbps) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                TrackLog.w(TAG, "quality re-pick failed for ${song.videoId}: ${error.message}")
+                null
+            } ?: return@onQueue
+            // The same URL — most often because MEDIUM, HIGH and LOSSLESS
+            // share a ceiling here, or the track has one rung — is no swap at
+            // all, however different the setting says it is.
+            if (candidate == url) return@onQueue
+            if (queue.songAt(queue.currentIndex)?.videoId != song.videoId) return@onQueue
+            NerdStats.onQualityRaceStart(song.videoId)
+            try {
+                val audition = auditionEngine()
+                val proved = try {
+                    auditionProves(audition, mediaHeaders(candidate), candidate, _state.value.durationMs)
+                } finally {
+                    audition.release()
+                }
+                if (!proved) {
+                    TrackLog.d(TAG, "quality swap for ${song.videoId} failed its audition; nothing changes")
+                    return@onQueue
+                }
+                // Re-checked with the audition behind it: minutes of network
+                // may have passed, and everything this branch touches — the
+                // needle, the engine — belongs to the row still under it, still
+                // sounding. The queue can have moved on, or the track can have
+                // run out while the proof ran; swapping into silence would
+                // restart audio the listener had let end, the same sin the
+                // paused guard declines at the door.
+                if (queue.songAt(queue.currentIndex)?.videoId != song.videoId) return@onQueue
+                if (!engine.isPlaying) return@onQueue
+                val positionMs = engine.timeMs
+                engine.play(candidate, mediaHeaders(candidate), startAtMs = positionMs)
+                engine.setVolume(_volume.value)
+                playingUrl = candidate
+                TrackLog.d(TAG, "quality swap landed for ${song.videoId} at ${positionMs}ms")
+            } finally {
+                NerdStats.onQualityRaceEnd(song.videoId)
+            }
+        }
+    }
+
+    /**
+     * Whether [url] earns the cut a swap costs: opened and decoded on the
+     * silent [engine], within [AUDITION_TIMEOUT_MS], and — when the playing
+     * track's length is known — no further from it than
+     * [QUALITY_SWAP_LENGTH_SLACK_MS]. That length match is what the upstream
+     * audition's verdict checked for (`auditionVerdict`, `PlaybackService.kt:4228`):
+     * a substitute that would play a different edit of the song must not
+     * replace the one being heard.
+     *
+     * The engine is left running on exit either way — [applyQualityChange]
+     * releases it in its own stride, so the proof's cleanup is not split
+     * across two functions.
+     */
+    private suspend fun auditionProves(
+        engine: AudioEngine,
+        headers: Map<String, String>,
+        url: String,
+        currentDurationMs: Long,
+    ): Boolean {
+        val stats = CompletableDeferred<AudioStats?>()
+        val length = CompletableDeferred<Long?>()
+        engine.onAudioStats = { stats.complete(it) }
+        engine.onLength = { length.complete(it) }
+        // An engine that cannot open the candidate has said no; both waits
+        // are released so the timeout does not hold the answer longer than
+        // the failure did.
+        engine.onError = {
+            stats.complete(null)
+            length.complete(null)
+        }
+        engine.setVolume(0)
+        engine.play(url, headers)
+        return withTimeoutOrNull(AUDITION_TIMEOUT_MS) {
+            coroutineScope {
+                val statsWait = async { stats.await() }
+                val lengthWait = async { length.await() }
+                val measured = statsWait.await()
+                val totalMs = lengthWait.await()
+                measured != null && totalMs != null &&
+                    (currentDurationMs <= 0 || abs(totalMs - currentDurationMs) <= QUALITY_SWAP_LENGTH_SLACK_MS)
+            }
+        } ?: false
+    }
+
+    /** The headers a media fetch for [url] must carry — none for a downloaded file. */
+    private fun mediaHeaders(url: String): Map<String, String> =
+        if (url.startsWith("http")) StreamResolver.mediaHeadersFor(url) else emptyMap()
 
     // ---- publishing ---------------------------------------------------------------
 
@@ -735,6 +937,10 @@ class PlayerController(
         val generation = ++playGeneration
         engine.stop()
         position.positionMs = 0
+        // A swap in flight was for the row being left; nothing it learns
+        // applies to the one starting. The URL is leaving with it too.
+        qualitySwapJob?.cancel()
+        playingUrl = null
         // The old row's measured figures leave with it: a badge that still said
         // the previous track's codec while this one opens would be exactly the
         // lie upstream nulled its snapshot across transitions to stop.
@@ -769,11 +975,9 @@ class PlayerController(
                         setLoading(false)
                         // A downloaded file needs no headers and would have
                         // them asked of a URL that is not one.
-                        engine.play(
-                            url,
-                            if (url.startsWith("http")) StreamResolver.mediaHeadersFor(url) else emptyMap(),
-                        )
+                        engine.play(url, mediaHeaders(url))
                         engine.setVolume(_volume.value)
+                        playingUrl = url
                         prefetchNext()
                         maybeTopUpAutoplay()
                     }
@@ -828,5 +1032,27 @@ class PlayerController(
     private companion object {
         /** The app's one log tag — see [TrackLog]. */
         const val TAG = "BitChord"
+
+        /**
+         * Below this much remaining, a swap's cut costs more than the rung it
+         * would buy — the tail is nearly spent either way.
+         */
+        const val MIN_SWAP_REMAINING_MS = 10_000L
+
+        /**
+         * The audition's leash. A healthy candidate opens in well under a
+         * second and reports its length with the first ticks; eight seconds
+         * covers a shaped connection without making the listener wait on a
+         * corpse.
+         */
+        const val AUDITION_TIMEOUT_MS = 8_000L
+
+        /**
+         * How far an audition's length may sit from the playing track's and
+         * still be the same recording — the upstream verdict's own tolerance
+         * (`upgradeLengthSlackMs`), sized to forgive container rounding
+         * without forgiving a different edit.
+         */
+        const val QUALITY_SWAP_LENGTH_SLACK_MS = 2_000L
     }
 }

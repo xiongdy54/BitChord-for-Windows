@@ -1,6 +1,8 @@
 package com.music.bitchord.data
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -159,6 +161,41 @@ object NerdStats {
         currentVideoId = null
         current.value = null
     }
+
+    /**
+     * The tracks with a quality swap in flight — the desktop's own shape for
+     * upstream's `racingLossless`.
+     *
+     * The name is the desktop's, not upstream's, on purpose: upstream's badge
+     * described a module hunting a lossless copy of a lossy stream, and no
+     * such hunt exists here — there is one source, and what races is the
+     * ladder re-pick a quality change triggers (audition, then swap). The
+     * badge text follows the honest word for that ("switching quality"), not
+     * "loading lossless", which would be a promise about the ceiling YouTube
+     * can never keep.
+     *
+     * A track enters when its audition starts and leaves when the swap lands
+     * or is given up on — while it is present, the measurement in [current]
+     * describes the stream the listener is *still* hearing, and the badge
+     * should say the change in flight instead.
+     */
+    private val qualityRacing = MutableStateFlow<Set<String>>(emptySet())
+
+    /** The set of tracks with a swap in flight, for the badge's racing branch. */
+    val qualityRacingIds: StateFlow<Set<String>> = qualityRacing.asStateFlow()
+
+    /** The audition for [videoId] has begun — see [qualityRacingIds]. */
+    fun onQualityRaceStart(videoId: String) {
+        qualityRacing.value = qualityRacing.value + videoId
+    }
+
+    /** The swap for [videoId] has landed or been given up on — see [qualityRacingIds]. */
+    fun onQualityRaceEnd(videoId: String) {
+        qualityRacing.value = qualityRacing.value - videoId
+    }
+
+    /** Whether [videoId] currently has a quality swap in flight. */
+    fun isQualityRacing(videoId: String?): Boolean = videoId != null && videoId in qualityRacing.value
 
     private val picked = ConcurrentHashMap<String, Int>()
 

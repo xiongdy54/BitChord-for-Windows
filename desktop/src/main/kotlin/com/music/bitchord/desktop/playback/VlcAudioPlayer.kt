@@ -100,10 +100,14 @@ class VlcAudioPlayer : AudioEngine {
 
     val lengthMs: Long get() = player.status().length()
 
-    override fun play(url: String, headers: Map<String, String>) {
+    override fun play(url: String, headers: Map<String, String>, startAtMs: Long) {
         val options = buildList {
             headers["Referer"]?.let { add(":http-referrer=$it") }
             headers["User-Agent"]?.let { add(":http-user-agent=$it") }
+            // Input options apply at open time — the only race-free way to
+            // land mid-media, which a stream swap mid-track needs (a
+            // play-then-seek would have sound out before the seek landed).
+            if (startAtMs > 0) add(":start-time=${startAtMs / 1000.0}")
         }
         statsReported = false
         player.media().play(url, *options.toTypedArray())

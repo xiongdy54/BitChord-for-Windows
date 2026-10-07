@@ -77,7 +77,12 @@ import org.jetbrains.compose.resources.stringResource
  * manager.
  */
 @Composable
-fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+fun SettingsDialog(
+    onDismiss: () -> Unit,
+    /** The quality switch goes through the player, whose swap seam answers to it. */
+    onAudioQualityChanged: (AudioQuality) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var showLyricsSources by remember { mutableStateOf(false) }
     var showTranslationLanguage by remember { mutableStateOf(false) }
     if (showLyricsSources) {
@@ -198,7 +203,7 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                     RadioRow(
                         label = quality.label,
                         selected = audioQuality == quality,
-                    ) { AppSettings.setAudioQuality(quality) }
+                    ) { onAudioQualityChanged(quality) }
                 }
 
                 GroupDivider()

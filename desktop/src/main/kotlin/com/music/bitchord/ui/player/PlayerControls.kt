@@ -230,6 +230,11 @@ internal fun PlayerScrubber(
  * so there is one rung — [AppSettings.effectiveAudioQuality] — and the badge
  * reports what the decoder measured the moment the engine could say it; until
  * then it holds the load-time statement the loading state already earned.
+ *
+ * The one race that does exist here is the quality swap: a setting change
+ * re-picks the ladder for the current track, and between the audition's first
+ * byte and the swap landing the badge says so, over the measurement of the
+ * stream that is still playing.
  */
 @Composable
 internal fun PlaybackQualityLabel(
@@ -243,10 +248,13 @@ internal fun PlaybackQualityLabel(
     // Collected, not read: the snapshot is what the decoder reported, and it
     // lands a moment after the row starts — the badge has to move when it does.
     val measured by NerdStats.current.collectAsState()
+    // And the swaps in flight, keyed by the same videoId check the snapshot has.
+    val racing by NerdStats.qualityRacingIds.collectAsState()
     LosslessOrStats(
         song = song,
         isLoading = isLoading,
         losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
+        racing = song.videoId in racing,
         measured = measured?.takeIf { NerdStats.currentVideoId() == song.videoId },
         modifier = modifier,
     )
@@ -1050,25 +1058,31 @@ private fun formatTime(ms: Long): String {
  * The gap between the two timestamps under the seek bar: what the decoder says
  * it is feeding on, and the wait for it while the input has not opened yet.
  *
- * Upstream's six branches are here in substance, and they now read off a
- * measured stream again — [NerdStats.Snapshot] arrives from libvlc's own
- * track description the way they arrived from ExoPlayer's `AnalyticsListener`.
- * The race branches upstream carried ("Upgrading quality" while a module
- * hunted a lossless copy) wait for an upgrade engine that desktop does not
- * have; with nothing racing, the loading statement below is the only state
- * left between "row started" and "input opened", and no branch shimmers,
- * because nothing here has been asked for *and confirmed* — the word the
- * shimmer was upstream's shorthand for.
+ * Upstream's branches are here in substance, and they now read off a measured
+ * stream again — [NerdStats.Snapshot] arrives from libvlc's own track
+ * description the way they arrived from ExoPlayer's `AnalyticsListener`. The
+ * race branch is the quality swap's: while the engine behind the setting
+ * change is proving its candidate ([racing]) the badge names the change in
+ * flight — "switching", not "upgrading", because the ladder re-pick runs
+ * downhill as often as it climbs — and the measured figures it sits over
+ * describe the stream the listener is still hearing, so they wait.
  */
 @Composable
 private fun LosslessOrStats(
     song: Song,
     isLoading: Boolean,
     losslessRequested: Boolean,
+    racing: Boolean,
     measured: NerdStats.Snapshot?,
     modifier: Modifier = Modifier,
 ) {
     when {
+        // A swap in flight outranks everything: what is measured is the old
+        // stream, what is loading is the next row's, and neither is the story.
+        racing -> LosslessLabel(
+            text = stringResource(Res.string.switching_quality),
+            modifier = modifier,
+        )
         // The decoder has spoken: every label below is decided on the
         // measurement alone, never on what a source promised.
         measured != null -> when {

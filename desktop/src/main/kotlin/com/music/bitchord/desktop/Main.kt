@@ -33,10 +33,15 @@ import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.FileStore
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.desktop.playback.smtc.SmtcButton
+import com.music.bitchord.desktop.playback.smtc.SmtcSession
+import com.music.bitchord.desktop.playback.smtc.WinRtSmtcBackend
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.ui.DetailPages
 import com.music.bitchord.ui.ExploreViewModel
@@ -66,8 +71,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import java.util.Locale
 
 /*
@@ -98,6 +105,23 @@ private val probeOpenLyrics = System.getProperty("bitchord.probeOpenLyrics") == 
  */
 private val probeDownload = System.getProperty("bitchord.probeDownload") == "true"
 private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull()
+
+/**
+ * The audio quality the scripted run flips to once a track is playing — the
+ * quality swap's smoke test without a hand on the settings dialog: play
+ * something, move the ceiling, and the swap (re-pick, audition, mid-track
+ * cut) either lands audibly and in the log, or the whole seam has a hole.
+ */
+private val probeQualitySwitch = System.getProperty("bitchord.probeQualitySwitch")
+    ?.let { stored -> com.music.bitchord.data.settings.AudioQuality.entries.firstOrNull { it.name == stored } }
+
+/**
+ * Plays exactly this videoId as soon as the shell is up — the playback smoke
+ * test that answers to no search endpoint: the scripted pass names the row,
+ * the player resolves and sounds it, whatever YouTube's search page is shaped
+ * like today. Used with [probeQualitySwitch] it drives the whole swap seam.
+ */
+private val probePlayVideoId = System.getProperty("bitchord.probePlayVideoId").orEmpty()
 
 /**
  * Where the content router should land on launch — `explore`, `library`,
@@ -283,6 +307,13 @@ private fun defaultWorkArea(): IntSize? = runCatching {
 /** The icon sizes the shell draws at, smallest slot to largest. */
 private val ICON_SIZES = intArrayOf(16, 24, 32, 48, 64, 128, 256)
 
+/**
+ * How often the playing position is re-anchored into the system's media
+ * overlay, in milliseconds. The overlay advances the shown time itself from
+ * the last anchor; this only corrects its drift — see [SmtcSession.update].
+ */
+private const val SMTC_POSITION_PERIOD_MS = 2_000L
+
 // ---- the Windows backdrop ------------------------------------------------------------
 //
 // DWM attributes by number — the documented ones, from dwmapi's own header.
@@ -363,6 +394,23 @@ fun main() {
     QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
     val player = PlayerController(scope)
     val lyrics = LyricsCoordinator(scope)
+    // The quality swap's scripted half: wait for a track to actually sound,
+    // give its first measurement a beat to land, then move the ceiling. What
+    // follows in the log is the whole seam — re-pick, audition, swap — and on
+    // screen the badge's "switching quality" beat. Driven off the player's
+    // state flow rather than composition, so the probe does not depend on
+    // which frames the window happens to compose.
+    probeQualitySwitch?.let { target ->
+        // The probe has to MOVE the ceiling; a settings file that already
+        // holds the target (a previous probe run wrote it) would make the
+        // switch a same-value no-op, so every run starts from Lossless.
+        AppSettings.setAudioQuality(com.music.bitchord.data.settings.AudioQuality.LOSSLESS)
+        scope.launch {
+            player.state.first { it.song != null && it.isPlaying }
+            delay(3_000)
+            player.setAudioQuality(target)
+        }
+    }
     // PlaybackService.kt:5286 restores repeat the same way; the shuffle half of that
     // pair is already applied above, before the player exists. Restored here rather
     // than in the controller's init because a constructor that reads the disk makes
@@ -399,6 +447,19 @@ fun main() {
                     downloadProbeFired = true
                     Downloads.enqueue(current)
                 }
+            }
+        }
+        if (probePlayVideoId.isNotBlank()) {
+            var playProbeFired by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                if (playProbeFired) return@LaunchedEffect
+                playProbeFired = true
+                player.playOneOff(
+                    Song(probePlayVideoId, "Probe track", "Probe artist", null),
+                    source = PlaybackSourceType.QUEUE,
+                    sourceTitle = "Probe",
+                    sourceId = null,
+                )
             }
         }
         // The settings dialog is window-level, not a destination — but the
@@ -456,26 +517,34 @@ fun main() {
                     if (placement == WindowPlacement.Floating) floatingSize = size
                 }
         }
+            // The system's media controls — the overlay, the media keys, the
+        // taskbar's thumbnail surface. Built against the real Windows backend;
+        // a machine where the WinRT activation fails degrades to no system
+        // surface and nothing else. Commands arrive on the backend's own
+        // threads and hop onto the main dispatcher before touching the player,
+        // the same thread every other transport caller uses.
+        val smtc = remember { SmtcSession(WinRtSmtcBackend()) }
         val quit = {
-            // The last floating size, not today's: a maximised or fullscreen close
-            // would otherwise save the whole screen as the shape to come back to.
-            // Maximisation rides along as its own flag; a fullscreen close reads as
-            // simply not maximised, because the screen's bounds are not a shape
-            // worth restoring to. The clamp is the last gate — a geometry file
-            // written here must be one the next launch can open into.
-            val work = defaultWorkArea()
-            val geometry = WindowGeometry(
-                floatingSize.width.value.toInt(),
-                floatingSize.height.value.toInt(),
-                windowState.placement == WindowPlacement.Maximized,
-            ).let { shape ->
-                if (work != null) shape.clampedInto(work.width, work.height) else shape
+                // The last floating size, not today's: a maximised or fullscreen close
+                // would otherwise save the whole screen as the shape to come back to.
+                // Maximisation rides along as its own flag; a fullscreen close reads as
+                // simply not maximised, because the screen's bounds are not a shape
+                // worth restoring to. The clamp is the last gate — a geometry file
+                // written here must be one the next launch can open into.
+                val work = defaultWorkArea()
+                val geometry = WindowGeometry(
+                    floatingSize.width.value.toInt(),
+                    floatingSize.height.value.toInt(),
+                    windowState.placement == WindowPlacement.Maximized,
+                ).let { shape ->
+                    if (work != null) shape.clampedInto(work.width, work.height) else shape
+                }
+                windowStore.putString("geometry", geometry.encode())
+                smtc.release()
+                player.release()
+                scope.cancel()
+                exitApplication()
             }
-            windowStore.putString("geometry", geometry.encode())
-            player.release()
-            scope.cancel()
-            exitApplication()
-        }
         Window(
             onCloseRequest = quit,
             state = windowState,
@@ -597,6 +666,50 @@ fun main() {
                         window.iconImage =
                             java.awt.image.BaseMultiResolutionImage(*variants.toTypedArray())
                     }
+                }
+            }
+            // The system media surface. The window's own HWND — the same way
+            // [applyWindowBackdrop] reaches the DWM — claims the SMTC slot;
+            // from then on the overlay and the media keys ride the player's
+            // state. `attach` answers once the backend is built, so the first
+            // state push below lands on a live overlay rather than vanishing.
+            // The state collector reads the position *outside* the tracked
+            // read on purpose: the playhead moves twice a second and the
+            // overlay is self-paced from the last anchor — full pushes run on
+            // track/state changes, and the ticker at the bottom re-anchors
+            // against drift.
+            LaunchedEffect(smtc) {
+                runCatching {
+                    val hwndPointer = com.sun.jna.Native.getComponentPointer(window)
+                    smtc.attach(com.sun.jna.Pointer.nativeValue(hwndPointer))
+                }
+                smtc.onButton = { button ->
+                    scope.launch(Dispatchers.Main) {
+                        when (button) {
+                            SmtcButton.PLAY -> if (!player.state.value.isPlaying) player.togglePlayPause()
+                            SmtcButton.PAUSE -> if (player.state.value.isPlaying) player.togglePlayPause()
+                            // No stop action exists in the shell's own surface.
+                            SmtcButton.STOP -> {}
+                            SmtcButton.NEXT -> player.next()
+                            SmtcButton.PREVIOUS -> player.previous()
+                        }
+                    }
+                }
+                smtc.onSeekRequested = { ms ->
+                    scope.launch(Dispatchers.Main) { player.seekTo(ms) }
+                }
+                snapshotFlow {
+                    val state = player.state.value
+                    Triple(state.song, state.isPlaying, state.durationMs)
+                }.collect { (song, playing, duration) ->
+                    smtc.update(song, playing, player.state.value.position.positionMs, duration)
+                }
+            }
+            LaunchedEffect(smtc) {
+                while (isActive) {
+                    delay(SMTC_POSITION_PERIOD_MS)
+                    val state = player.state.value
+                    smtc.update(state.song, state.isPlaying, state.position.positionMs, state.durationMs)
                 }
             }
 if (shotPath.isNotBlank() && shotMs != null) {

@@ -69,7 +69,15 @@ interface AudioEngine {
      */
     val timeMs: Long
 
-    fun play(url: String, headers: Map<String, String> = emptyMap())
+    /**
+     * Starts [url] playing, optionally from [startAtMs] into the media.
+     *
+     * The engine has no open-and-wait, so a mid-track stream change asks for
+     * sound at a position rather than at the top: [startAtMs] is the only way
+     * a swap lands where the listener was, without a play-then-seek race
+     * (the engine is already making sound the instant it could seek).
+     */
+    fun play(url: String, headers: Map<String, String> = emptyMap(), startAtMs: Long = 0L)
 
     fun pause()
 

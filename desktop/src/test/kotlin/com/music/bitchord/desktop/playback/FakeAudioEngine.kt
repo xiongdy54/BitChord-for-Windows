@@ -41,14 +41,30 @@ class FakeAudioEngine : AudioEngine {
     /** What libvlc's `lengthChanged` event does: report the media's total. */
     fun length(ms: Long) { onLength?.invoke(ms) }
 
-    override fun play(url: String, headers: Map<String, String>) {
-        playedUrls += url; isPlaying = true; onPlayingChanged?.invoke(true)
+    override fun play(url: String, headers: Map<String, String>, startAtMs: Long) {
+        playedUrls += url
+        if (startAtMs != 0L) playedStartMs += startAtMs
+        isPlaying = true; onPlayingChanged?.invoke(true)
+        onPlayHook?.invoke()
     }
+
+    /** Positions the controller asked to start from. Empty is the norm: a row change restarts the clock. */
+    val playedStartMs = mutableListOf<Long>()
+
+    /** Whether [release] ran — the audition's teardown, once per swap. */
+    var releasedEngine = false
+
+    /**
+     * Fired at the end of [play] — the audition tests' handoff: the real
+     * engine's proof arrives through events on vlcj's thread, and this is
+     * where a test scripts the same arrival.
+     */
+    var onPlayHook: (() -> Unit)? = null
 
     override fun pause() { isPlaying = false; onPlayingChanged?.invoke(false) }
     override fun resume() { isPlaying = true; onPlayingChanged?.invoke(true) }
     override fun stop() { isPlaying = false; onPlayingChanged?.invoke(false) }
     override fun seekTo(fraction: Float) { seekFractions += fraction }
     override fun setVolume(percent: Int) { volumes += percent }
-    override fun release() {}
+    override fun release() { releasedEngine = true }
 }

@@ -31,4 +31,8 @@
     <string name="autoplay_subtitle">让音乐继续：队列最后一条开始播放时，自动在后面补上相似的音乐。</string>
     <string name="lyrics">歌词</string>
     <string name="downloads_empty">还没有下载。右键点击任意曲目并选择“下载”。</string>
+
+    <!-- Quality badge: the direction-neutral word for a swap in flight (upstream says
+         "Upgrading quality", but this swap can run downhill too — the setting fell). -->
+    <string name="switching_quality">切换音质中…</string>
 </resources>

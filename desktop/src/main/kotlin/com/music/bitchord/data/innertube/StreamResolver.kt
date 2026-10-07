@@ -665,6 +665,55 @@ object StreamResolver {
             error("No downloadable audio for this track")
         }
 
+    /**
+     * As [resolve], but for a track already playing and already resolved under
+     * a different ceiling: the walk the quality swap runs to learn what the
+     * *current* ceiling would have picked.
+     *
+     * Deliberately the same walk as [resolveUncached] — InnerTubeX first, the
+     * extraction failsafe behind it — with two differences, and they are the
+     * whole reason this exists beside [resolve]:
+     *
+     * - **The ceiling is a parameter, not the setting.** The caller asks "what
+     *   would the new ceiling give me" before the setting means anything to
+     *   the walk, and a resolve that read [AppSettings.effectiveAudioQuality]
+     *   live could race a second setting change mid-walk.
+     * - **[recent] is neither read nor written.** The latency cache is keyed
+     *   by videoId alone, ceiling-blind, so a hit would answer with the stream
+     *   the *old* ceiling settled on — the very thing the swap is trying to
+     *   leave — and a write would seed a future hit with a rung chosen for a
+     *   ceiling that may never come back.
+     *
+     * The picked record still lands in [NerdStats] (and the loudness map), as
+     * any resolve's does: if the swap happens, the badge's resolver fallbacks
+     * and the replay gain should describe the stream now playing.
+     *
+     * This is the desktop's whole substitute for the upstream second look:
+     * with no module sources there is no other recording to hunt for, only a
+     * different rung of the one ladder.
+     */
+    suspend fun repickFor(videoId: String, maxKbps: Int): Stream = withContext(TrackLog.about(videoId)) {
+        init
+        val stream = innerTubeXStream(videoId, maxKbps)
+            ?: newPipeStream(videoId) { candidates -> underCeiling(candidates, maxKbps) }
+        TrackLog.d(TAG, "repicked $videoId under a ${maxKbps}kbps ceiling: ${stream.kbps}kbps")
+        NerdStats.onStreamPicked(videoId, stream.kbps, mimeType = stream.mimeType)
+        stream.loudnessDb?.let { loudness[videoId] = it }
+        stream
+    }
+
+    /**
+     * The audio quality setting moved. Cleared: the latency cache, whose
+     * entries were all picked under the old ceiling — without this, a track
+     * change within [URL_TTL_MS] of a quality change would start on a URL the
+     * *old* setting chose, and the new setting would reach nothing but the
+     * tracks never prefetched.
+     */
+    fun onQualityChanged() {
+        if (recent.isNotEmpty()) TrackLog.d(TAG, "quality changed; ${recent.size} cached URLs drop")
+        recent.clear()
+    }
+
     // ---- Format selection ---------------------------------------------------
 
     /**

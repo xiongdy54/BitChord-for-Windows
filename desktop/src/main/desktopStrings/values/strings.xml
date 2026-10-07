@@ -36,4 +36,8 @@
     <string name="autoplay_subtitle">Keep the music going: as the queue’s last track starts, similar music fills the slots behind it.</string>
     <string name="lyrics">Lyrics</string>
     <string name="downloads_empty">Nothing downloaded yet. Right-click any track and choose Download.</string>
+
+    <!-- Quality badge: the direction-neutral word for a swap in flight (upstream says
+         "Upgrading quality", but this swap can run downhill too — the setting fell). -->
+    <string name="switching_quality">Switching quality…</string>
 </resources>
