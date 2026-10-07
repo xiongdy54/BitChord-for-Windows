@@ -2,7 +2,7 @@
 
 日期：2026-10-07
 分支：`desktop-slice2-now-playing`
-状态：设计中
+状态：已完成（实施记录见 §7）
 
 ## 1. 背景
 
@@ -67,3 +67,19 @@
 ## 6. 本切片不做
 
 本地音乐扫描与 `LocalMusicScreen` 全家（目录扫描/艺人专辑页签/排序/多选/WebDAV——独立切片）；OfflineDash/OfflineHls 打包路由（决策 6）；导出目录选择（决策 4）；DownloadManagerSheet 与工具栏下载钮（决策 10）；NerdStats 全量/无损竞速/质量升级 cue（切片 7，随 AUTOPLAY 与媒体会话）；音质切换中播放的 audition 接缝；wifiOnlyDownloads/metered 双档。
+
+
+## 7. 实施记录（2026-10-07 回填）
+
+**交付**：决策 1–12 落地。逐字七件（`Downloader`/`DownloadSession`/`LyricsTag`/三 Tagger/`LrcWriter`）+ `DownloadStore` 桌面重写（`AppFiles.dir("downloads")`、`.part`+改名、命名/编解码表逐字）+ `Downloads.kt` 移植（4 worker 排空取代 DownloadService，记录持久化到自有 `downloads.properties`）+ `MediaTagger`（ImageIO 替换 Bitmap，1000px/JPEG q92 不变）+ `EmbeddedLyrics` 回归（`forFile`）+ `LyricsCoordinator` 补回 `localUri` 分支 + 播放短路灯（`resolveUrl` 先查下载记录，引擎播文件路径不带 header）+ 右键菜单下载三态（进行中=取消/已存=删除/否则=下载，失败重试同形）+ `Destination.Downloads` + 下载页（按记录验证、按加入时间倒序）+ 侧边栏行 + 设置对话框音频/下载质量两组单选（`audioQuality` 首次落盘）。
+
+**与设计的偏离**：
+
+1. **`requested` 流未移植**：它服务于合集页"区分我点过的"——合集下载入口（BrowseActionsSheet）不在本片，记录随合集 API 一起回。
+2. **菜单的下载行并入 `songActions` 主表**（设计说"另加两行"）：三态是同一状态的三张脸，放进同一个能力过滤函数测试表才完整；`SongContextMenuTest` 的既有断言随新行更新。
+3. **`Downloads.prepare` 的 lossless 快问保留了，`requireM4a` 恒 false**（无导出，YouTube webm/opus 照存）。
+4. **下载排空的 `drain` 退出时调 `onStopped()`**（服务 onDestroy 的语义，落在协程自然结束处）。
+5. **测试适配**：`DownloadStoreTest` 裁掉源层/wifi/双档用例（层不存在），`DownloadSessionTest` 裁掉 collections 区段（API 未移植）、`@Before/@After` → `@BeforeTest/@AfterTest`、`assertArrayEquals`/`assertTrue` 的 JUnit 参数序换成 kotlin.test 形状（数组断言以文件内私有助手保持用例正文逐字）。
+6. **探针扩展**：`bitchord.probeDownload=true`（首曲入队一次）与 `probeDestination=downloads`。
+
+**验证**：31 套件 / 290 测试全绿（新增：移植 `DownloadSessionTest`（去合集区段）/`DownloadStoreTest`（判定表+命名表）/`MediaTaggerTest`（三容器逐字）+ 菜单三态用例 + 质量键往返）。**端到端实机**：`probeDownload` 全链路——`周杰倫 - 晴天.webm`（4.7MB）落盘 `%LOCALAPPDATA%/BitChord/downloads/`，`downloads.properties` 记录 videoId→路径，封面侧车进 `download-artwork/`，日志证 resolve→fetch→tag→embed→commit→remember 全通。截图三张（`.shots/slice6/`）：下载页空态（侧边栏行高亮）、设置对话框两组质量阶梯（Lossless/High 选中态）、英文浅色下载页。**实机待验**：右键三态的人工触发、下载行点击后离线播放（resolve 短路灯已在代码路径上，探针无法断网验证）、歌词面板读嵌入词（EmbeddedLyrics.forFile 已接进 Coordinator 的 localUri 分支）。
