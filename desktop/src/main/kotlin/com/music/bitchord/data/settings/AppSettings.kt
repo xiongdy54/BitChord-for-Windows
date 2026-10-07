@@ -2,6 +2,9 @@ package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.AppFiles
 import com.music.bitchord.data.FileStore
+import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.PaxSenix
+import com.music.bitchord.data.lyrics.normalizePaxSenixApiKey
 import com.music.bitchord.playback.RepeatMode
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -144,11 +147,205 @@ object AppSettings {
         prefs.putString(KEY_REPEAT_MODE, value.toString())
     }
 
+    // ── Lyrics ───────────────────────────────────────────────────────────────
+    //
+    // The lyric settings ride the same property file under the same string
+    // encoding as the keys above, with the Android object's upgrade semantics
+    // kept: a source added by an app update is enabled rather than silently
+    // off, and one dropped from a stored order falls back into declared order.
+
+    /**
+     * Time-synced lyrics on the player, lit up as they are sung.
+     *
+     * On by default — it is most of the point of the player screen — but it
+     * reaches third-party lyric databases for every track played, so it stays
+     * a switch, and [lyricsSources] narrows which of them get asked.
+     */
+    val syncedLyrics = MutableStateFlow(prefs.getString(KEY_SYNCED_LYRICS, "true") == "true")
+
+    /** Positive values delay synced lyrics; negative values bring them forward. */
+    val lyricsOffsetMs = MutableStateFlow(prefs.getString(KEY_LYRICS_OFFSET_MS, "0").toIntOrNull() ?: 0)
+
+    /**
+     * Which language the lyrics translate button translates *into*.
+     *
+     * Blank — the default — means "whatever the app is set to", and is stored
+     * as blank rather than resolved once: someone who has never touched this
+     * has expressed no preference, and switching the app language should carry
+     * their lyrics with it rather than leaving them on the language they
+     * happened to be reading the day the setting was written.
+     */
+    val translationLanguage = MutableStateFlow(prefs.getString(KEY_TRANSLATION_LANGUAGE, ""))
+
+    /** The databases [syncedLyrics] may ask. Empty is the same as off. */
+    val lyricsSources = MutableStateFlow(readLyricsSources())
+
+    /**
+     * The order [lyricsSources] are asked in — every enabled source is asked
+     * at once, but a higher-priority one still pending is never preempted by a
+     * lower one that happened to answer first. Reordered from Settings, so
+     * this is a full permutation of [LyricsSource.entries] rather than a
+     * subset — enabling and ordering are independent choices.
+     */
+    val lyricsSourceOrder = MutableStateFlow(readLyricsSourceOrder())
+
+    /**
+     * Off, the highest-priority source to answer at all is taken as the
+     * lyrics, word-synced or not. On, a merely line-synced answer is held as a
+     * fallback while the rest of [lyricsSourceOrder] is still checked for a
+     * word-synced one.
+     */
+    val prioritizeSyllableSync = MutableStateFlow(prefs.getString(KEY_PRIORITIZE_SYLLABLE_SYNC, "false") == "true")
+
+    /** User-issued credential required by api.paxsenix.org. */
+    val paxSenixApiKey = MutableStateFlow(prefs.getString(KEY_PAXSENIX_API_KEY, ""))
+
+    init {
+        PaxSenix.setApiKey(paxSenixApiKey.value)
+    }
+
+    fun setSyncedLyrics(value: Boolean) {
+        syncedLyrics.value = value
+        prefs.putString(KEY_SYNCED_LYRICS, value.toString())
+    }
+
+    fun setLyricsOffsetMs(value: Int) {
+        lyricsOffsetMs.value = value
+        prefs.putString(KEY_LYRICS_OFFSET_MS, value.toString())
+    }
+
+    fun setTranslationLanguage(value: String) {
+        translationLanguage.value = value
+        prefs.putString(KEY_TRANSLATION_LANGUAGE, value)
+    }
+
+    fun setLyricsSources(value: Set<LyricsSource>) {
+        lyricsSources.value = value
+        prefs.putString(KEY_LYRICS_SOURCES, value.joinToString(",") { it.name })
+        // Everything that was on the list this choice was made from, so a
+        // later build can tell a source the user turned off from one they
+        // have never been shown. See [readLyricsSources].
+        prefs.putString(KEY_LYRICS_SOURCES_SEEN, LyricsSource.entries.joinToString(",") { it.name })
+    }
+
+    fun setLyricsSourceOrder(value: List<LyricsSource>) {
+        lyricsSourceOrder.value = value
+        prefs.putString(KEY_LYRICS_SOURCE_ORDER, value.joinToString(",") { it.name })
+    }
+
+    fun setPrioritizeSyllableSync(value: Boolean) {
+        prioritizeSyllableSync.value = value
+        prefs.putString(KEY_PRIORITIZE_SYLLABLE_SYNC, value.toString())
+    }
+
+    fun setPaxSenixApiKey(value: String) {
+        val normalized = normalizePaxSenixApiKey(value)
+        paxSenixApiKey.value = normalized
+        prefs.putString(KEY_PAXSENIX_API_KEY, normalized)
+        PaxSenix.setApiKey(normalized)
+    }
+
+    /**
+     * Puts the source list, its order and [prioritizeSyllableSync] back the
+     * way a fresh install finds them. [syncedLyrics] itself is left alone —
+     * this is "start over on *which* lyrics", not "turn lyrics off".
+     */
+    fun resetLyricsSourceSettings() {
+        setLyricsSources(LyricsSource.entries.toSet())
+        setLyricsSourceOrder(LyricsSource.entries)
+        setPrioritizeSyllableSync(false)
+    }
+
+    /**
+     * A source *added* by an upgrade is enabled rather than left out. Absence
+     * from a saved list is a decision only about the sources that list was
+     * chosen from; a new one was never on it, so its absence says nothing.
+     * [KEY_LYRICS_SOURCES_SEEN] is what makes the two cases distinguishable —
+     * before it existed, [LEGACY_SOURCES] stands in as the list of everything
+     * there was to have an opinion about.
+     */
+    private fun readLyricsSources(): Set<LyricsSource> =
+        lyricsSourcesFrom(
+            stored = prefs.getStringOrNull(KEY_LYRICS_SOURCES),
+            seen = prefs.getStringOrNull(KEY_LYRICS_SOURCES_SEEN),
+        )
+
+    private fun List<String>.toSources(): Set<LyricsSource> =
+        mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }.toSet()
+
+    /**
+     * A named source dropped from the stored order — an app update reordered
+     * since it was saved — falls out on read; one added since is appended, in
+     * [LyricsSource]'s own declared order, so a fresh install and an upgraded
+     * one agree on where a new source lands until the user says otherwise.
+     */
+    private fun readLyricsSourceOrder(): List<LyricsSource> =
+        lyricsSourceOrderFrom(prefs.getStringOrNull(KEY_LYRICS_SOURCE_ORDER))
+
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_THEME_SETTING = "theme_setting"
     private const val KEY_LANGUAGE = "language"
+    private const val KEY_SYNCED_LYRICS = "synced_lyrics"
+    private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"
+    private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
+    private const val KEY_LYRICS_SOURCES = "lyrics_sources"
+    private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
+    private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
+    private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
+    private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
 }
+
+/**
+ * The source list a stored string (and the upgrade bookkeeping beside it)
+ * resolves to. `stored == null` is a fresh install — every source on; a
+ * stored-but-empty string is a user who turned them all off, which is
+ * different and is kept different. A source the `seen` list doesn't name was
+ * added by an app update and is enabled rather than silently off.
+ */
+internal fun lyricsSourcesFrom(
+    stored: String?,
+    seen: String?,
+    legacy: Set<LyricsSource> = LEGACY_LYRICS_SOURCES,
+): Set<LyricsSource> {
+    if (stored == null) return LyricsSource.entries.toSet()
+    val chosen = stored.split(",").toLyricsSources()
+    val seenSources = seen?.split(",")?.toLyricsSources() ?: legacy
+    return chosen + LyricsSource.entries.filter { it !in seenSources }
+}
+
+/**
+ * The ask order a stored string resolves to: unknown names fall out, sources
+ * missing from the string append in declared order — so a fresh install and
+ * an upgraded one agree on where a new source lands until the user says
+ * otherwise.
+ */
+internal fun lyricsSourceOrderFrom(stored: String?): List<LyricsSource> {
+    if (stored == null) return LyricsSource.entries
+    val saved = stored.split(",").mapNotNull { name ->
+        LyricsSource.entries.firstOrNull { it.name == name }
+    }
+    return saved + LyricsSource.entries.filter { it !in saved }
+}
+
+private fun List<String>.toLyricsSources(): Set<LyricsSource> =
+    mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }.toSet()
+
+/**
+ * The sources that existed before the seen-key was written. Fixed forever: it
+ * describes what an old build could have saved, so it does not grow when
+ * [LyricsSource] does.
+ */
+private val LEGACY_LYRICS_SOURCES = setOf(
+    LyricsSource.LYRICS_PLUS,
+    LyricsSource.PAXSENIX,
+    LyricsSource.BETTER_LYRICS,
+    LyricsSource.SIMP_MUSIC,
+    LyricsSource.KUGOU,
+    LyricsSource.LRCLIB,
+    LyricsSource.MUSIXMATCH,
+    LyricsSource.GENIUS,
+)
 
 /** Which colour scheme the window paints. See [AppSettings.themeSetting]. */
 enum class ThemeSetting {

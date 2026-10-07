@@ -37,6 +37,16 @@ class FileStore(private val file: File) {
     @Synchronized
     fun getString(key: String, default: String): String = values.getProperty(key) ?: default
 
+    /**
+     * Reads a key only if it was ever written, so a caller can tell "never
+     * saved" from "saved as blank" — the lyrics source list needs that split:
+     * a fresh install has no list, a user who turned every source off has an
+     * empty one, and those mean different things.
+     */
+    @Synchronized
+    fun getStringOrNull(key: String): String? =
+        if (values.containsKey(key)) values.getProperty(key) else null
+
     @Synchronized
     fun putString(key: String, value: String) {
         values.setProperty(key, value)
