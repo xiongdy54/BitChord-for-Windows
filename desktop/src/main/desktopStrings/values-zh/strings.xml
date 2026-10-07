@@ -27,4 +27,5 @@
     <string name="about">关于</string>
     <string name="about_upstream">BitChord 的桌面版，上游 kushagrasinghx/BitChord。音乐来自 YouTube Music。</string>
     <string name="lyrics">歌词</string>
+    <string name="downloads_empty">还没有下载。右键点击任意曲目并选择“下载”。</string>
 </resources>

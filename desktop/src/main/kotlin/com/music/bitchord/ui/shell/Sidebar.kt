@@ -45,6 +45,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.browse
+import com.music.bitchord.desktop.resources.downloaded_songs
 import com.music.bitchord.desktop.resources.library
 import com.music.bitchord.desktop.resources.listen_now
 import com.music.bitchord.desktop.resources.playlists
@@ -139,6 +140,11 @@ fun Sidebar(
             label = stringResource(Res.string.playlists),
             selected = current == Destination.LibraryPlaylists,
         ) { onSelect(Destination.LibraryPlaylists) }
+        SidebarRow(
+            icon = BitChordIcons.Download,
+            label = stringResource(Res.string.downloaded_songs),
+            selected = current == Destination.Downloads,
+        ) { onSelect(Destination.Downloads) }
 
         // The account's own playlists, one row each, beneath the library's
         // "Playlists" page of them. No rows when the account has none or the

@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.components
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.download.DownloadState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -26,6 +27,7 @@ class SongContextMenuTest {
         SongAction.AddToQueue,
         SongAction.ToggleLike,
         SongAction.StartRadio,
+        SongAction.Download,
         SongAction.OpenAlbum,
         SongAction.OpenArtist,
         SongAction.CopyLink,
@@ -63,6 +65,7 @@ class SongContextMenuTest {
                 SongAction.AddToQueue,
                 SongAction.ToggleLike,
                 SongAction.StartRadio,
+                SongAction.Download,
                 SongAction.CopyLink,
             ),
             actions,
@@ -81,5 +84,32 @@ class SongContextMenuTest {
         // Which label it carries is the UI's business; the menu never loses
         // the toggle, or a disliked song could never be un-disliked.
         assertTrue(SongAction.ToggleLike in songActions(song(), isCurrent = false))
+    }
+
+    @Test
+    fun `the download row is three faces of one state`() {
+        val faces = listOf(SongAction.Download, SongAction.CancelDownload, SongAction.DeleteDownload)
+        fun face(vararg actions: SongAction) = faces.single { it in actions }
+
+        // Not on disk, not in flight: the download itself — also what a failed
+        // attempt offers, since a re-ask is exactly what a retry is.
+        assertEquals(
+            SongAction.Download,
+            face(*songActions(song(), isCurrent = false).toTypedArray()),
+        )
+        // In flight: a cancel, whether the row is waiting or running.
+        assertEquals(
+            SongAction.CancelDownload,
+            face(*songActions(song(), isCurrent = false, downloadState = DownloadState.Queued).toTypedArray()),
+        )
+        assertEquals(
+            SongAction.CancelDownload,
+            face(*songActions(song(), isCurrent = false, downloadState = DownloadState.Running(0.5f)).toTypedArray()),
+        )
+        // Saved: a delete, and nothing else in the section.
+        assertEquals(
+            SongAction.DeleteDownload,
+            face(*songActions(song(), isCurrent = false, saved = true).toTypedArray()),
+        )
     }
 }

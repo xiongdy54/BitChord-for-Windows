@@ -58,6 +58,7 @@ import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.LibraryPlaylistsPage
 import com.music.bitchord.ui.screens.LibrarySongsPage
 import com.music.bitchord.desktop.playback.LyricsCoordinator
+import com.music.bitchord.ui.screens.DownloadsPage
 import com.music.bitchord.ui.screens.RecentlyAddedPage
 import com.music.bitchord.ui.screens.SettingsDialog
 import org.jetbrains.compose.resources.stringResource
@@ -302,6 +303,21 @@ fun Shell(
                         Destination.LibrarySongs -> LibrarySongsPage(
                             viewModel = library,
                             onPlayFrom = { songs, index ->
+                                player.playFrom(
+                                    songs,
+                                    index,
+                                    PlaybackSourceType.BROWSE,
+                                    songsSourceTitle,
+                                    null,
+                                )
+                            },
+                        )
+
+                        Destination.Downloads -> DownloadsPage(
+                            onPlayFrom = { songs, index ->
+                                // The queue plays straight off the files: the
+                                // resolve seam finds each saved row on disk and
+                                // never asks the network for it.
                                 player.playFrom(
                                     songs,
                                     index,

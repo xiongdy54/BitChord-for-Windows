@@ -32,4 +32,5 @@
     <string name="about">About</string>
     <string name="about_upstream">A desktop build of BitChord, upstream kushagrasinghx/BitChord. Music from YouTube Music.</string>
     <string name="lyrics">Lyrics</string>
+    <string name="downloads_empty">Nothing downloaded yet. Right-click any track and choose Download.</string>
 </resources>

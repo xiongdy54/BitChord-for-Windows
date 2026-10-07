@@ -24,6 +24,9 @@ sealed interface Destination {
     data object LibrarySongs : Destination
     data object LibraryPlaylists : Destination
 
+    /** The tracks saved by the download pipeline, on this machine. */
+    data object Downloads : Destination
+
     data class Detail(
         val kind: BrowseType,
         val browseId: String,

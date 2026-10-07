@@ -30,13 +30,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeSetting
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.appearance
+import com.music.bitchord.desktop.resources.audio_quality
 import com.music.bitchord.desktop.resources.dark_theme
 import com.music.bitchord.desktop.resources.lyrics
+import com.music.bitchord.desktop.resources.download_quality
 import com.music.bitchord.desktop.resources.language
 import com.music.bitchord.desktop.resources.translation_language
 import com.music.bitchord.desktop.resources.lyrics_sources
@@ -160,6 +164,32 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                         checked = showNerdStats,
                         onCheckedChange = { AppSettings.setShowNerdStats(it) },
                     )
+                }
+
+                GroupDivider()
+
+                // The quality ladders: what the player resolves under and what a
+                // download keeps, each read back next launch like the theme is.
+                // The playback ceiling's seam is StreamResolver's own; the
+                // download's is read once per track by the pipeline.
+                GroupHeader(stringResource(Res.string.audio_quality))
+                val audioQuality by AppSettings.audioQuality.collectAsState()
+                AudioQuality.entries.forEach { quality ->
+                    RadioRow(
+                        label = quality.label,
+                        selected = audioQuality == quality,
+                    ) { AppSettings.setAudioQuality(quality) }
+                }
+
+                GroupDivider()
+
+                GroupHeader(stringResource(Res.string.download_quality))
+                val downloadQuality by AppSettings.downloadQuality.collectAsState()
+                DownloadQuality.entries.forEach { quality ->
+                    RadioRow(
+                        label = quality.label,
+                        selected = downloadQuality == quality,
+                    ) { AppSettings.setDownloadQuality(quality) }
                 }
 
                 GroupDivider()

@@ -30,6 +30,7 @@ import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.desktop.playback.LyricsCoordinator
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.ui.DetailPages
@@ -60,6 +61,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -503,6 +505,11 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     addToQueue = player::enqueueLast,
                     toggleLike = ::toggleSongLike,
                     startRadio = player::playRadio,
+                    download = { song -> Downloads.enqueue(song) },
+                    cancelDownload = { song -> Downloads.cancel(song.videoId) },
+                    deleteDownload = { song ->
+                        scope.launch { Downloads.delete(song.videoId) }
+                    },
                     openAlbum = { song ->
                         song.albumId?.let { albumId ->
                             nav.open(

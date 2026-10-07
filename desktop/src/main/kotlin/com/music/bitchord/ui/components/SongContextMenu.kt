@@ -7,12 +7,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.download.DownloadState
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.add_to_queue
+import com.music.bitchord.desktop.resources.cancel
 import com.music.bitchord.desktop.resources.copy_link
 import com.music.bitchord.desktop.resources.copy_log
+import com.music.bitchord.desktop.resources.delete_download
+import com.music.bitchord.desktop.resources.download
 import com.music.bitchord.desktop.resources.like
 import com.music.bitchord.desktop.resources.open_album
 import com.music.bitchord.desktop.resources.open_artist
@@ -25,17 +30,27 @@ import org.jetbrains.compose.resources.stringResource
  * The things a row's right-click can ask for — the desktop's answer to
  * upstream's 14-row `SongActionsSheet`, which is a touch-screen bottom sheet
  * and cannot be carried across as it stands. Every entry has a kernel or an
- * endpoint behind it: the queue mutations and the like are already there, and
- * `radio()` has been in the repository since it was ported. The entries the
- * upstream sheet has that nothing here can serve — downloads, playlist
- * add/remove (needs sign-in), the sleep timer, lyric offset — stay absent
- * rather than arriving dead.
+ * endpoint behind it: the queue mutations and the like are already there,
+ * `radio()` has been in the repository since it was ported, and the download
+ * rows arrived with the pipeline they drive. The entries the upstream sheet
+ * has that nothing here can serve — playlist add/remove (needs sign-in), the
+ * sleep timer, lyric offset — stay absent rather than arriving dead.
  */
 enum class SongAction {
     PlayNext,
     AddToQueue,
     ToggleLike,
     StartRadio,
+
+    /** Offered while the track is neither saved nor in flight; a failure reads as a retry. */
+    Download,
+
+    /** Offered while the track is queued or running — the sheet's Cancel, as a row. */
+    CancelDownload,
+
+    /** Offered once the file is saved; deletes it and the record of it. */
+    DeleteDownload,
+
     OpenAlbum,
     OpenArtist,
     CopyLink,
@@ -53,13 +68,27 @@ enum class SongAction {
  * appear only when the row actually carries the browse id; a menu item that
  * can only say "no" is the dead-button rule's textbook violation. `CopyLog`
  * appears only when the song clicked is the one playing, matching upstream's
- * own rule that it is about *this* playback.
+ * own rule that it is about *this* playback. The download rows are three
+ * faces of one state: in flight a cancel, saved a delete, otherwise the
+ * download itself — which is also what a failed attempt offers, since a
+ * re-ask is exactly what a retry is.
  */
-fun songActions(song: Song, isCurrent: Boolean): List<SongAction> = buildList {
+fun songActions(
+    song: Song,
+    isCurrent: Boolean,
+    saved: Boolean = false,
+    downloadState: DownloadState? = null,
+): List<SongAction> = buildList {
     add(SongAction.PlayNext)
     add(SongAction.AddToQueue)
     add(SongAction.ToggleLike)
     add(SongAction.StartRadio)
+    when {
+        downloadState is DownloadState.Queued || downloadState is DownloadState.Running ->
+            add(SongAction.CancelDownload)
+        saved -> add(SongAction.DeleteDownload)
+        else -> add(SongAction.Download)
+    }
     if (song.albumId != null) add(SongAction.OpenAlbum)
     if (song.artistId != null) add(SongAction.OpenArtist)
     add(SongAction.CopyLink)
@@ -75,6 +104,9 @@ class SongActionLabels(
     val like: String,
     val removeFromLiked: String,
     val startRadio: String,
+    val download: String,
+    val cancel: String,
+    val deleteDownload: String,
     val openAlbum: String,
     val openArtist: String,
     val copyLink: String,
@@ -88,6 +120,9 @@ fun rememberSongActionLabels() = SongActionLabels(
     like = stringResource(Res.string.like),
     removeFromLiked = stringResource(Res.string.remove_from_liked),
     startRadio = stringResource(Res.string.start_radio),
+    download = stringResource(Res.string.download),
+    cancel = stringResource(Res.string.cancel),
+    deleteDownload = stringResource(Res.string.delete_download),
     openAlbum = stringResource(Res.string.open_album),
     openArtist = stringResource(Res.string.open_artist),
     copyLink = stringResource(Res.string.copy_link),
@@ -107,6 +142,9 @@ class SongActions(
     val addToQueue: (Song) -> Unit,
     val toggleLike: (Song, liked: Boolean) -> Unit,
     val startRadio: (Song) -> Unit,
+    val download: (Song) -> Unit,
+    val cancelDownload: (Song) -> Unit,
+    val deleteDownload: (Song) -> Unit,
     val openAlbum: (Song) -> Unit,
     val openArtist: (Song) -> Unit,
     val copyLink: (Song) -> Unit,
@@ -140,7 +178,11 @@ fun SongContextMenuArea(song: Song, content: @Composable () -> Unit) {
         items = {
             val liked = LikeState.overrides.value[song.videoId] == LikeStatus.LIKE
             val isCurrent = actions.currentVideoId() == song.videoId
-            songActions(song, isCurrent).map { action ->
+            // Read fresh at open time, exactly like `liked`: the menu never
+            // describes a state the tap behind it won't act on.
+            val saved = song.videoId in Downloads.saved.value
+            val downloadState = Downloads.active.value[song.videoId]
+            songActions(song, isCurrent, saved, downloadState).map { action ->
                 when (action) {
                     SongAction.PlayNext -> ContextMenuItem(labels.playNext) { actions.playNext(song) }
                     SongAction.AddToQueue -> ContextMenuItem(labels.addToQueue) { actions.addToQueue(song) }
@@ -148,6 +190,9 @@ fun SongContextMenuArea(song: Song, content: @Composable () -> Unit) {
                         if (liked) labels.removeFromLiked else labels.like,
                     ) { actions.toggleLike(song, liked) }
                     SongAction.StartRadio -> ContextMenuItem(labels.startRadio) { actions.startRadio(song) }
+                    SongAction.Download -> ContextMenuItem(labels.download) { actions.download(song) }
+                    SongAction.CancelDownload -> ContextMenuItem(labels.cancel) { actions.cancelDownload(song) }
+                    SongAction.DeleteDownload -> ContextMenuItem(labels.deleteDownload) { actions.deleteDownload(song) }
                     SongAction.OpenAlbum -> ContextMenuItem(labels.openAlbum) { actions.openAlbum(song) }
                     SongAction.OpenArtist -> ContextMenuItem(labels.openArtist) { actions.openArtist(song) }
                     SongAction.CopyLink -> ContextMenuItem(labels.copyLink) { actions.copyLink(song) }

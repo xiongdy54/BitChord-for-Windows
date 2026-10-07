@@ -76,6 +76,24 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `a quality rung reads back by its enum name, unknown falls to the default`() {
+        val file = tempFile()
+        val store = FileStore(file)
+        store.putString("audio_quality", "HIGH")
+        store.putString("download_quality", "SOMETHING_FUTURE")
+        // The same expressions the two initialisers read, fallbacks included.
+        val audio = FileStore(file).getString("audio_quality", "LOSSLESS")
+            .let { stored -> com.music.bitchord.data.settings.AudioQuality.entries.firstOrNull { it.name == stored } }
+            ?: com.music.bitchord.data.settings.AudioQuality.LOSSLESS
+        val download = FileStore(file).getString("download_quality", "HIGH")
+            .let { stored -> com.music.bitchord.data.settings.DownloadQuality.entries.firstOrNull { it.name == stored } }
+            ?: com.music.bitchord.data.settings.DownloadQuality.HIGH
+        assertEquals(com.music.bitchord.data.settings.AudioQuality.HIGH, audio)
+        // A rung a future build removed must not break the object's initialiser.
+        assertEquals(com.music.bitchord.data.settings.DownloadQuality.HIGH, download)
+    }
+
+    @Test
     fun `the language is absent when the stored tag is blank`() {
         // `setLanguage(null)` writes the empty string; reading it back must be
         // null again, not an empty tag that `Locale.forLanguageTag` would
