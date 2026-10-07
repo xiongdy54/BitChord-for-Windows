@@ -5,6 +5,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.Key
@@ -86,6 +88,12 @@ private val probeOpenPlayer = System.getProperty("bitchord.probeOpenPlayer") == 
  * its glyph and its strip, and a scripted pass has no mouse.
  */
 private val probeOpenLyrics = System.getProperty("bitchord.probeOpenLyrics") == "true"
+/**
+ * Enqueues the first track that reaches the player for download — the whole
+ * pipeline's smoke test without a hand on the mouse: resolve, fetch, tag,
+ * embed, record. The proof is on the disk afterwards, not on the screen.
+ */
+private val probeDownload = System.getProperty("bitchord.probeDownload") == "true"
 private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull()
 
 /**
@@ -338,6 +346,17 @@ fun main() {
         // its content: nothing `remember`ed inside that content would be reachable from here.
         // A debug query opens on search, since that is the screen it drives.
         val shellState = remember { ShellState() }
+        if (probeDownload) {
+            var downloadProbeFired by remember { mutableStateOf(false) }
+            val snapshot by player.state.collectAsState()
+            LaunchedEffect(snapshot.song?.videoId, snapshot.durationMs) {
+                val current = snapshot.song
+                if (current != null && snapshot.durationMs > 0 && !downloadProbeFired) {
+                    downloadProbeFired = true
+                    Downloads.enqueue(current)
+                }
+            }
+        }
         // The settings dialog is window-level, not a destination — but the
         // scripted screenshot pass opens it the same way it opens pages.
         if (probeDestination == "settings") shellState.showSettings = true
@@ -348,6 +367,7 @@ fun main() {
                     probeDestination == "explore" -> open(Destination.Explore)
                     probeDestination == "library" -> open(Destination.LibrarySongs)
                     probeDestination == "playlists" -> open(Destination.LibraryPlaylists)
+                    probeDestination == "downloads" -> open(Destination.Downloads)
                     probeDestination == "recent" -> open(Destination.RecentlyAdded)
                     probeDestination.startsWith("detail:") -> open(
                         Destination.Detail(

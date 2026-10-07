@@ -196,6 +196,7 @@ compose.desktop {
             "bitchord.probeAutoplay",
             "bitchord.probeOpenPlayer",
             "bitchord.probeOpenLyrics",
+            "bitchord.probeDownload",
             "bitchord.probeDestination",
             "bitchord.shot",
             "bitchord.shotMs",
