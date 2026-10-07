@@ -2,7 +2,7 @@
 
 日期：2026-10-07
 分支：`desktop-slice2-now-playing`
-状态：设计中
+状态：已完成（实施记录见 §7）
 
 ## 1. 背景
 
@@ -75,3 +75,23 @@
 ## 6. 本切片不做
 
 模块源体系（`SourceRegistry`/`ModuleSource`/JioSaavn/addon——`QualityUpgrade` 的第二眼与 `NerdStats` 的"无损竞速"在桌面永远没有 substrate，除非那天模块源移植，届时 audition 接缝直接挂上）；手动"升级音质"菜单行（上游 `upgradeQualityNow`，无第二源即无升级目标）；OriginalVersion/音视频版本换流；repeat/shuffle 的覆盖层自定义命令面（SMTC 按钮位固定，无对应物）；Discord RPC、Scrobble、桌面小组件；媒体通知（桌面的"通知"就是媒体覆盖层本身）。
+
+## 7. 实施记录（2026-10-07 回填）
+
+**交付**：决策 1–12 落地。`desktop/playback/smtc/` 三件——`SmtcBackend`（接口）、`SmtcSession`（diff/状态语义，纯 JVM 可测）、`WinRtSmtcBackend`（全部 COM 机械：combase 的 HSTRING/RoInitialize/RoGetActivationFactory、`GetForWindow`、控件与第二接口的 vtable 槽位、DisplayUpdater/MusicProperties、Uri→CreateFromUri 封面链、TimelineProperties 属性袋、按钮与拖动 seek 的 COM 事件对象）；`Main.kt` 接线（attach、状态收集器、2s 位置校正、命令回接 `Dispatchers.Main`、quit 释放）；`StreamResolver.repickFor/onQualityChanged`；`NerdStats.qualityRacingIds`；`AudioEngine.play(url, headers, startAtMs)`（VLC `:start-time=`）+ `FakeAudioEngine` 同步；`PlayerController.setAudioQuality` + 换流状态机（`playingUrl`、`qualitySwapJob`、`auditionProves`）；徽章 racing 分支 + `switching_quality` 双语字符串；`SettingsDialog`/`Shell` 改走 `player::setAudioQuality`；探针 `bitchord.probeQualitySwitch` + `bitchord.probePlayVideoId`。
+
+**与设计的偏离**：
+
+1. **音质触发从收集器改为显式入口**（设计决策 7 说"`AppSettings.audioQuality` 收集器"）：`drop(1)` 收集器的触发依赖"订阅先于下一次赋值"的时序——单测里复现了丢触发（订阅完成前赋的值被当作首值吞掉），生产同样悬。实现为 `PlayerController.setAudioQuality(value)`（同值守卫 + 写设置 + `onQueue { applyQualityChange }`），与 `setAutoplay` 同形；设置对话框经 `Shell` 传入 `player::setAudioQuality`。
+2. **三个 WinRT 事实与 SDK 头不符，实机纠正**：interop 接口要从**运行时类** `Windows.Media.SystemMediaTransportControls` 的工厂上要（拿 interop 类名当 activation id 得 `REGDB_E_CLASSNOTREG`）；`ISystemMediaTransportControls2` 的 vtable **不继承基接口的槽位**——WinRT 接口各自独立，`UpdateTimelineProperties`/`add_PlaybackPositionChangeRequested` 在槽 12/13 而非叠加出的 42/43（错槽返回垃圾 HRESULT）；事件 handler 的参数化接口 IID 从 SDK 头推导不出（UUIDv5 的字节序无文档），实机 QI 日志读出运行时真实索要的两个 GUID 硬编码，KDoc 注明出处。
+3. **事件 handler 的 QI 只答四样**：IUnknown、IInspectable、自己的事件接口、`IAgileObject`（MTA 订阅的"任意线程可调"声明）。弱引用族被拒是安全的（订阅照常落地）；`IMarshal` 绝不能答（答了运行时按 IMarshal 调到不存在的槽上，订阅死于 `RPC_E_WRONG_THREAD`）。
+4. **`ISystemMediaTransportControlsTimelineProperties` 实例创建**：`RoActivateInstance` + QI 到 IID，属性袋复用；`setTimeline` 在 `durationMs <= 0` 时跳过（无长度就没有进度条可摆）。
+5. **`SmtcBackend.setEnabled` 未进接口**：backend 在 attach 序列里自己点亮四个按钮（Stop 刻意不亮——壳没有"停止"这个动作），接口上没有第二个调用面。
+6. **换流落地前的复查多了一道 `engine.isPlaying`**：试听期间曲目可能自然结束——把已停的音频复活，与入口的"暂停不换"守卫同理。
+7. **audition 的时长门在当前时长未知时**退化为"打开 + 解码出 stats"（与上游 verdict 的 severe-mismatch 分支同形，不猜）。
+8. **`MediaPlaybackStatus` 只映射 Closed/Playing/Paused**：song 为空即 Closed，`Stopped` 无生产者不搬；`PlayerState.isQualityUpgraded` 未启用（决策 12 预告的死状态）。
+9. **徽章 racing 文本用 "Switching quality…/切换音质中…"**：重选阶梯双向都可能（136→130 也换过一次流），上游 "Upgrading quality" 对下行方向是谎言。
+
+**验证**：40 类 347 测试全绿（新增 `SmtcSessionTest` 9 表：首推/diff/换曲/暂停/空态/attach 前丢弃/命令回传/幂等 release；`QualitySwapTest` 11 表：换流原位落地、同 URL 不换、repick 失败、试听报错、时长不符、超时弃单、暂停不换、剩余不足不换、竞速点亮与熄灭、试听中换曲弃单、二次换流重武装）。实机探针：`smtc attached`/`smtc released` 每次运行成对；换流全链路两次落地（"quality changed; 1 cached URLs drop" → "quality swap starts … under 64kbps" → "repicked … 130kbps" → "quality swap landed … at 11943ms"/"11421ms"）；落地后徽章读出新流实测 130kbps、进度从落点继续（`.shots/slice8-badge-racing.png` 为落地态，进度 0:12 与落点 11421ms 吻合）。竞速徽章是 1–3s 的瞬态，探针多次未打中窗口——以 `the race lights…` 单测与日志为准。媒体覆盖层与媒体键是系统 UI，PrintWindow 够不到：COM 订阅链已由实机冒烟（真窗口 + 真按钮事件对象）与每次运行的 attach 日志覆盖，覆盖层的目视确认留给人手（按一下媒体键即可）。
+
+**已知瑕疵**：探针把 `audio_quality` 写进用户的 `settings.properties` 且不自恢复（本次手动还原 LOSSLESS）；下一次做探针清理时统一处理。本机网络当日 Maven Central 403、YouTube 搜索端点不回 Track 行——前者以机器本地 Gradle init 脚本挂镜像绕开（不入仓库），后者使自动播放探针改走 `probePlayVideoId` 直连播放。
