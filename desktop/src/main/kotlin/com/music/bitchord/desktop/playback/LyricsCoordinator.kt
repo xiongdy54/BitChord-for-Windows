@@ -1,11 +1,11 @@
 // Ported from app/src/main/java/com/music/bitchord/ui/MainViewModel.kt's lyrics section — the
 // four flows, loadLyrics' dedup and duration gates, and the provider picker with its per-source
 // jobs and result cache. The desktop has no MainViewModel; this stands next to PlayerController
-// in the same assembly. One branch stayed behind: upstream reads a downloaded file's embedded
-// lyrics before the network, and the desktop has no downloads yet — when the download slice
-// brings EmbeddedLyrics over, the `localUri` parameter and that branch come back with it.
+// in the same assembly. The embedded-lyrics branch — upstream reads a downloaded file's own
+// lyrics before the network — came back with slice 6's downloads, as its header promised.
 package com.music.bitchord.desktop.playback
 
+import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -93,6 +93,7 @@ class LyricsCoordinator(
         artist: String,
         durationMs: Long,
         album: String? = null,
+        localUri: String? = null,
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -108,7 +109,11 @@ class LyricsCoordinator(
         // dropped as a duplicate, and leave the track marked as being looked up
         // by nobody — which is what left a paused track loading for ever, since
         // pausing is when the duration is most likely to arrive a frame late.
-        if (durationMs <= 0L) return
+        // A downloaded file is the exception, and for the reason upstream gave:
+        // a length is only needed to *match* a track against a stranger's
+        // database, and nothing is being matched here — these lyrics were
+        // written into this exact file, for this exact recording.
+        if (durationMs <= 0L && localUri == null) return
         lyricsFor = key
         val generation = lyricsGeneration.incrementAndGet()
         currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album)
@@ -130,6 +135,22 @@ class LyricsCoordinator(
         }
         _lyricsChecked.value = false
         lyricsJob = scope.launch {
+            // The file first, and without the duration gate: see above. What the
+            // file records is the lyrics, not which of the services they came
+            // from months ago — so there is no source to name either.
+            if (localUri != null) {
+                EmbeddedLyrics.forFile(localUri)?.let { embedded ->
+                    _lyrics.value = embedded
+                    _lyricsSource.value = null
+                    _lyricsChecked.value = true
+                    return@launch
+                }
+            }
+            if (durationMs <= 0L) {
+                // Duration arrives a beat after the track does; wait for it.
+                lyricsFor = null
+                return@launch
+            }
             val found = fetch.lyrics(
                 videoId = videoId,
                 title = title,

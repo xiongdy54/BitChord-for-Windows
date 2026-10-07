@@ -6,6 +6,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.PlayerState
@@ -86,8 +87,15 @@ class PlayerController(
     /** Where resolving a stream URL happens: the blocking half of a resolve, and nothing else. */
     var resolveDispatcher: CoroutineDispatcher = Dispatchers.IO
 
-    /** Test seam. Production resolves through [StreamResolver], whose cache and coalescing already exist. */
-    var resolveUrl: suspend (String) -> String = { StreamResolver.resolve(it) }
+    /**
+     * Test seam. Production asks the download record first — a saved file
+     * answers before the network is asked, and a record outliving its file is
+     * pruned on the way past ([Downloads.verifiedSavedUri]) — then resolves
+     * through [StreamResolver], whose cache and coalescing already exist.
+     */
+    var resolveUrl: suspend (String) -> String = {
+        Downloads.verifiedSavedUri(it) ?: StreamResolver.resolve(it)
+    }
 
     /**
      * Handed the videoId of the row after the one that just started, for spec §2 decision 7.
@@ -523,7 +531,12 @@ class PlayerController(
                     .onSuccess { url ->
                         _status.value = null
                         setLoading(false)
-                        engine.play(url, StreamResolver.mediaHeadersFor(url))
+                        // A downloaded file needs no headers and would have
+                        // them asked of a URL that is not one.
+                        engine.play(
+                            url,
+                            if (url.startsWith("http")) StreamResolver.mediaHeadersFor(url) else emptyMap(),
+                        )
                         engine.setVolume(_volume.value)
                         prefetchNext()
                     }

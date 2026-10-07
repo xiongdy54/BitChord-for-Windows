@@ -94,6 +94,9 @@ fun PlayerPage(
                 artist = song.artist,
                 durationMs = snapshot.durationMs,
                 album = song.albumName,
+                // A downloaded row carries the file it saved; the coordinator
+                // reads the lyrics already inside it before asking anyone.
+                localUri = song.localUri,
             )
         }
     }
