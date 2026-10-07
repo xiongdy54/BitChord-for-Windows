@@ -29,6 +29,7 @@ import com.music.bitchord.data.FileStore
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.ui.DetailPages
@@ -301,6 +302,7 @@ fun main() {
     // assign both true and false rather than only turning it on.
     QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
     val player = PlayerController(scope)
+    val lyrics = LyricsCoordinator(scope)
     // PlaybackService.kt:5286 restores repeat the same way; the shuffle half of that
     // pair is already applied above, before the player exists. Restored here rather
     // than in the controller's init because a constructor that reads the disk makes
@@ -400,7 +402,10 @@ fun main() {
             onPreviewKeyEvent = { event ->
                 when {
                     escapeClosesPlayer(event.key, event.type, shellState.showPlayer) -> {
-                        shellState.showPlayer = false
+                        // The lyric sheet is the player's own first step back:
+                        // Esc closes it, then the player, never both at once.
+                        if (shellState.lyricsOpen) shellState.lyricsOpen = false
+                        else shellState.showPlayer = false
                         true
                     }
 
@@ -538,6 +543,7 @@ if (shotPath.isNotBlank() && shotMs != null) {
                 ) {
                     Shell(
                     player = player,
+                    lyrics = lyrics,
                     home = home,
                     search = search,
                     library = library,

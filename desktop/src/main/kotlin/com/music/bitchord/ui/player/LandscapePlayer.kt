@@ -1,9 +1,9 @@
 // Ported from app/src/main/java/com/music/bitchord/ui/player/LandscapePlayer.kt.
 //
-// Two feature families came off with their members, because neither ships in
-// this slice: lyrics (`LandscapeLyricsPane` whole, the `lyricsPane` slot on
+// Two feature families came off with their members when this was first ported.
+// The first — lyrics (`LandscapeLyricsPane`, the `lyricsPane` slot on
 // `LandscapePlayerLayout`, the `PlayerPane.Lyrics` case, the `lyricStrip` slot on
-// `LandscapeMainPane` and its one-line strip) and motion artwork
+// `LandscapeMainPane`) — is back in full as of slice 5. The second, motion artwork
 // (`CanvasArtworkPlayer` and the `canvas` / `canvasRendered` /
 // `onCanvasRenderedChange` parameters that fed it). Login and the lossless-upgrade
 // rollback cue went with them — `signedIn` gated the like glyph on an account
@@ -65,6 +65,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -123,8 +124,8 @@ private const val LANDSCAPE_PANE_FADE_IN_MS = 220
 private const val LANDSCAPE_PANE_FADE_IN_DELAY_MS = 90
 private const val LANDSCAPE_PANE_FADE_OUT_MS = 140
 
-/** Which of its two things the player's content column is showing. */
-internal enum class PlayerPane { Main, Queue }
+/** Which of its three things the player's content column is showing. */
+internal enum class PlayerPane { Main, Lyrics, Queue }
 
 /** Room above the landscape columns for the sheet's drag handle. */
 internal val LANDSCAPE_HANDLE_STRIP = 24.dp
@@ -160,6 +161,7 @@ internal fun LandscapePlayerLayout(
     actions: @Composable () -> Unit,
     /** Credits and transport. [compact] is a phone-height window. */
     mainPane: @Composable (compact: Boolean) -> Unit,
+    lyricsPane: @Composable () -> Unit,
     queuePane: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -237,6 +239,13 @@ internal fun LandscapePlayerLayout(
                         // own (see [bleedHorizontally]), so that is the padding
                         // it gets: its scroll area then runs exactly to the
                         // column's edges.
+                        PlayerPane.Lyrics -> Box(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = PLAYER_GUTTER),
+                        ) {
+                            lyricsPane()
+                        }
                         PlayerPane.Queue -> Box(
                             Modifier
                                 .fillMaxSize()
@@ -323,6 +332,8 @@ internal fun LandscapeMainPane(
     caption: String?,
     onOpenCaption: () -> Unit,
     credits: @Composable () -> Unit,
+    /** The one-line lyric over the scrubber; null where synced lyrics are off. */
+    lyricStrip: (@Composable () -> Unit)?,
     scrubber: @Composable () -> Unit,
     transport: @Composable () -> Unit,
     /**
@@ -349,6 +360,7 @@ internal fun LandscapeMainPane(
         }
         credits()
         Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
+        lyricStrip?.invoke()
         scrubber()
         Spacer(Modifier.height(if (compact) 0.dp else 8.dp))
         transport()
@@ -437,5 +449,70 @@ internal fun LandscapeCredits(
             contentDescription = stringResource(Res.string.more),
             onClick = onOpenMenu,
         )
+    }
+}
+
+/**
+ * The landscape lyric sheet: the words filling the column, and a bar beneath
+ * them carrying the status line and the two toggles.
+ *
+ * The bar is where the portrait player's status line and its two floating
+ * toggles went. There the line sits over the scrubber and the toggles float
+ * over the foot of the words; here there is no scrubber beside the lyrics, and
+ * the bar gives all three a place of their own that costs the sheet no lines.
+ */
+@Composable
+internal fun LandscapeLyricsPane(
+    hasLyrics: Boolean,
+    /** Shown in place of the sheet while there are no lines to draw. */
+    placeholder: String,
+    status: String,
+    onChangeProvider: () -> Unit,
+    romanizationToggle: @Composable () -> Unit,
+    translationToggle: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    panel: @Composable (Modifier) -> Unit,
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            if (hasLyrics) {
+                panel(Modifier.fillMaxSize())
+            } else {
+                // Held at a fixed line rather than through
+                // [LyricsUnavailableLine] or [LyricsLoadingLine]: those fade
+                // out after a few seconds, which here would leave the whole
+                // column blank for as long as the track keeps playing.
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Fixed slots either side whether or not the toggles are drawn, so
+            // the status line stays centred as lyrics arrive.
+            Box(Modifier.size(34.dp)) { if (hasLyrics) romanizationToggle() }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                LyricsStatusWithChange(status = status, onChange = onChangeProvider)
+            }
+            Box(Modifier.size(34.dp)) { if (hasLyrics) translationToggle() }
+        }
     }
 }

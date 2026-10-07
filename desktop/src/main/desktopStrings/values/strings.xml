@@ -31,4 +31,5 @@
     <string name="restart_to_apply">Takes effect the next time BitChord starts</string>
     <string name="about">About</string>
     <string name="about_upstream">A desktop build of BitChord, upstream kushagrasinghx/BitChord. Music from YouTube Music.</string>
+    <string name="lyrics">Lyrics</string>
 </resources>

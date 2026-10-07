@@ -26,4 +26,5 @@
     <string name="restart_to_apply">重启 BitChord 后生效</string>
     <string name="about">关于</string>
     <string name="about_upstream">BitChord 的桌面版，上游 kushagrasinghx/BitChord。音乐来自 YouTube Music。</string>
+    <string name="lyrics">歌词</string>
 </resources>

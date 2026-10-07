@@ -57,6 +57,7 @@ import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.LibraryPlaylistsPage
 import com.music.bitchord.ui.screens.LibrarySongsPage
+import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.ui.screens.RecentlyAddedPage
 import com.music.bitchord.ui.screens.SettingsDialog
 import org.jetbrains.compose.resources.stringResource
@@ -79,6 +80,13 @@ class ShellState {
 
     /** The row whose action menu is up — the action sheet is a later slice. */
     var menuSong: Song? = null
+
+    /**
+     * The lyric sheet inside the full-screen player. Window-level for the same
+     * reason [showPlayer] is: Escape has to close the sheet before it closes
+     * the player, and the key handler reads this before any content exists.
+     */
+    var lyricsOpen by mutableStateOf(false)
 }
 
 /**
@@ -98,6 +106,7 @@ class ShellState {
 @Composable
 fun Shell(
     player: PlayerController,
+    lyrics: LyricsCoordinator,
     home: HomeViewModel,
     search: SearchViewModel,
     library: LibraryViewModel,
@@ -344,6 +353,7 @@ fun Shell(
     if (state.showPlayer) {
         PlayerPage(
             player = player,
+            lyrics = lyrics,
             state = state,
             // The player overlay paints over every page, so a tap that means
             // "take me to that album" has to dismiss it on the way through —

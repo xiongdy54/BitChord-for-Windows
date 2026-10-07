@@ -19,6 +19,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -33,7 +36,12 @@ import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.appearance
 import com.music.bitchord.desktop.resources.dark_theme
+import com.music.bitchord.desktop.resources.lyrics
 import com.music.bitchord.desktop.resources.language
+import com.music.bitchord.desktop.resources.translation_language
+import com.music.bitchord.desktop.resources.lyrics_sources
+import com.music.bitchord.desktop.resources.synced_lyrics
+import com.music.bitchord.desktop.resources.synced_lyrics_subtitle
 import com.music.bitchord.desktop.resources.light_theme
 import com.music.bitchord.desktop.resources.restart_to_apply
 import com.music.bitchord.desktop.resources.settings
@@ -59,6 +67,14 @@ import org.jetbrains.compose.resources.stringResource
  */
 @Composable
 fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    var showLyricsSources by remember { mutableStateOf(false) }
+    var showTranslationLanguage by remember { mutableStateOf(false) }
+    if (showLyricsSources) {
+        LyricsSourcesDialog(onDismiss = { showLyricsSources = false })
+    }
+    if (showTranslationLanguage) {
+        TranslationLanguageDialog(onDismiss = { showTranslationLanguage = false })
+    }
     Dialog(
         onDismissRequest = onDismiss,
     ) {
@@ -145,6 +161,54 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                         onCheckedChange = { AppSettings.setShowNerdStats(it) },
                     )
                 }
+
+                GroupDivider()
+
+                // The lyric settings, hanging where slice 4's groups hang. The
+                // synced-lyrics switch is a row like the nerd-stats one; the
+                // two pickers are dialogs of their own, opened from here.
+                GroupHeader(stringResource(Res.string.lyrics))
+                val syncedLyrics by AppSettings.syncedLyrics.collectAsState()
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { AppSettings.setSyncedLyrics(!syncedLyrics) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(Res.string.synced_lyrics),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            text = stringResource(Res.string.synced_lyrics_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Switch(
+                        checked = syncedLyrics,
+                        onCheckedChange = { AppSettings.setSyncedLyrics(it) },
+                    )
+                }
+                Text(
+                    text = stringResource(Res.string.lyrics_sources),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showLyricsSources = true }
+                        .padding(vertical = 8.dp),
+                )
+                Text(
+                    text = stringResource(Res.string.translation_language),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showTranslationLanguage = true }
+                        .padding(vertical = 8.dp),
+                )
 
                 GroupDivider()
 

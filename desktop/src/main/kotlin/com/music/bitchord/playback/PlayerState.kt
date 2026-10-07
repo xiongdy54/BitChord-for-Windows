@@ -5,6 +5,7 @@
 // two Bundle round-trips — has nothing left to be for.
 package com.music.bitchord.playback
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -123,3 +124,16 @@ fun autoplaySectionStart(fromAutoplay: List<Boolean>, currentIndex: Int): Int {
  */
 internal fun queueStartIndex(requestedIndex: Int, itemCount: Int, shuffled: Boolean): Int =
     if (shuffled) 0 else requestedIndex.coerceIn(0, itemCount - 1)
+
+/**
+ * Ported from app/src/main/java/com/music/bitchord/ui/player/PlayerState.kt:361 —
+ * verbatim. Reads the playhead inside a recomposition scope of its own, so a tick
+ * recomposes [content] and not the screen around it — see [PlaybackPosition].
+ *
+ * The lyric panel is its first consumer on this platform: a ticking line of text
+ * must not recompose the player that hosts it.
+ */
+@Composable
+internal fun PlaybackPositionScope(positionMs: () -> Long, content: @Composable (Long) -> Unit) {
+    content(positionMs())
+}

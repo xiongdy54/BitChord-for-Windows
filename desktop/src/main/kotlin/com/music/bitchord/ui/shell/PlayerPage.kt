@@ -20,6 +20,9 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.LikeStatus
@@ -47,6 +50,7 @@ import kotlin.math.roundToInt
 @Composable
 fun PlayerPage(
     player: PlayerController,
+    lyrics: LyricsCoordinator,
     state: ShellState,
     /**
      * Where the credits lead: the album page for the title, the artist page
@@ -61,6 +65,12 @@ fun PlayerPage(
     val shuffle by player.shuffleEnabled.collectAsState()
     val volumePercent by player.volume.collectAsState()
     val overrides by LikeState.overrides.collectAsState()
+    val lyricsLines by lyrics.lyrics.collectAsState()
+    val lyricsSource by lyrics.lyricsSource.collectAsState()
+    val lyricsProviderStates by lyrics.lyricsProviderStates.collectAsState()
+    val lyricsChecked by lyrics.lyricsChecked.collectAsState()
+    val syncedLyrics by AppSettings.syncedLyrics.collectAsState()
+    val lyricsSources by AppSettings.lyricsSources.collectAsState()
     // The player cannot be open without a track: `showPlayer` is only set from the mini
     // player's body, and that bar is mounted only while the snapshot has a song (Shell.kt),
     // plus the debug hook, which checks the same thing. So an open overlay whose song has gone
@@ -71,6 +81,21 @@ fun PlayerPage(
     val song = snapshot.song
     LaunchedEffect(song) {
         if (song == null) state.showPlayer = false
+    }
+    // The lyric lookup for whatever is playing, refired the way upstream's
+    // MainActivity refired it: keyed on the track, the duration (which lands a
+    // beat later and is what a database match needs) and the two settings that
+    // change what may be asked. The coordinator drops its own duplicates.
+    LaunchedEffect(song?.videoId, snapshot.durationMs, syncedLyrics, lyricsSources) {
+        if (song != null && snapshot.durationMs > 0) {
+            lyrics.loadLyrics(
+                videoId = song.videoId,
+                title = song.title,
+                artist = song.artist,
+                durationMs = snapshot.durationMs,
+                album = song.albumName,
+            )
+        }
     }
     if (song == null) return
 
@@ -97,6 +122,9 @@ fun PlayerPage(
             onNext = player::next,
             onPrevious = player::previous,
             onSeekFraction = player::seekToFraction,
+            // The lyric line's target, raw: the screen has already applied the
+            // offset, and the controller converts against the freshest duration.
+            onSeek = player::seekTo,
             onToggleShuffle = player::toggleShuffle,
             onCycleRepeat = player::cycleRepeat,
             onJumpTo = player::jumpTo,
@@ -115,6 +143,13 @@ fun PlayerPage(
             onOpenMenu = { state.menuSong = song },
             onOpenAlbum = onOpenAlbum,
             onOpenArtist = onOpenArtist,
+            lyrics = lyricsLines as List<LyricLine>?,
+            lyricsSource = lyricsSource,
+            lyricsProviderStates = lyricsProviderStates,
+            lyricsUnavailable = lyricsChecked && lyricsLines.isNullOrEmpty(),
+            onSelectLyricsProvider = lyrics::selectLyricsProvider,
+            lyricsOpen = state.lyricsOpen,
+            onLyricsOpenChange = { state.lyricsOpen = it },
             windowWidth = windowWidth,
             windowHeight = windowHeight,
             // `PlayerController.volume` is 0..100 and the bar is 0f..1f, because `ThinSlider` wants

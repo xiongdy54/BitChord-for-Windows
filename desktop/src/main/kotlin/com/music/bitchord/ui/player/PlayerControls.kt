@@ -445,9 +445,11 @@ internal fun VolumeRow(
 @Composable
 internal fun PlayerActionRow(
     queueOpen: Boolean,
+    lyricsOpen: Boolean,
     shuffleEnabled: Boolean,
     repeatMode: Int,
     onToggleQueue: () -> Unit,
+    onToggleLyrics: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
 ) {
@@ -503,13 +505,28 @@ internal fun PlayerActionRow(
                     width = PILL_SEGMENT_WIDTH_TRIPLE,
                 )
             }
-            BottomGlyph(
-                icon = BitChordIcons.Queue,
-                contentDescription = stringResource(Res.string.up_next),
-                onClick = onToggleQueue,
-                highlighted = queueOpen,
-                haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
-            )
+            // Lyrics and the queue are two things to show in one place — the
+            // trailing pair, where upstream's row carried them too. Opening
+            // either closes the other; that exclusion lives at the call site.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BottomGlyph(
+                    icon = BitChordIcons.LyricsQuote,
+                    contentDescription = stringResource(
+                        if (lyricsOpen) Res.string.close_lyrics else Res.string.open_lyrics,
+                    ),
+                    onClick = onToggleLyrics,
+                    highlighted = lyricsOpen,
+                    haptic = if (lyricsOpen) Haptic.Tap else Haptic.Expand,
+                )
+                Spacer(Modifier.width(10.dp))
+                BottomGlyph(
+                    icon = BitChordIcons.Queue,
+                    contentDescription = stringResource(Res.string.up_next),
+                    onClick = onToggleQueue,
+                    highlighted = queueOpen,
+                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
+                )
+            }
         }
     }
 }

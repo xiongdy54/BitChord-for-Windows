@@ -78,7 +78,9 @@ import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
@@ -95,6 +97,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.jetbrains.compose.resources.stringArrayResource
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -139,7 +142,12 @@ import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.desktop.playback.LyricsProviderState
 import com.music.bitchord.playback.PlaybackPosition
+import com.music.bitchord.playback.PlaybackPositionScope
 import com.music.bitchord.playback.QueueTimeline
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.haptics.Haptic
@@ -514,6 +522,13 @@ private var lastControlSpread: Dp = 0.dp
  * Upstream's bottom row also held lyrics and the output/pair, and its artwork
  * could be a looping clip rather than a cover; both are named above.
  */
+/**
+ * How long the controls stay up over the lyric sheet before standing down —
+ * the constants layer recorded this one as a lyrics number the day the lyric
+ * sheet left; the sheet is back and the number comes with it.
+ */
+private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
+
 @Composable
 @OptIn(ExperimentalHazeApi::class, ExperimentalHazeMaterialsApi::class)
 fun NowPlayingScreen(
@@ -540,24 +555,22 @@ fun NowPlayingScreen(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     /**
-     * Seek to a fraction of the track, for the scrubber — the only seek this
-     * screen asks for.
+     * Seek to a fraction of the track, for the scrubber.
      *
-     * Upstream had a sibling `onSeek: (Long) -> Unit` for a time. It is gone here,
-     * and not because a parameter was tidied away: its single call site in the app
-     * (`:652`) was `seekToLyric`, the tapped lyric line's time, and it died with
-     * that family. Everything else already routes through fractions — upstream's
-     * scrub release at `:1298` and [onScrubFinished] below both call
-     * `scrub.release(onSeekFraction)`, and `onJumpTo` moves between rows rather
-     * than within one.
-     *
-     * Why a fraction survives at all: converting it here would use this screen's
+     * Why a fraction and not a time: converting it here would use this screen's
      * cached duration, which lags a track change by however long the session takes
      * to report the new one — long enough to drop the handle on a bar still scaled
      * to the previous song and seek to the wrong fraction of the current one. The
      * conversion belongs wherever the freshest duration is.
      */
     onSeekFraction: (Float) -> Unit,
+    /**
+     * Seek to an absolute time, for the lyric line the reader just tapped —
+     * upstream's `onSeek` (`:652`), back now that the family it died with has
+     * come home. The target arrives offset-adjusted; the freshest-duration rule
+     * above is why this one crosses the seam raw.
+     */
+    onSeek: (Long) -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
     onJumpTo: (Int) -> Unit,
@@ -582,6 +595,30 @@ fun NowPlayingScreen(
      */
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    /**
+     * The current track's looked-up lyrics, and everything the panel needs to
+     * speak about them — the source to credit, what each provider answered,
+     * whether the lookup has finished. The coordinator is the keeper; the
+     * adapter collects its flows and hands them down, exactly as upstream's
+     * MainActivity did out of its MainViewModel.
+     */
+    lyrics: List<LyricLine>?,
+    /** Which database [lyrics] came from — the panel's and strip's credit. */
+    lyricsSource: LyricsSource?,
+    /** Per-provider answers, for the provider picker. */
+    lyricsProviderStates: Map<LyricsSource, LyricsProviderState>,
+    /** True once the lookup finished and found nothing: "not available", not "looking". */
+    lyricsUnavailable: Boolean,
+    /** A provider row was picked; the coordinator applies the answer. */
+    onSelectLyricsProvider: (LyricsSource) -> Unit,
+    /**
+     * Whether the lyric sheet is up, and what opens or closes it. Window-level
+     * state passed in rather than remembered here: Escape closes the sheet
+     * before it closes the player, and the window's key handler reads it
+     * before anything composed inside the content could be reached.
+     */
+    lyricsOpen: Boolean,
+    onLyricsOpenChange: (Boolean) -> Unit,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -667,19 +704,20 @@ fun NowPlayingScreen(
     var queueOpen by remember { mutableStateOf(false) }
     val queueSlide = remember { mutableFloatStateOf(0f) }
     // Expensive, song-scoped preparation is deliberately staggered. The small
-    // backdrop decode runs after the track hand-off has settled; the queue is
-    // then composed offscreen on a separate beat rather than competing with the
-    // song change. Opening the panel early bypasses its wait.
+    // backdrop decode runs after the track hand-off has settled; lyrics and
+    // queue are then composed offscreen on separate beats rather than all three
+    // competing with the song change. Opening a panel early bypasses its wait.
     //
-    // Upstream had a beat in the middle for the lyric sheet's layout; lyrics are
-    // a later slice, so the queue moved up into its place rather than keeping a
-    // stage that would never be read.
+    // The upstream stagger, restored: the beat in the middle is the lyric
+    // sheet's layout again.
     var playerPrewarmStage by remember(song.videoId) { mutableIntStateOf(0) }
     LaunchedEffect(song.videoId) {
         delay(600)
         playerPrewarmStage = 1 // 128px backdrop decode + CPU blur
         delay(650)
-        playerPrewarmStage = 2 // queue layout and initial scroll
+        playerPrewarmStage = 2 // lyrics layout
+        delay(650)
+        playerPrewarmStage = 3 // queue layout and initial scroll
     }
     // Whether the queue list is actively mid-scroll. The player's own swipe
     // gestures — skip-by-drag and the dismiss band — are suppressed for as long
@@ -687,10 +725,81 @@ fun NowPlayingScreen(
     // misread as a drag meant for the player underneath it. Reset whenever the
     // panel closes, since a list scrolled mid-transition out never gets a
     // matching "stopped scrolling" event of its own.
+    // Whether the lyrics or queue list is actively mid-scroll. The player's own
+    // swipe gestures — skip-by-drag and the dismiss band — are suppressed for as
+    // long as either is true, so a scroll that grazes past a list's edge can
+    // never be misread as a drag meant for the player underneath it. Reset
+    // whenever the owning panel closes, since a list scrolled mid-transition out
+    // never gets a matching "stopped scrolling" event of its own.
+    var lyricsScrolling by remember { mutableStateOf(false) }
     var queueScrolling by remember { mutableStateOf(false) }
+    LaunchedEffect(lyricsOpen) { if (!lyricsOpen) lyricsScrolling = false }
     LaunchedEffect(queueOpen) { if (!queueOpen) queueScrolling = false }
-    val panelScrolling = queueScrolling
-    val toggleQueue: () -> Unit = { queueOpen = !queueOpen }
+    val panelScrolling = lyricsScrolling || queueScrolling
+    // Present when you arrive, out of the way once you are actually reading:
+    // the half player stays over the words until LYRICS_CONTROLS_IDLE_MS
+    // passes, then stands down — and scrolling up brings it back.
+    var lyricsControlsOpen by remember { mutableStateOf(false) }
+    // Change the panel and its controls in the same snapshot — upstream's
+    // reason holds: a LaunchedEffect left one composed frame where lyrics were
+    // open but the half player was not, and the exit animation tripped twice.
+    val openLyrics: () -> Unit = {
+        lyricsControlsOpen = true
+        onLyricsOpenChange(true)
+        queueOpen = false
+    }
+    val closeLyrics: () -> Unit = {
+        lyricsControlsOpen = false
+        onLyricsOpenChange(false)
+    }
+    val toggleLyrics: () -> Unit = {
+        if (lyricsOpen) closeLyrics() else openLyrics()
+    }
+    val toggleQueue: () -> Unit = {
+        queueOpen = !queueOpen
+        if (queueOpen) closeLyrics()
+    }
+
+    // Nothing here resets [lyricsOpen] on a track change, deliberately. The
+    // panel is a place, not a property of the track: someone reading along who
+    // skips — or who simply lets the queue run on — means to carry on reading,
+    // so the words change underneath them and the panel stays.
+    val lyricsLoadingLines = stringArrayResource(Res.array.lyrics_loading_lines)
+    val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
+    val lyricsTranslation = rememberLyricsTranslation(
+        trackId = song.videoId,
+        lyrics = lyrics,
+        lyricsSource = lyricsSource,
+        lyricsUnavailable = lyricsUnavailable,
+        loadingText = lyricsLoadingText,
+        haptics = haptics,
+    )
+    val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsState()
+    val lyricsOffsetMs by AppSettings.lyricsOffsetMs.collectAsState()
+    // A lambda, not a value: read by the lyric strip and panel in scopes of
+    // their own, so a tick recomposes them and not the player around them.
+    val lyricsPosition: () -> Long = { adjustedLyricsPosition(position.positionMs, lyricsOffsetMs) }
+    val seekToLyric: (Long) -> Unit = { lineTimeMs ->
+        onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))
+    }
+    // Left alone it stands down and gives the words the whole screen. Never
+    // while a finger is on the scrubber: that is the one control being *used*
+    // while nothing else on screen moves, and timing out underneath it would
+    // take the thing away mid-gesture. Upstream also held for the volume bar's
+    // drag; the desktop bar reports no drag of its own, so the scrubber is the
+    // only guard here.
+    LaunchedEffect(lyricsOpen, lyricsControlsOpen, scrub.scrubbing) {
+        if (lyricsOpen && lyricsControlsOpen && !scrub.scrubbing) {
+            delay(LYRICS_CONTROLS_IDLE_MS)
+            lyricsControlsOpen = false
+        }
+    }
+    // The provider picker and the offset stepper, as dialogs. Upstream kept the
+    // offset state window-level because its three-dot menu lived in MainActivity;
+    // the desktop's menu belongs to the shell, so both live here and the provider
+    // dialog leads to the offset — one topic, one surface.
+    var showLyricsProviders by remember { mutableStateOf(false) }
+    var showLyricsOffset by remember { mutableStateOf(false) }
 
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
     //
@@ -1024,18 +1133,19 @@ fun NowPlayingScreen(
         scrub.release(onSeekFraction)
     }
 
-    // Shuffle, repeat and the queue — the row both layouts end on, and the only
-    // thing in the landscape player's left column besides the sleeve. Upstream's
-    // version of this row also carried lyrics, AutoPlay and the output/party
-    // capsule, and named the current output underneath it; all four are later
-    // slices or do not exist here, and the caption that went with the output name
-    // went with them.
+    // Shuffle, repeat, lyrics and the queue — the row both layouts end on, and
+    // the only thing in the landscape player's left column besides the sleeve.
+    // Upstream's version also carried AutoPlay and the output/party capsule and
+    // named the current output underneath it; those are later slices or do not
+    // exist here, and the caption that went with the output name went with them.
     val playerActions: @Composable () -> Unit = {
         PlayerActionRow(
             queueOpen = queueOpen,
+            lyricsOpen = lyricsOpen,
             shuffleEnabled = shuffleEnabled,
             repeatMode = repeatMode,
             onToggleQueue = toggleQueue,
+            onToggleLyrics = toggleLyrics,
             onToggleShuffle = onToggleShuffle,
             onCycleRepeat = onCycleRepeat,
         )
@@ -1085,6 +1195,22 @@ fun NowPlayingScreen(
     // re-fades the backdrop at Task 13, the movable content is the first thing to
     // put back, and it goes back exactly as upstream had it.
 
+    // The provider picker and the offset stepper. Emitted before either layout
+    // branch returns: a Dialog is a window of its own, and both layouts must
+    // be able to open them.
+    if (showLyricsProviders) {
+        LyricsProviderDialog(
+            currentSource = lyricsSource,
+            states = lyricsProviderStates,
+            onSelect = onSelectLyricsProvider,
+            onOpenOffset = { showLyricsOffset = true },
+            onDismiss = { showLyricsProviders = false },
+        )
+    }
+    if (showLyricsOffset) {
+        LyricsOffsetDialog(onDismiss = { showLyricsOffset = false })
+    }
+
     if (landscape) {
         // Paused always wins outright over a scrub in progress — see
         // [ARTWORK_PAUSE_SHRINK_SCALE].
@@ -1100,7 +1226,11 @@ fun NowPlayingScreen(
 
         Box(modifier = modifier.fillMaxSize()) {
             LandscapePlayerLayout(
-                pane = if (queueOpen) PlayerPane.Queue else PlayerPane.Main,
+                pane = when {
+                    queueOpen -> PlayerPane.Queue
+                    lyricsOpen -> PlayerPane.Lyrics
+                    else -> PlayerPane.Main
+                },
                 background = { backgroundModifier ->
                     // The whole screen is the sheets' frost source: there is
                     // no full-bleed banner here to be it instead.
@@ -1158,6 +1288,22 @@ fun NowPlayingScreen(
                                 onOpenArtist = onOpenArtist,
                             )
                         },
+                        lyricStrip = if (syncedLyricsEnabled) {
+                            {
+                                CurrentLyricStrip(
+                                    lines = lyricsTranslation.displayedLyrics,
+                                    trackKey = song.videoId,
+                                    positionMs = lyricsPosition,
+                                    isPlaying = isPlaying,
+                                    durationMs = durationMs,
+                                    lyricsUnavailable = lyricsUnavailable,
+                                    loadingText = lyricsLoadingText,
+                                    onClick = openLyrics,
+                                )
+                            }
+                        } else {
+                            null
+                        },
                         scrubber = {
                             PlayerScrubber(
                                 shown = shown,
@@ -1207,6 +1353,54 @@ fun NowPlayingScreen(
                             )
                         },
                     )
+                },
+                lyricsPane = {
+                    LandscapeLyricsPane(
+                        hasLyrics = !lyrics.isNullOrEmpty(),
+                        placeholder = if (lyricsUnavailable) {
+                            stringResource(Res.string.lyrics_not_available)
+                        } else {
+                            lyricsLoadingText
+                        },
+                        status = lyricsTranslation.status,
+                        onChangeProvider = { showLyricsProviders = true },
+                        romanizationToggle = {
+                            RomanizationToggleButton(
+                                state = lyricsTranslation.romanizationState,
+                                showingRomanization = lyricsTranslation.showingRomanization,
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = lyricsTranslation.toggleRomanization,
+                            )
+                        },
+                        translationToggle = {
+                            TranslationToggleButton(
+                                state = lyricsTranslation.translationState,
+                                showingTranslation = lyricsTranslation.showingTranslation,
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = lyricsTranslation.toggleTranslation,
+                            )
+                        },
+                    ) { panelModifier ->
+                        // [controlsOpen] is a constant `true` here, as upstream's
+                        // landscape pane had it: that flag exists because the portrait
+                        // player hides its transport behind the lyrics, and here there
+                        // is nothing hidden for a tap to reveal.
+                        PlaybackPositionScope(lyricsPosition) { lyricsPositionMs ->
+                            LyricsPanel(
+                                lines = lyrics.orEmpty(),
+                                subLines = lyricsTranslation.subLines,
+                                trackKey = song.videoId,
+                                positionMs = lyricsPositionMs,
+                                looking = !lyricsUnavailable,
+                                isPlaying = isPlaying,
+                                onSeekToLine = seekToLyric,
+                                controlsOpen = true,
+                                onRevealControls = {},
+                                onHideControls = {},
+                                modifier = panelModifier,
+                            )
+                        }
+                    }
                 },
                 queuePane = {
                     InlineQueue(
@@ -1945,6 +2139,88 @@ fun NowPlayingScreen(
                     )
                 }
 
+                // The lyric sheet, over the sleeve's slot exactly as the queue is:
+                // it arrives once the sleeve has settled and leaves with it, on
+                // the same panel fade. No drag opens it — the row's glyph, the
+                // strip and Esc are its ways in — so unlike the queue it has no
+                // finger to follow, only the fade.
+                val lyricsPanelVisible = lyricsOpen && panelsSettled
+                if (lyricsPanelVisible || playerPrewarmStage >= 2) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = HEADER_HEIGHT)
+                            .offset {
+                                if (lyricsPanelVisible) IntOffset.Zero else IntOffset(100_000, 0)
+                            }
+                            .graphicsLayer {
+                                alpha = if (lyricsPanelVisible) panelFade else 0f
+                            },
+                    ) {
+                        LyricsTranslationMotion(
+                            trigger = lyricsTranslation.transition,
+                            reduceMotion = lyricsTranslation.reduceMotion,
+                        ) { particleProgress ->
+                            PlaybackPositionScope(lyricsPosition) { lyricsPositionMs ->
+                                LyricsPanel(
+                                    lines = lyrics.orEmpty(),
+                                    subLines = lyricsTranslation.subLines,
+                                    trackKey = song.videoId,
+                                    positionMs = lyricsPositionMs,
+                                    looking = !lyricsUnavailable,
+                                    isPlaying = isPlaying,
+                                    active = lyricsPanelVisible,
+                                    onSeekToLine = seekToLyric,
+                                    controlsOpen = lyricsControlsOpen,
+                                    onRevealControls = { lyricsControlsOpen = true },
+                                    onHideControls = { lyricsControlsOpen = false },
+                                    translationProgress = particleProgress,
+                                    onScrollingChange = { lyricsScrolling = it },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+
+                        // Floated over the foot of the lyrics rather than placed in
+                        // the controls below them: in the controls it was a row of
+                        // layout like any other, and the bottom block is measured at
+                        // its natural height — so the disc's 34dp came straight off
+                        // the panel above it and the lyrics lost a line.
+                        val translateShown = lyricsPanelVisible && lyricsControlsOpen
+                        val translateFade by animateFloatAsState(
+                            targetValue = if (translateShown) 1f else 0f,
+                            animationSpec = tween(if (translateShown) 220 else 160),
+                            label = "translateFade",
+                        )
+                        if (translateFade > 0.01f) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .graphicsLayer { alpha = translateFade },
+                            ) {
+                                RomanizationToggleButton(
+                                    state = lyricsTranslation.romanizationState,
+                                    showingRomanization = lyricsTranslation.showingRomanization,
+                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                    onClick = lyricsTranslation.toggleRomanization,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .graphicsLayer { alpha = translateFade },
+                            ) {
+                                TranslationToggleButton(
+                                    state = lyricsTranslation.translationState,
+                                    showingTranslation = lyricsTranslation.showingTranslation,
+                                    enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                    onClick = lyricsTranslation.toggleTranslation,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Toggles and the queue arrive after the sleeve has finished
                 // travelling, and leave before it starts coming back.
                 // Held back until the sleeve has settled, except while a finger
@@ -1955,7 +2231,7 @@ fun NowPlayingScreen(
                 // composition to trip up.
                 val queuePanelVisible =
                     queueDragging || (queueShowing && panelsSettled)
-                if (queuePanelVisible || playerPrewarmStage >= 2) {
+                if (queuePanelVisible || playerPrewarmStage >= 3) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -2027,6 +2303,54 @@ fun NowPlayingScreen(
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+            // Current lyric, one line, directly above the scrubber. It stays in
+            // the layout — and stays fully visible — whether or not the queue
+            // is open: dropping it would shorten this block and the controls
+            // under it would jump the moment the queue started sliding in, and
+            // fading it away behind the queue left this the one place in the
+            // player where the current line simply vanished.
+            //
+            // Switched off in Settings it goes entirely, rather than sitting
+            // there saying no lyrics were found: none were looked for. Each
+            // branch below keeps the one-line slot, so opening lyrics cannot
+            // grow the half-player merely to make room for the status line.
+            if (!lyricsOpen && syncedLyricsEnabled) {
+                CurrentLyricStrip(
+                    lines = lyricsTranslation.displayedLyrics,
+                    trackKey = song.videoId,
+                    positionMs = lyricsPosition,
+                    isPlaying = isPlaying,
+                    durationMs = durationMs,
+                    lyricsUnavailable = lyricsUnavailable,
+                    loadingText = lyricsLoadingText,
+                    // Still visible over the queue, so still a valid way in:
+                    // opens the same full lyrics panel it always has, closing
+                    // the queue behind it the same way the Up-Next glyph
+                    // closes lyrics behind the queue.
+                    onClick = openLyrics,
+                )
+            }
+            if (!lyricsOpen && !syncedLyricsEnabled) {
+                Text(
+                    text = "\u00A0",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = 6.dp)
+                        .padding(vertical = 4.dp),
+                )
+            }
+            if (lyricsOpen) {
+                LyricsStatusWithChange(
+                    status = lyricsTranslation.status,
+                    onChange = { showLyricsProviders = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = 6.dp)
+                        .padding(vertical = 4.dp),
+                )
+            }
             PlayerScrubber(
                 shown = shown,
                 durationMs = durationMs,
