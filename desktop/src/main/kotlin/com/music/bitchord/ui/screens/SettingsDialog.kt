@@ -38,10 +38,13 @@ import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.appearance
 import com.music.bitchord.desktop.resources.audio_quality
+import com.music.bitchord.desktop.resources.autoplay
+import com.music.bitchord.desktop.resources.autoplay_subtitle
 import com.music.bitchord.desktop.resources.dark_theme
 import com.music.bitchord.desktop.resources.lyrics
 import com.music.bitchord.desktop.resources.download_quality
 import com.music.bitchord.desktop.resources.language
+import com.music.bitchord.desktop.resources.playback
 import com.music.bitchord.desktop.resources.translation_language
 import com.music.bitchord.desktop.resources.lyrics_sources
 import com.music.bitchord.desktop.resources.synced_lyrics
@@ -159,6 +162,20 @@ fun SettingsDialog(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+
+                GroupDivider()
+
+                // The queue's own appetite. The switch writes the setting; the
+                // player controller's collector owns what the queue does about
+                // it, so this row and the queue panel's heading are two faces
+                // of one control.
+                GroupHeader(stringResource(Res.string.playback))
+                val autoplayEnabled by AppSettings.autoplay.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.autoplay),
+                    subtitle = stringResource(Res.string.autoplay_subtitle),
+                    checked = autoplayEnabled,
+                ) { AppSettings.setAutoplay(it) }
 
                 GroupDivider()
 

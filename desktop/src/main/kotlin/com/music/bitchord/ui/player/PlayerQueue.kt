@@ -74,6 +74,7 @@ import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -252,6 +253,7 @@ internal fun InlineQueue(
     queue: List<Song>,
     currentIndex: Int,
     autoplayEnabled: Boolean,
+    onToggleAutoplay: (Boolean) -> Unit,
     onJumpTo: (Int) -> Unit,
     onRemove: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
@@ -369,7 +371,12 @@ internal fun InlineQueue(
                 }
                 if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
                     item(key = "autoplay-heading") {
-                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
+                        AutoplayHeading(
+                            hasTracks = tracks.autoplay.isNotEmpty(),
+                            enabled = autoplayEnabled,
+                            onToggle = onToggleAutoplay,
+                            modifier = queueMotion(),
+                        )
                     }
                     queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, onJumpTo, onRemove)
                 }
@@ -459,7 +466,12 @@ private fun QueueClearButton(style: TextStyle, onClear: () -> Unit) {
 }
 
 @Composable
-private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
+private fun AutoplayHeading(
+    hasTracks: Boolean,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -473,7 +485,7 @@ private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(8.dp))
-        Column {
+        Column(Modifier.weight(1f)) {
             Text(
                 text = stringResource(Res.string.autoplay),
                 style = MaterialTheme.typography.titleMedium,
@@ -487,6 +499,10 @@ private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
                 color = Color.White.copy(alpha = 0.55f),
             )
         }
+        // Upstream's `AutoplayHeading` ends in the same switch
+        // (`PlayerQueue.kt:336-340`): the tier's fill is the switch's doing, so
+        // the control that owns it sits on the heading it fills.
+        Switch(checked = enabled, onCheckedChange = onToggle)
     }
 }
 

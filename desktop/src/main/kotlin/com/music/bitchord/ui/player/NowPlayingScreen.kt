@@ -417,15 +417,15 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 //    gone with the deck it gated, which leaves no SDK check anywhere in this file.
 //    The two inset calls at app `:1196` and `:1977-1978` were kept on purpose: CMP
 //    ships them, they resolve to zero here, and slice 1's record says so.
-//  * **Login, party, output, AutoPlay, the version switch** — `signedIn`,
+//  * **Login, party, output, the version switch** — `signedIn`,
 //    `accountName`, `controlsLocked`, `onBlockedControl`, the output and members
-//    sheets, `autoplayEnabled` and its toggle, `audioVersionSwitching`,
+//    sheets, `audioVersionSwitching`,
 //    `qualityUpgraded` and the rollback cue it lit. Their parameters are gone from
 //    the table, so their readers had to go too: the like glyph keeps only upstream's
-//    second gate (`localUri`), the transport keeps only the queue's own ends, the
-//    scrubber's `loading` has nothing left to be true for, and `InlineQueue` is
-//    handed `autoplayEnabled = false` — the AUTOPLAY tier renders because nothing
-//    fills it, which is decision 6's stated implementation.
+//    second gate (`localUri`), the transport keeps only the queue's own ends, and
+//    the scrubber's `loading` has nothing left to be true for. (`autoplayEnabled`
+//    left with the same sweep and came back in slice 7 once the tier had a
+//    supplier: `PlayerController`'s top-up loop.)
 //  * **The album and the artist page** — `onOpenAlbum` / `onOpenArtist` and the four
 //    `Modifier.opensPage(...)` wraps they hung on the title and the artist line, two
 //    here and two in `LandscapePlayer.kt`, came back in slice 4 once the shell's
@@ -586,6 +586,14 @@ fun NowPlayingScreen(
      */
     onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
+    /**
+     * The AutoPlay switch and the queue edits it asks for. The switch is
+     * [AppSettings.autoplay]'s alone; the controller's collector owns what the
+     * queue does about each answer, so this callback is a passthrough that the
+     * heading and the settings row share.
+     */
+    autoplayEnabled: Boolean,
+    onToggleAutoplay: (Boolean) -> Unit,
     onOpenMenu: () -> Unit,
     /**
      * The credits lead somewhere again: slice 3 delivered the detail page
@@ -1406,7 +1414,8 @@ fun NowPlayingScreen(
                     InlineQueue(
                         queue = queue,
                         currentIndex = queueIndex,
-                        autoplayEnabled = false,
+                        autoplayEnabled = autoplayEnabled,
+                        onToggleAutoplay = onToggleAutoplay,
                         onJumpTo = onJumpTo,
                         onRemove = onRemoveFromQueue,
                         onMove = onMoveInQueue,
@@ -2257,10 +2266,8 @@ fun NowPlayingScreen(
                         InlineQueue(
                             queue = queue,
                             currentIndex = queueIndex,
-                            // Decision 6: the AUTOPLAY switch does not appear, and
-                            // nothing fills the tier, so the section heading stays
-                            // exactly where upstream's own emptiness test leaves it.
-                            autoplayEnabled = false,
+                            autoplayEnabled = autoplayEnabled,
+                            onToggleAutoplay = onToggleAutoplay,
                             onJumpTo = onJumpTo,
                             onRemove = onRemoveFromQueue,
                             onMove = onMoveInQueue,

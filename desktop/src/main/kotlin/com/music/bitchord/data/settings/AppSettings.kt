@@ -113,16 +113,32 @@ object AppSettings {
      * foot of the sleeve — [com.music.bitchord.ui.player.SleeveNerdStats]'s gate.
      *
      * The Android app gates that composable on this switch and starts it off
-     * (`AppSettings.kt:407`), so the field exists here to give the ported gate
-     * something honest to read rather than a trigger of its own: with the switch
-     * off, nothing is drawn, which is upstream's behaviour. The settings sheet
-     * that flips it is a later slice, so like the three switches above this lives
-     * for the session only — no persistence key.
+     * (`AppSettings.kt:407`); slice 7 brought the settings row that flips it, so
+     * it persists like every other switch the dialog owns.
      */
-    val showNerdStats = MutableStateFlow(false)
+    val showNerdStats = MutableStateFlow(prefs.getString(KEY_SHOW_NERD_STATS, "false") == "true")
 
     fun setShowNerdStats(value: Boolean) {
         showNerdStats.value = value
+        prefs.putString(KEY_SHOW_NERD_STATS, value.toString())
+    }
+
+    /**
+     * Whether the queue keeps going on its own: when the last row starts playing,
+     * the watch queue seeded on it (`YtMusicRepository.radio`) fills the
+     * [com.music.bitchord.data.model.QueueTier.AUTOPLAY] tier behind it.
+     *
+     * On by default upstream (`AppSettings.kt:398`) and here — the queue ending
+     * is the silence this switch exists to prevent — and the queue edits that
+     * come with it live on [com.music.bitchord.desktop.playback.PlayerController],
+     * the one place that both knows the queue's shape and owns the dispatcher
+     * every queue mutation runs on.
+     */
+    val autoplay = MutableStateFlow(prefs.getString(KEY_AUTOPLAY, "true") == "true")
+
+    fun setAutoplay(value: Boolean) {
+        autoplay.value = value
+        prefs.putString(KEY_AUTOPLAY, value.toString())
     }
 
     /**
@@ -361,6 +377,8 @@ object AppSettings {
         lyricsSourceOrderFrom(prefs.getStringOrNull(KEY_LYRICS_SOURCE_ORDER))
 
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
+    private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_SHOW_NERD_STATS = "show_nerd_stats"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_THEME_SETTING = "theme_setting"
     private const val KEY_TRANSLUCENT_WINDOW = "translucent_window"

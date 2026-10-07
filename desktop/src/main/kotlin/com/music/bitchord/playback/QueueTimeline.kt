@@ -188,6 +188,43 @@ class QueueTimeline : QueueHost {
     fun clearUserQueue() = QueueCoordinator.clearUserQueue(this, ::tierAt)
     private fun tierAt(index: Int): QueueTier = items.getOrNull(index)?.queueTier ?: QueueTier.CONTEXT
 
+    // ---- autoplay -------------------------------------------------------------------
+
+    /**
+     * Put an AutoPlay batch at the tail.
+     *
+     * The songs arrive tier-stamped from [loadAutoplayTracks]; this only places
+     * them. The tail is where they belong under the coordinator's own invariant —
+     * USER_QUEUE rows insert ahead of them ([QueueCoordinator
+     * .findUserQueueInsertionIndex] scans back over this block) — so appending is
+     * the whole rule, and `onChanged` announces the edit like any other.
+     */
+    fun appendAutoplay(songs: List<Song>) {
+        if (songs.isEmpty()) return
+        items.addAll(songs)
+        onChanged()
+    }
+
+    /**
+     * Take back the unplayed AutoPlay rows — what switching AutoPlay off means
+     * for a queue it has already been extending, and the first half of the
+     * repeat-all stash.
+     *
+     * Removed from the bottom up so the indexes ahead of each removal still hold
+     * (`PlaybackService.kt:2415`'s shape), and handed back in queue order for the
+     * caller that intends to put them in again.
+     */
+    fun dropAutoplayTail(): List<Song> {
+        val dropped = mutableListOf<Song>()
+        for (index in items.lastIndex downTo 0) {
+            if (index <= currentIndex) break
+            if (items[index].queueTier != QueueTier.AUTOPLAY) continue
+            dropped += items.removeAt(index)
+        }
+        if (dropped.isNotEmpty()) onChanged()
+        return dropped.asReversed()
+    }
+
     fun jumpToRow(targetIndex: Int) =
         QueueCoordinator.jumpToQueueItem(this, targetIndex, cachedTimeline = snapshot())
 

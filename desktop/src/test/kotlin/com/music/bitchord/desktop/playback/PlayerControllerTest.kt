@@ -3,6 +3,7 @@ package com.music.bitchord.desktop.playback
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.RepeatMode
@@ -38,6 +39,10 @@ class PlayerControllerTest {
         // QueueShuffle.enabled is process-wide and Task 5's cases flip it; playSongs
         // consults it, so a case that expects list order must pin it off first.
         QueueShuffle.setEnabled(false)
+        // This file is about the pump, not the top-up: AutoPlay off keeps the
+        // last-row resolves from reaching for a radio queue. AutoplayTopUpTest
+        // pins the opposite value for the same reason.
+        AppSettings.setAutoplay(false)
         val player = PlayerController(CoroutineScope(Dispatchers.Unconfined), engine)
         player.resolveUrl = { videoId -> "https://test/$videoId" }
         player.resolveDispatcher = Dispatchers.Unconfined

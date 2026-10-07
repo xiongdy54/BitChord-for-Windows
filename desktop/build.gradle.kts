@@ -68,6 +68,9 @@ dependencies {
     implementation("org.slf4j:slf4j-simple:2.0.17")
 
     testImplementation(kotlin("test"))
+    // The AutoPlay top-up's empty-answer retry sleeps on purpose; virtual time
+    // keeps that honest without making the suite wait for the wall clock.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
 
 // The SF Pro weights live in the Android module's res/font; pointing the

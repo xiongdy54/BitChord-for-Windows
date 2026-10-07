@@ -71,6 +71,7 @@ fun PlayerPage(
     val lyricsChecked by lyrics.lyricsChecked.collectAsState()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsState()
     val lyricsSources by AppSettings.lyricsSources.collectAsState()
+    val autoplayEnabled by AppSettings.autoplay.collectAsState()
     // The player cannot be open without a track: `showPlayer` is only set from the mini
     // player's body, and that bar is mounted only while the snapshot has a song (Shell.kt),
     // plus the debug hook, which checks the same thing. So an open overlay whose song has gone
@@ -140,6 +141,8 @@ fun PlayerPage(
             // rather than a dead control.
             onQueueDragActiveChange = { },
             onClearQueue = player::clearQueue,
+            autoplayEnabled = autoplayEnabled,
+            onToggleAutoplay = player::setAutoplay,
             // Task 12 renders this menu — play next, add to queue, like, copy log — out of
             // `state.menuSong` in Shell. The player's ⋮ is upstream's own glyph and is live from
             // the moment that lands; until then this is the only half of it that exists.

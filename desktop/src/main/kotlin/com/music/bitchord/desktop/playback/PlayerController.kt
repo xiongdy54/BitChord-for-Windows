@@ -4,9 +4,13 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.playback.MAX_AUTOPLAY_EMPTY_REFRESHES
+import com.music.bitchord.playback.AUTOPLAY_EMPTY_REFRESH_DELAY_MS
+import com.music.bitchord.playback.MAX_QUEUED_AUTOPLAY
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.PlayerState
@@ -14,14 +18,19 @@ import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
 import com.music.bitchord.playback.QueueTimeline
 import com.music.bitchord.playback.RepeatMode
+import com.music.bitchord.playback.autoplayQueueNeedsRefresh
+import com.music.bitchord.playback.loadAutoplayTracks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -106,6 +115,15 @@ class PlayerController(
     var onPrefetch: (suspend (String) -> Unit)? = null
 
     /**
+     * Where one AutoPlay batch is loaded. Test seam: production calls
+     * [loadAutoplayTracks], whose network half answers to nothing a unit test
+     * owns; a test injects a fake radio here and drives the top-up state machine
+     * against it.
+     */
+    var loadAutoplay: suspend (List<Song>, Song, Int) -> Result<List<Song>> =
+        { existing, seed, limit -> loadAutoplayTracks(existing, seed, limit) { YtMusicRepository.radio(it) } }
+
+    /**
      * The playhead, held apart from [state] on purpose.
      *
      * [PlayerState.position] is this same object, so reading a position means reading this and
@@ -164,7 +182,129 @@ class PlayerController(
         // The advance hangs on this one callback and nowhere else (spec §4 risk 2).
         engine.onFinished = { advance() }
         engine.setVolume(_volume.value)
+        // The AutoPlay switch is a single source of truth the queue reacts to,
+        // wherever it is flipped from — the settings dialog and the queue panel's
+        // own heading both write [AppSettings.autoplay], and this collector owns
+        // the queue edits each answer requires (upstream does both halves inside
+        // the service's toggle handler). Collected on the queue thread, because
+        // everything it does is a queue mutation.
+        onQueue {
+            AppSettings.autoplay.collect { enabled -> applyAutoplay(enabled) }
+        }
     }
+
+    // ---- autoplay -------------------------------------------------------------------
+
+    /**
+     * The seed the running top-up was loaded for, and the job loading it.
+     *
+     * One track transition reports itself to the player several times over, and
+     * each report would start a load; the seed latches the first and the rest
+     * read it and stop (upstream's `autoplaySeed`, `PlaybackService.kt:2307`).
+     * Cleared whenever the answer changes underneath the load — the track moved
+     * on, the mode changed, the switch flipped — so the next track can top up.
+     */
+    private var autoplaySeed: String? = null
+    private var autoplayLoadJob: Job? = null
+
+    /**
+     * The AutoPlay tail, taken off the queue for the duration of a repeat-all
+     * stretch and put back when it ends (`PlaybackService.kt:2428`/`:2449`).
+     *
+     * Only ever taken once per stretch: cycling OFF → ALL → ONE → OFF sets the
+     * mode three times, and the second and third of those must not overwrite a
+     * full stash with the empty tail the first one left behind.
+     */
+    private var repeatAllStash: List<Song> = emptyList()
+    private var repeatAllStashSeed: String? = null
+
+    /**
+     * The queue edits each position of the AutoPlay switch requires.
+     *
+     * Off: the switch is the listener saying they don't want those tracks — the
+     * unplayed suggestions leave the queue now, and the stash leaves with them,
+     * because leaving it behind would put them back when the next repeat-all
+     * ended. On: nothing to remove and a top-up to re-arm; the seed clears so a
+     * queue that is sitting at its own tail tops up immediately rather than
+     * waiting for a track change that may never come.
+     */
+    private fun applyAutoplay(enabled: Boolean) {
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        if (!enabled) {
+            repeatAllStash = emptyList()
+            repeatAllStashSeed = null
+            queue.dropAutoplayTail()
+            return
+        }
+        maybeTopUpAutoplay()
+    }
+
+    /**
+     * Fill the AUTOPLAY tier behind the current track while it is the last one
+     * playing — the desktop form of `loadAutoplayForCurrentTrack`
+     * (`PlaybackService.kt:2274`), keyed off the resolve that starts a track
+     * rather than the transition callback the service receives, which here is
+     * the same moment with fewer aliases.
+     */
+    private fun maybeTopUpAutoplay() {
+        val current = queue.songAt(queue.currentIndex) ?: return
+        if (!autoplayQueueNeedsRefresh(
+                enabled = AppSettings.autoplay.value,
+                repeatAll = queue.repeatMode == RepeatMode.ALL,
+                currentIndex = queue.currentIndex,
+                itemCount = queue.itemCount,
+                loadInProgress = autoplayLoadJob?.isActive == true,
+            )
+        ) {
+            return
+        }
+        val needed = MAX_QUEUED_AUTOPLAY - upcomingAutoplayCount()
+        if (needed <= 0) return
+        if (autoplaySeed == current.videoId) return
+        autoplaySeed = current.videoId
+        autoplayLoadJob = onQueue {
+            var remaining = needed
+            var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
+            while (isActive) {
+                // The queue may have moved on while the last request was in
+                // flight — or the switch or the mode may have flipped. Every
+                // pass re-reads all three before spending another one.
+                if (!AppSettings.autoplay.value) return@onQueue
+                if (queue.repeatMode == RepeatMode.ALL) return@onQueue
+                if (queue.songAt(queue.currentIndex)?.videoId != current.videoId) return@onQueue
+                val existing = queue.snapshot()
+                val result = withContext(resolveDispatcher) { loadAutoplay(existing, current, remaining) }
+                val resolved = result.getOrElse { error ->
+                    TrackLog.w(TAG, "autoplay top-up failed: ${error.message}")
+                    emptyList()
+                }
+                // And again before writing: the answer belongs to the track that
+                // asked for it, or to nobody.
+                if (!AppSettings.autoplay.value) return@onQueue
+                if (queue.repeatMode == RepeatMode.ALL) return@onQueue
+                if (queue.songAt(queue.currentIndex)?.videoId != current.videoId) return@onQueue
+                if (resolved.isNotEmpty()) {
+                    queue.appendAutoplay(resolved)
+                    return@onQueue
+                }
+                // Empty: while the current item is genuinely the end of the
+                // queue, make a delayed fresh request, bounded — the seed stays
+                // latched either way, so an unlimited loop would be a poller.
+                if (queue.currentIndex != queue.itemCount - 1) return@onQueue
+                if (emptyRefreshesRemaining-- <= 0) return@onQueue
+                remaining = MAX_QUEUED_AUTOPLAY - upcomingAutoplayCount()
+                if (remaining <= 0) return@onQueue
+                delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
+            }
+        }
+    }
+
+    /** How many of the rows still to come AutoPlay put there (`PlaybackService.kt:2303`). */
+    private fun upcomingAutoplayCount(): Int =
+        (queue.currentIndex + 1 until queue.itemCount)
+            .count { queue.songAt(it)?.queueTier == QueueTier.AUTOPLAY }
 
     // ---- publishing ---------------------------------------------------------------
 
@@ -421,11 +561,66 @@ class PlayerController(
      * a row cannot both see the same old one and skip a state.
      */
     private fun applyRepeat(mode: Int, persist: Boolean) {
+        val wasAll = queue.repeatMode == RepeatMode.ALL
+        val isAll = mode == RepeatMode.ALL
         queue.repeatMode = mode
         if (persist) AppSettings.setRepeatMode(mode)
+        // The AutoPlay tail follows the mode: repeat-all would come round to the
+        // suggestions again and again, so they step aside for the stretch and
+        // return when it ends — each direction refusing where the queue has
+        // moved on underneath it.
+        if (isAll && !wasAll) stashAutoplayTracks()
+        if (wasAll && !isAll) restoreAutoplayTracks()
         // A mode change is not a list edit, so nothing announces it — and the transport's
         // enabled state depends on it, so say so here.
         publish()
+    }
+
+    /**
+     * Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back.
+     *
+     * `PlaybackService.kt:2428`'s shape: the tail is taken through
+     * [com.music.bitchord.playback.QueueTimeline.dropAutoplayTail], and the seed the stash
+     * was taken behind is remembered — the restore is refused when the loop has played on
+     * past that track.
+     */
+    private fun stashAutoplayTracks() {
+        if (repeatAllStash.isNotEmpty()) return
+        val dropped = queue.dropAutoplayTail()
+        if (dropped.isEmpty()) return
+        repeatAllStash = dropped
+        repeatAllStashSeed = queue.songAt(queue.currentIndex)?.videoId
+    }
+
+    /**
+     * Puts the stashed AutoPlay tracks back when repeat-all ends.
+     *
+     * Refused, rather than forced, in the cases where the stash no longer
+     * describes the queue: AutoPlay switched off while the loop ran, or the loop
+     * played on past the track the stash was taken behind. Both leave
+     * [maybeTopUpAutoplay] to fill the queue the ordinary way. A track the
+     * listener queued by hand during the loop is not queued twice for having
+     * been in the mix before it.
+     */
+    private fun restoreAutoplayTracks() {
+        val stashed = repeatAllStash
+        val seed = repeatAllStashSeed
+        repeatAllStash = emptyList()
+        repeatAllStashSeed = null
+        // The seed is stale now either way, so the queue can be topped up again
+        // for this track — without this the latch in [maybeTopUpAutoplay] reads a
+        // track it has already loaded for and returns, which is how a queue whose
+        // stash was refused ended up with nothing after it at all.
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        if (stashed.isEmpty() || !AppSettings.autoplay.value) return
+        if (queue.songAt(queue.currentIndex)?.videoId != seed) return
+        val present = queue.snapshot().mapTo(mutableSetOf()) { it.videoId }
+        val restored = stashed.filter { it.videoId !in present }
+        if (restored.isEmpty()) return
+        queue.appendAutoplay(restored)
+        maybeTopUpAutoplay()
     }
 
     /** Shuffle as an edit to the queue rather than a playback mode — see [QueueShuffle]. */
@@ -454,6 +649,18 @@ class PlayerController(
     /** The hand-queued rows only; the context and AutoPlay sections are not the user's to clear. */
     fun clearQueue() {
         onQueue { queue.clearUserQueue() }
+    }
+
+    /**
+     * The AutoPlay switch itself.
+     *
+     * Writing [AppSettings.autoplay] is the whole act: the init block's collector
+     * owns the queue edits each answer requires, so every surface that flips the
+     * switch — the queue panel's heading, the settings row — lands in the same
+     * place, on the queue thread, whatever wrote it.
+     */
+    fun setAutoplay(enabled: Boolean) {
+        AppSettings.setAutoplay(enabled)
     }
 
     // ---- the audio half ---------------------------------------------------------------
@@ -539,6 +746,7 @@ class PlayerController(
                         )
                         engine.setVolume(_volume.value)
                         prefetchNext()
+                        maybeTopUpAutoplay()
                     }
                     .onFailure { error ->
                         setLoading(false)
