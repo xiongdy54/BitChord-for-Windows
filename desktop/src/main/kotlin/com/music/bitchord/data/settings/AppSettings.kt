@@ -29,6 +29,25 @@ enum class AudioQuality(
 }
 
 /**
+ * The ceiling a *download* resolves under, as upstream's is defined.
+ *
+ * Separate from [AudioQuality] on purpose: a speaker forgives a rushed first
+ * answer in a way a permanent file does not, and the ladder upstream offers for
+ * downloads is one rung lower at the bottom — there is no data-saver download,
+ * because a file that small is a false economy the user never asked for.
+ */
+enum class DownloadQuality(
+    val maxKbps: Int,
+    val label: String,
+    /** Whether a file already on disk at a lossless extension answers the request. */
+    val keepsLossless: Boolean,
+) {
+    STANDARD(128, "Standard", false),
+    HIGH(256, "High", false),
+    LOSSLESS(Int.MAX_VALUE, "Lossless", true),
+}
+
+/**
  * Desktop stand-in for the Android settings object, which stores through
  * SharedPreferences and needs a Context.
  *
@@ -43,10 +62,38 @@ enum class AudioQuality(
  */
 object AppSettings {
 
-    val audioQuality = MutableStateFlow(AudioQuality.LOSSLESS)
+    /** The original keeps these in SharedPreferences (`bitchord_settings`); here it is one file. */
+    private val prefs: FileStore by lazy { FileStore(AppFiles.file("settings.properties")) }
+
+    val audioQuality = MutableStateFlow(
+        prefs.getString(KEY_AUDIO_QUALITY, AudioQuality.LOSSLESS.name)
+            .let { stored -> AudioQuality.entries.firstOrNull { it.name == stored } }
+            ?: AudioQuality.LOSSLESS,
+    )
 
     val effectiveAudioQuality: AudioQuality
         get() = audioQuality.value
+
+    fun setAudioQuality(value: AudioQuality) {
+        audioQuality.value = value
+        prefs.putString(KEY_AUDIO_QUALITY, value.name)
+    }
+
+    /**
+     * The rung a download resolves under. Read once per track by the download
+     * pipeline — a setting changed mid-queue applies to the next track, not to
+     * the middle of the one in flight.
+     */
+    val downloadQuality = MutableStateFlow(
+        prefs.getString(KEY_DOWNLOAD_QUALITY, DownloadQuality.HIGH.name)
+            .let { stored -> DownloadQuality.entries.firstOrNull { it.name == stored } }
+            ?: DownloadQuality.HIGH,
+    )
+
+    fun setDownloadQuality(value: DownloadQuality) {
+        downloadQuality.value = value
+        prefs.putString(KEY_DOWNLOAD_QUALITY, value.name)
+    }
 
     /**
      * Turns the artwork-tint crossfades into cuts. Read by
@@ -88,9 +135,6 @@ object AppSettings {
     fun setHomeRecentsViewType(value: LibraryViewType) {
         homeRecentsViewType.value = value
     }
-
-    /** The original keeps these in SharedPreferences (`bitchord_settings`); here it is one file. */
-    private val prefs: FileStore by lazy { FileStore(AppFiles.file("settings.properties")) }
 
     /**
      * Whether the queue is held in shuffled order, and how the player repeats.
@@ -306,6 +350,8 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
+    private const val KEY_AUDIO_QUALITY = "audio_quality"
+    private const val KEY_DOWNLOAD_QUALITY = "download_quality"
 }
 
 /**
