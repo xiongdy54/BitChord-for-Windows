@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import kotlin.math.roundToInt
 
 /**
  * The app's own right-click menu, replacing the platform-default renderer the
@@ -161,6 +162,25 @@ private class AnchorRectHolder {
 /**
  * Anchors the popup at the open rect's top-left, clamped inside the window
  * so a menu near an edge stays whole.
+ *
+ * Two coordinate frames meet here, and which is which is the whole game —
+ * read off the platform's own code after the old reading put every menu in
+ * the window's top-left corner:
+ *
+ *  * The state's rect is the pointer position **in the anchor area's own
+ *    coordinates** — the right-click gesture reports the down event before
+ *    any layout offset is folded in, so a row halfway down the window hands
+ *    over a rect whose y is small.
+ *  * This provider's answer is read as an **absolute position in the
+ *    window** — the popup layer places itself at exactly the offset it gets
+ *    back, window space, no anchor-relative reinterpretation.
+ *
+ * So the click's window position is the rect *plus* the anchor's own window
+ * offset. The old arithmetic subtracted the anchor's offset instead — the
+ * answer a previous platform revision wanted, anchor-relative — and for any
+ * row below the window's first few dozen pixels every result went negative
+ * and the floor of the clamp won: the menu opened at the top-left corner no
+ * matter where the click was.
  */
 private class MenuPopupPositionProvider(
     private val holder: AnchorRectHolder,
@@ -170,14 +190,32 @@ private class MenuPopupPositionProvider(
         windowSize: IntSize,
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize,
-    ): IntOffset {
-        val x = (holder.rect.left.toInt() - anchorBounds.left)
-            .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
-        val y = (holder.rect.top.toInt() - anchorBounds.top)
-            .coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
-        return IntOffset(x, y)
-    }
+    ): IntOffset = menuWindowPosition(
+        clickX = anchorBounds.left + holder.rect.left.roundToInt(),
+        clickY = anchorBounds.top + holder.rect.top.roundToInt(),
+        windowWidth = windowSize.width,
+        windowHeight = windowSize.height,
+        menuWidth = popupContentSize.width,
+        menuHeight = popupContentSize.height,
+    )
 }
+
+/**
+ * The window position that opens a menu with its top-left corner at the
+ * click, pulled fully inside a [windowWidth] × [windowHeight] window — the
+ * one rule of [MenuPopupPositionProvider], as a pure table a test can own.
+ */
+internal fun menuWindowPosition(
+    clickX: Int,
+    clickY: Int,
+    windowWidth: Int,
+    windowHeight: Int,
+    menuWidth: Int,
+    menuHeight: Int,
+): IntOffset = IntOffset(
+    clickX.coerceIn(0, (windowWidth - menuWidth).coerceAtLeast(0)),
+    clickY.coerceIn(0, (windowHeight - menuHeight).coerceAtLeast(0)),
+)
 
 @Composable
 private fun MenuRow(item: ContextMenuItem, onClick: () -> Unit) {
