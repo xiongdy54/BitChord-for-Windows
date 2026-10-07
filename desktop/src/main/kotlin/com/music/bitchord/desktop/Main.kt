@@ -36,8 +36,17 @@ import com.music.bitchord.ui.ExploreViewModel
 import com.music.bitchord.ui.HomeViewModel
 import com.music.bitchord.ui.LibraryViewModel
 import com.music.bitchord.ui.SearchViewModel
+import com.music.bitchord.ui.components.BitChordContextMenuRepresentation
+import com.music.bitchord.ui.components.BitChordMenuPanel
 import com.music.bitchord.ui.components.LocalSongActions
 import com.music.bitchord.ui.components.SongActions
+import com.music.bitchord.ui.components.rememberSongActionLabels
+import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.LocalContextMenuRepresentation
 import com.music.bitchord.ui.shell.Destination
 import com.music.bitchord.ui.shell.NavState
 import com.music.bitchord.ui.shell.Shell
@@ -97,6 +106,18 @@ private val probeTheme = System.getProperty("bitchord.theme")
  */
 private val shotPath = System.getProperty("bitchord.shot").orEmpty()
 private val shotMs = System.getProperty("bitchord.shotMs")?.toLongOrNull()
+
+/**
+ * Renders the context menu's own panel — the exact composable the right
+ * click opens ([BitChordMenuPanel]) — over the page, so the scripted
+ * screenshot pass can show the styling without injecting OS clicks: the
+ * popup lives in its own native window, which `PrintWindow` cannot see, and
+ * a Robot click cannot be aimed reliably across monitors with per-monitor
+ * scaling. The preview renders the panel inline, in place — same colours,
+ * same rows — while the open/detection machinery itself stays the
+ * foundation's, which the row menus in daily use already exercise.
+ */
+private val menuPreview = System.getProperty("bitchord.menuPreview") == "true"
 
 /**
  * Window geometry and locale, so the acceptance screenshots can be taken at other
@@ -452,7 +473,7 @@ fun main() {
                     }
                 }
             }
-            if (shotPath.isNotBlank() && shotMs != null) {
+if (shotPath.isNotBlank() && shotMs != null) {
                 LaunchedEffect(Unit) {
                     delay(shotMs)
                     runCatching { saveWindowShot(window, shotPath) }
@@ -460,6 +481,7 @@ fun main() {
                     quit()
                 }
             }
+
             // The row menu's effects, bound to the player and the navigation
             // stack this scope owns. The menu itself is pure surface — see
             // SongContextMenu.kt — the rows' right-clicks land on these.
@@ -507,7 +529,13 @@ fun main() {
             }
 
             BitChordTheme(darkTheme = darkTheme) {
-                CompositionLocalProvider(LocalSongActions provides songActions) {
+                CompositionLocalProvider(
+                    LocalSongActions provides songActions,
+                    // The right-click menus draw in the app's own style, not
+                    // the platform default's — see BitChordContextMenu.
+                    LocalContextMenuRepresentation provides
+                        remember { BitChordContextMenuRepresentation() },
+                ) {
                     Shell(
                     player = player,
                     home = home,
@@ -536,6 +564,29 @@ fun main() {
                     autoPlayFirst = probeAutoplay,
                     autoOpenPlayer = probeOpenPlayer,
                 )
+                // The menu panel's styling probe — see [menuPreview]. Rendered
+                // in place rather than through the popup, whose native window
+                // the screenshot pipeline cannot see; the colours and rows are
+                // the real menu's own.
+                if (menuPreview) {
+                    val labels = rememberSongActionLabels()
+                    val demoItems = listOf(
+                        ContextMenuItem(labels.playNext) {},
+                        ContextMenuItem(labels.addToQueue) {},
+                        ContextMenuItem(labels.like) {},
+                        ContextMenuItem(labels.startRadio) {},
+                        ContextMenuItem(labels.openAlbum) {},
+                        ContextMenuItem(labels.openArtist) {},
+                        ContextMenuItem(labels.copyLink) {},
+                    )
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        BitChordMenuPanel(
+                            items = demoItems,
+                            onItem = {},
+                            modifier = Modifier.padding(top = 60.dp),
+                        )
+                    }
+                }
                 }
             }
         }

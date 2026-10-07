@@ -2,6 +2,8 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -330,7 +333,14 @@ private fun DetailHeader(
     }
 }
 
-/** Apple Music's two header pills: one red and filled, one in the page's own colours. */
+/**
+ * The header's two actions. Deliberately *not* the full capsules upstream
+ * draws — the user called them out as too loud and too round over the cover
+ * wash — so they sit at an 8dp corner (the artwork's own radius), a step
+ * smaller, and answer a press with a slight compression rather than only a
+ * ripple. The primary keeps the red: a call to action that hides is no call
+ * to action, but at this size it stops shouting.
+ */
 @Composable
 private fun DetailPill(
     label: String,
@@ -338,7 +348,9 @@ private fun DetailPill(
     filled: Boolean,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(50)
+    val shape = RoundedCornerShape(8.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val fill = if (filled) {
         AccentRed
     } else {
@@ -350,15 +362,23 @@ private fun DetailPill(
         modifier = Modifier
             .clip(shape)
             .background(fill)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 9.dp),
+            .graphicsLayer {
+                // The press compression from the interaction playbook —
+                // enough to feel the button take the press, not enough to
+                // move the hit target.
+                val scale = if (pressed) 0.96f else 1f
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 15.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         icon()
         Text(
             label,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.W600,
             color = if (filled) Color.White else MaterialTheme.colorScheme.onBackground,
         )

@@ -1,32 +1,24 @@
 package com.music.bitchord.ui.shell
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.CropSquare
-import androidx.compose.material.icons.rounded.FilterNone
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.VolumeDown
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
@@ -34,14 +26,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
@@ -84,11 +72,15 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * The Apple Music toolbar, laid out the way the Windows app lays it out:
- * shuffle / previous / play / next / repeat on the left, the now-playing
- * display as a floating panel in the middle, the volume at the right, and the
- * window's own three buttons closing the row — one row of [TOOLBAR_HEIGHT],
- * painted in the sidebar's chrome colour so the two read as one surface.
+ * The Apple Music toolbar, laid out the way the Windows app lays it out — and
+ * the way the user called out when it drifted from that: back/forward at the
+ * frame's left edge, then **one cluster around the centre** — transport, the
+ * now-playing display, volume — with nothing pulling any of the three out to
+ * the edges. The window's own three buttons live at the frame's right edge in
+ * their own overlay ([WindowControls]), not in this row, so they keep their
+ * place when the full-screen player covers the chrome. One row of
+ * [TOOLBAR_HEIGHT], painted in the sidebar's chrome colour so the two read as
+ * one surface.
  *
  * The whole row is the window's drag area (the undecorated window has no
  * title bar left to drag), and it spans the full window width: the sidebar
@@ -122,9 +114,7 @@ fun Toolbar(
     onCycleRepeat: () -> Unit,
     onOpenPlayer: () -> Unit,
     windowMaximized: Boolean,
-    onMinimize: () -> Unit,
     onToggleMaximize: () -> Unit,
-    onClose: () -> Unit,
     /**
      * The frame itself: the drag gesture below moves it, and it is the one
      * thing a page needs of the window.
@@ -132,7 +122,7 @@ fun Toolbar(
     window: java.awt.Window,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(TOOLBAR_HEIGHT)
@@ -198,177 +188,125 @@ fun Toolbar(
                     }
                 }
             },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-        // Back and forward. A desktop navigation has both, the same two glyphs
-        // every other desktop app reaches for; disabled rather than hidden so
-        // the row's rhythm does not shift when a stack empties.
-        val backDescription = stringResource(Res.string.back)
-        val forwardDescription = stringResource(Res.string.forward)
-        IconButton(onClick = onBack, enabled = canGoBack, modifier = Modifier.size(34.dp)) {
-            Icon(
-                Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                contentDescription = backDescription,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        IconButton(onClick = onForward, enabled = canGoForward, modifier = Modifier.size(34.dp)) {
-            Icon(
-                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = forwardDescription,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-
-        // The transport. Five controls, the reference app's order: shuffle
-        // before the skips, repeat after — both toggles that live in the
-        // full-screen player on a phone, but a desktop toolbar is where they
-        // are always within reach. The tint carries each state: a dead
-        // transport sits at a third strength, a toggle that is off at two
-        // thirds, an active one full.
-        val hasTrack = songTitle != null
-        val transportTint = MaterialTheme.colorScheme.onBackground
-        val dim = transportTint.copy(alpha = 0.35f)
-        val off = transportTint.copy(alpha = 0.62f)
-
-        IconButton(onClick = onToggleShuffle, modifier = Modifier.size(36.dp)) {
-            Icon(
-                BitChordIcons.Shuffle,
-                contentDescription = stringResource(
-                    if (shuffleEnabled) Res.string.shuffle_on else Res.string.shuffle_off,
-                ),
-                tint = if (shuffleEnabled) transportTint else off,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-        IconButton(onClick = onPrevious, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
-            Icon(
-                painterResource(Res.drawable.ic_player_previous),
-                contentDescription = null,
-                tint = if (hasTrack) transportTint else dim,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        IconButton(onClick = onPlayPause, enabled = hasTrack, modifier = Modifier.size(40.dp)) {
-            Icon(
-                painterResource(if (isPlaying) Res.drawable.ic_player_pause else Res.drawable.ic_player_play),
-                contentDescription = stringResource(if (isPlaying) Res.string.pause else Res.string.play),
-                tint = if (hasTrack) transportTint else dim,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        IconButton(onClick = onNext, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
-            Icon(
-                painterResource(Res.drawable.ic_player_next),
-                contentDescription = null,
-                tint = if (hasTrack) transportTint else dim,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        IconButton(onClick = onCycleRepeat, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
-            val repeating = repeatMode != RepeatMode.OFF
-            Icon(
-                BitChordIcons.Repeat,
-                contentDescription = stringResource(
-                    when (repeatMode) {
-                        RepeatMode.ONE -> Res.string.repeat_one
-                        RepeatMode.ALL -> Res.string.repeat_all
-                        else -> Res.string.repeat_off
-                    },
-                ),
-                tint = if (repeating) transportTint else off,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-
-        Spacer(Modifier.weight(0.5f))
-
-        // The LCD fills its whole share between the two weighted spacers —
-        // a wide panel, as the reference draws it. A fill=false weight here
-        // was the bug that pushed the volume and the window buttons left:
-        // an idle panel measures its content only, and the unused share
-        // leaks past everything placed after it.
-        NowPlayingDisplay(
-            title = songTitle,
-            artist = songArtist,
-            thumbnailUrl = songThumbnailUrl,
-            status = status,
-            onOpen = onOpenPlayer,
-            modifier = Modifier.weight(1.6f).height(38.dp),
-        )
-
-        Spacer(Modifier.weight(0.5f))
-
-        VolumeControl(
-            volumePercent = volumePercent,
-            onVolumeChange = onVolumeChange,
-        )
-        }
-
-        // The window's own three, flush at the frame's right edge — outside
-        // the padded row above, so nothing stands between them and the frame.
-        WindowButtons(
-            maximized = windowMaximized,
-            onMinimize = onMinimize,
-            onToggleMaximize = onToggleMaximize,
-            onClose = onClose,
-        )
-    }
-}
-
-/**
- * Minimize, maximize/restore, close — the window's own chrome, drawn to sit
- * on this dark toolbar the way the native buttons never did. The hover fill
- * is a plain rectangle spanning the toolbar's full height, the shape the
- * platform's own buttons use, rather than a pill floating in the row.
- */
-@Composable
-private fun WindowButtons(
-    maximized: Boolean,
-    onMinimize: () -> Unit,
-    onToggleMaximize: () -> Unit,
-    onClose: () -> Unit,
-) {
-    WindowButton(Icons.Rounded.Remove, onMinimize)
-    WindowButton(if (maximized) Icons.Rounded.FilterNone else Icons.Rounded.CropSquare, onToggleMaximize)
-    WindowButton(Icons.Rounded.Close, onClose)
-}
-
-@Composable
-private fun WindowButton(icon: ImageVector, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    Box(
-        modifier = Modifier
-            .width(44.dp)
-            .fillMaxHeight()
-            .background(
-                if (hovered) {
-                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.09f)
-                } else {
-                    Color.Transparent
-                },
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-            ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.size(15.dp),
-        )
+        // The centre cluster — the reference app's arrangement and the user's
+        // correction: transport and volume crowd the display, none of them
+        // drifting out to the edges. The nav arrows live in side boxes that
+        // give way first, and the display's width steps down in a narrow
+        // window before anything has to clip.
+        val lcdWidth = if (maxWidth >= 840.dp) LCD_WIDTH else LCD_WIDTH_NARROW
+        Row(
+            modifier = Modifier.fillMaxHeight(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CLUSTER_GAP),
+        ) {
+            // The transport. Five controls, the reference app's order: shuffle
+            // before the skips, repeat after — both toggles that live in the
+            // full-screen player on a phone, but a desktop toolbar is where they
+            // are always within reach. The tint carries each state: a dead
+            // transport sits at a third strength, a toggle that is off at two
+            // thirds, an active one full.
+            val hasTrack = songTitle != null
+            val transportTint = MaterialTheme.colorScheme.onBackground
+            val dim = transportTint.copy(alpha = 0.35f)
+            val off = transportTint.copy(alpha = 0.62f)
+
+            IconButton(onClick = onToggleShuffle, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    BitChordIcons.Shuffle,
+                    contentDescription = stringResource(
+                        if (shuffleEnabled) Res.string.shuffle_on else Res.string.shuffle_off,
+                    ),
+                    tint = if (shuffleEnabled) transportTint else off,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            IconButton(onClick = onPrevious, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    painterResource(Res.drawable.ic_player_previous),
+                    contentDescription = null,
+                    tint = if (hasTrack) transportTint else dim,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            IconButton(onClick = onPlayPause, enabled = hasTrack, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    painterResource(if (isPlaying) Res.drawable.ic_player_pause else Res.drawable.ic_player_play),
+                    contentDescription = stringResource(if (isPlaying) Res.string.pause else Res.string.play),
+                    tint = if (hasTrack) transportTint else dim,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            IconButton(onClick = onNext, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    painterResource(Res.drawable.ic_player_next),
+                    contentDescription = null,
+                    tint = if (hasTrack) transportTint else dim,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            IconButton(onClick = onCycleRepeat, enabled = hasTrack, modifier = Modifier.size(36.dp)) {
+                val repeating = repeatMode != RepeatMode.OFF
+                Icon(
+                    BitChordIcons.Repeat,
+                    contentDescription = stringResource(
+                        when (repeatMode) {
+                            RepeatMode.ONE -> Res.string.repeat_one
+                            RepeatMode.ALL -> Res.string.repeat_all
+                            else -> Res.string.repeat_off
+                        },
+                    ),
+                    tint = if (repeating) transportTint else off,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+
+            // The display panel, fixed-width so the cluster's shape does not
+            // breathe with the title. A fill=false weight here was the bug
+            // that pushed the volume and the window buttons left: an idle
+            // panel measures its content only, and the unused share leaks
+            // past everything placed after it.
+            NowPlayingDisplay(
+                title = songTitle,
+                artist = songArtist,
+                thumbnailUrl = songThumbnailUrl,
+                status = status,
+                onOpen = onOpenPlayer,
+                modifier = Modifier.width(lcdWidth).height(38.dp),
+            )
+
+            VolumeControl(
+                volumePercent = volumePercent,
+                onVolumeChange = onVolumeChange,
+            )
+        }
+
+        // Back and forward, pinned to the frame's left edge. A desktop
+        // navigation has both, the same two glyphs every other desktop app
+        // reaches for; disabled rather than hidden so the row's rhythm does
+        // not shift when a stack empties.
+        Row(
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val backDescription = stringResource(Res.string.back)
+            val forwardDescription = stringResource(Res.string.forward)
+            IconButton(onClick = onBack, enabled = canGoBack, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                    contentDescription = backDescription,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            IconButton(onClick = onForward, enabled = canGoForward, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = forwardDescription,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
     }
 }
 

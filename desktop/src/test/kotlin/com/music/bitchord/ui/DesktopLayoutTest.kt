@@ -4,7 +4,12 @@ import androidx.compose.ui.unit.dp
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.heroCardWidth
+import com.music.bitchord.ui.shell.CLUSTER_GAP
 import com.music.bitchord.ui.shell.CONTENT_MAX_WIDTH
+import com.music.bitchord.ui.shell.LCD_WIDTH
+import com.music.bitchord.ui.shell.LCD_WIDTH_NARROW
+import com.music.bitchord.ui.shell.PAGE_TRANSITION_ENTER_MS
+import com.music.bitchord.ui.shell.PAGE_TRANSITION_EXIT_MS
 import com.music.bitchord.ui.shell.SIDEBAR_BREAKPOINT
 import com.music.bitchord.ui.shell.SIDEBAR_RAIL_WIDTH
 import com.music.bitchord.ui.shell.SIDEBAR_WIDTH
@@ -34,6 +39,19 @@ class DesktopLayoutTest {
         assertEquals(52.dp, TOOLBAR_HEIGHT)
         assertEquals(760.dp, SIDEBAR_BREAKPOINT)
         assertEquals(1280.dp, CONTENT_MAX_WIDTH)
+        assertEquals(320.dp, LCD_WIDTH)
+        assertEquals(220.dp, LCD_WIDTH_NARROW)
+        assertEquals(10.dp, CLUSTER_GAP)
+    }
+
+    @Test
+    fun `the page transition is under the slow threshold, and exits before it enters`() {
+        // Navigation is frequent: both halves stay under 300ms, and the exit
+        // is the shorter one — a page leaving is less important than a page
+        // arriving.
+        assertTrue(PAGE_TRANSITION_ENTER_MS in 150..280)
+        assertTrue(PAGE_TRANSITION_EXIT_MS in 80..200)
+        assertTrue(PAGE_TRANSITION_EXIT_MS < PAGE_TRANSITION_ENTER_MS)
     }
 
     @Test

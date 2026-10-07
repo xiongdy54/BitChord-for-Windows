@@ -1,5 +1,13 @@
 package com.music.bitchord.ui.shell
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -9,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
@@ -115,6 +124,9 @@ fun Shell(
     val current by nav.current.collectAsState()
     val canGoBack by nav.canGoBack.collectAsState()
     val canGoForward by nav.canGoForward.collectAsState()
+    // Which way the stack last moved — the content transition reads it to
+    // slide the pages the way the navigation went.
+    val movement by nav.movement.collectAsState()
     val playlistsState by library.playlists.collectAsState()
     val query by search.query.collectAsState()
     val shuffle by player.shuffleEnabled.collectAsState()
@@ -183,9 +195,7 @@ fun Shell(
             onCycleRepeat = player::cycleRepeat,
             onOpenPlayer = { if (song != null) state.showPlayer = true },
             windowMaximized = windowMaximized,
-            onMinimize = onMinimize,
             onToggleMaximize = onToggleMaximize,
-            onClose = onClose,
             window = window,
             modifier = Modifier.background(chromeColor()),
         )
@@ -210,12 +220,34 @@ fun Shell(
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                Box(
-                    Modifier
-                        .widthIn(max = CONTENT_MAX_WIDTH)
-                        .fillMaxWidth(),
-                ) {
-                    when (val destination = current) {
+                AnimatedContent(
+                    targetState = current,
+                    transitionSpec = {
+                        // The navigation's own direction, mirrored in the
+                        // pages: forward, the new page eases in from the
+                        // right while the old accelerates away left; back,
+                        // the mirror. Both small — a few percent of the
+                        // width, under the fade — because this is wayfinding,
+                        // not theatre: a nudge that says where the page came
+                        // from, over before it can be in the way (exit
+                        // ease-in and shorter than the ease-in entrance, the
+                        // asymmetry that makes the swap read as motion
+                        // rather than a blink).
+                        val forward = movement >= 0
+                        val enter = slideInHorizontally(
+                            animationSpec = tween(PAGE_TRANSITION_ENTER_MS, easing = EASE_OUT),
+                        ) { full -> if (forward) full / 26 else -full / 26 } +
+                            fadeIn(tween(PAGE_TRANSITION_ENTER_MS, easing = EASE_OUT))
+                        val exit = slideOutHorizontally(
+                            animationSpec = tween(PAGE_TRANSITION_EXIT_MS, easing = EASE_IN),
+                        ) { full -> if (forward) -full / 26 else full / 26 } +
+                            fadeOut(tween(PAGE_TRANSITION_EXIT_MS, easing = EASE_IN))
+                        enter togetherWith exit
+                    },
+                    label = "contentRoute",
+                    modifier = Modifier.widthIn(max = CONTENT_MAX_WIDTH).fillMaxWidth(),
+                ) { destination ->
+                    when (destination) {
                         Destination.Home -> HomePage(
                             vm = home,
                             player = player,
@@ -352,6 +384,22 @@ fun Shell(
                         awaitFirstDown(requireUnconsumed = false).consume()
                     }
                 },
+        )
+    }
+
+    // The window's own three, painted over everything — player included.
+    // They left the toolbar for exactly this reason: chrome that disappears
+    // with the full-screen player takes the close button with it. The layer
+    // itself registers no pointer input, so every press that is not on one
+    // of the three buttons falls through to the player or the chrome below.
+    Box(Modifier.fillMaxSize()) {
+        WindowControls(
+            maximized = windowMaximized,
+            overPlayer = state.showPlayer,
+            onMinimize = onMinimize,
+            onToggleMaximize = onToggleMaximize,
+            onClose = onClose,
+            modifier = Modifier.align(Alignment.TopEnd).height(TOOLBAR_HEIGHT),
         )
     }
 }

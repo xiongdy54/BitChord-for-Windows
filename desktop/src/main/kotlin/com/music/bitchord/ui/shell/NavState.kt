@@ -105,21 +105,38 @@ class NavState(initial: Destination = Destination.Home) {
     private val _canGoForward = MutableStateFlow(history.canGoForward)
     val canGoForward: StateFlow<Boolean> = _canGoForward.asStateFlow()
 
+    /**
+     * Which way the last navigation moved, as the content area's transition
+     * reads it: `+1` for forward (an open, or a walk ahead through the
+     * stack), `-1` for back. Published alongside [current] so the page swap
+     * and its direction land in the same snapshot — a transition that reads
+     * one without the other slides the wrong way.
+     */
+    private val _movement = MutableStateFlow(1)
+    val movement: StateFlow<Int> = _movement.asStateFlow()
+
     fun open(destination: Destination) {
         history.open(destination)
+        _movement.value = 1
         publish()
     }
 
     /** @return whether the cursor moved, so a key handler knows to swallow the key. */
     fun goBack(): Boolean {
         val moved = history.back()
-        if (moved) publish()
+        if (moved) {
+            _movement.value = -1
+            publish()
+        }
         return moved
     }
 
     fun goForward(): Boolean {
         val moved = history.forward()
-        if (moved) publish()
+        if (moved) {
+            _movement.value = 1
+            publish()
+        }
         return moved
     }
 

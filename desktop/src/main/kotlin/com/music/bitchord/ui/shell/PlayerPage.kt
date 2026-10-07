@@ -1,11 +1,9 @@
 package com.music.bitchord.ui.shell
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material3.Icon
@@ -129,22 +127,28 @@ fun PlayerPage(
         )
         // The player's way back. Esc has always closed this overlay, but a key
         // is not an affordance — the chevron sits where the phone layout's
-        // drag-down handle is, over the artwork's backdrop, and the button
-        // stays clear of the press-swallowing overlay because a child that
-        // consumes a press stops it from ever reaching the parent.
+        // drag-down handle is, over the artwork's backdrop. Sized and placed
+        // to answer the toolbar's own back arrow — same 34dp control, same
+        // 22dp glyph, the same 12dp from the frame's left edge and the same
+        // 26dp centre height — so the two read as one control that survives
+        // the surface change, not two buttons that happen to look alike. The
+        // circle background is gone with the sizing: the toolbar's arrow
+        // carries none, and over the artwork the white glyph is affordance
+        // enough. The button stays clear of the press-swallowing overlay
+        // because a child that consumes a press stops it from ever reaching
+        // the parent.
         IconButton(
             onClick = { state.showPlayer = false },
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 22.dp, top = 22.dp)
-                .size(42.dp)
-                .background(Color.White.copy(alpha = 0.12f), CircleShape),
+                .padding(start = 12.dp, top = 9.dp)
+                .size(34.dp),
         ) {
             Icon(
                 Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
                 contentDescription = stringResource(Res.string.back),
                 tint = Color.White.copy(alpha = 0.9f),
-                modifier = Modifier.size(26.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
     }
