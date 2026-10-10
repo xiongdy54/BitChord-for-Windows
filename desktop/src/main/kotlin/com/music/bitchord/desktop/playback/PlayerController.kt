@@ -106,13 +106,28 @@ class PlayerController(
     var resolveDispatcher: CoroutineDispatcher = Dispatchers.IO
 
     /**
-     * Test seam. Production asks the download record first — a saved file
-     * answers before the network is asked, and a record outliving its file is
-     * pruned on the way past ([Downloads.verifiedSavedUri]) — then resolves
-     * through [StreamResolver], whose cache and coalescing already exist.
+     * Test seam. Production asks, in order:
+     *
+     *  1. **A WebDAV id** (`webdav:<fileUrl>`) — the file URL itself; the
+     *     credential rides along as a header through [mediaHeaders], not
+     *     through the shared client's interceptor, because libvlc fetches
+     *     media with its own stack.
+     *  2. **A local file path** — the local scan's id convention is that the
+     *     id *is* the absolute path (upstream's `videoId = the URI string`),
+     *     so an id that names an existing file plays straight off disk.
+     *  3. **A YouTube id** — the download record first ([Downloads.verifiedSavedUri];
+     *     this *is* upstream's localUri-first rule for rows the record backs),
+     *     then the stream resolver.
+     *
+     * The seam stays a function of the id alone — the prefetch resolves ids
+     * for rows that are not the current one, so it cannot consult "the row
+     * under the needle".
      */
-    var resolveUrl: suspend (String) -> String = {
-        Downloads.verifiedSavedUri(it) ?: StreamResolver.resolve(it)
+    var resolveUrl: suspend (String) -> String = { videoId ->
+        com.music.bitchord.data.webdav.WebDavConfig.fileUrlOf(videoId)
+            ?: resolveLocalFile(videoId)
+            ?: Downloads.verifiedSavedUri(videoId)
+            ?: StreamResolver.resolve(videoId)
     }
 
     /**
@@ -588,9 +603,36 @@ class PlayerController(
         } ?: false
     }
 
-    /** The headers a media fetch for [url] must carry — none for a downloaded file. */
-    private fun mediaHeaders(url: String): Map<String, String> =
-        if (url.startsWith("http")) StreamResolver.mediaHeadersFor(url) else emptyMap()
+    /**
+     * The headers a media fetch for [url] must carry — none for a local file,
+     * the WebDAV credential for the configured server's own URLs (the same
+     * decision the shared client's interceptor makes, restated here because
+     * libvlc never passes through that client), and the resolver's
+     * googlevideo set for everything else remote.
+     */
+    private fun mediaHeaders(url: String): Map<String, String> {
+        if (!url.startsWith("http")) return emptyMap()
+        val host = runCatching { java.net.URI(url).host }.getOrNull()
+        if (host != null && com.music.bitchord.data.webdav.WebDavAuth.shouldAuthorize(host)) {
+            return com.music.bitchord.data.webdav.WebDavAuth.authHeader
+                ?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("Authorization" to it) }
+                ?: emptyMap()
+        }
+        return StreamResolver.mediaHeadersFor(url)
+    }
+
+    /**
+     * Whether [videoId] names a file on this machine — the local scan's id
+     * convention. A YouTube id cannot collide with it (no path separators, no
+     * directories), and the file check is what makes a moved or deleted
+     * folder fall through to the ordinary resolve rather than dying here.
+     *
+     * Internal so the resolve-branch table can pin the guard itself without
+     * dragging the network branches into the test.
+     */
+    internal fun resolveLocalFile(videoId: String): String? =
+        videoId.takeIf { !it.contains("://") && java.io.File(it).isFile }
 
     // ---- publishing ---------------------------------------------------------------
 

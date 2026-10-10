@@ -49,6 +49,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.local_music
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.songs
 import com.music.bitchord.ui.DetailPages
@@ -62,6 +63,7 @@ import com.music.bitchord.ui.screens.LibraryPlaylistsPage
 import com.music.bitchord.ui.screens.LibrarySongsPage
 import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.ui.screens.DownloadsPage
+import com.music.bitchord.ui.screens.LocalMusicPage
 import com.music.bitchord.ui.screens.RecentlyAddedPage
 import com.music.bitchord.ui.screens.SettingsDialog
 import com.music.bitchord.ui.player.PlayerContextMenuArea
@@ -198,6 +200,7 @@ fun Shell(
     // here, once, rather than in each page that needs one.
     val songsSourceTitle = stringResource(Res.string.songs)
     val recentsSourceTitle = stringResource(Res.string.recently_added)
+    val localMusicSourceTitle = stringResource(Res.string.local_music)
 
     Column(
         Modifier
@@ -358,6 +361,24 @@ fun Shell(
                                     null,
                                 )
                             },
+                        )
+
+                        Destination.LocalMusic -> LocalMusicPage(
+                            // The third argument names the queue's source id —
+                            // `local:all` or `local:webdav`, the browse ids the
+                            // page's two sources address their rows by.
+                            onPlayFrom = { songs, index, sourceId ->
+                                player.playFrom(
+                                    songs,
+                                    index,
+                                    PlaybackSourceType.BROWSE,
+                                    localMusicSourceTitle,
+                                    sourceId,
+                                )
+                            },
+                            currentSong = song,
+                            isPlaying = snapshot.isPlaying,
+                            onOpenSettings = { state.showSettings = true },
                         )
 
                         Destination.LibraryPlaylists -> LibraryPlaylistsPage(

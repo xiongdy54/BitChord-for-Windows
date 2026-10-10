@@ -7,11 +7,22 @@ import com.music.bitchord.data.lyrics.PaxSenix
 import com.music.bitchord.data.lyrics.normalizePaxSenixApiKey
 import com.music.bitchord.playback.RepeatMode
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 
 /** How a shelf or library page lays its items out. */
 enum class LibraryViewType {
     LIST,
     GRID,
+}
+
+/** Stable persisted ordering for the local music library — upstream's own enum. */
+enum class LocalMusicSort {
+    TITLE_ASC,
+    TITLE_DESC,
+    DATE_ADDED,
+    DATE_MODIFIED,
 }
 
 /**
@@ -319,8 +330,105 @@ object AppSettings {
     /** User-issued credential required by api.paxsenix.org. */
     val paxSenixApiKey = MutableStateFlow(prefs.getString(KEY_PAXSENIX_API_KEY, ""))
 
+    // ── WebDAV ───────────────────────────────────────────────────────────────
+    //
+    // The remote personal library's connection. The password rides in the
+    // AuthStore (DPAPI), never in this plain file — the same split upstream
+    // draws — and the URL and username are kept in the same key names
+    // upstream uses, so a settings file means the same thing on both.
+
+    val webdavUrl = MutableStateFlow(prefs.getString(KEY_WEBDAV_URL, ""))
+
+    val webdavUsername = MutableStateFlow(prefs.getString(KEY_WEBDAV_USERNAME, ""))
+
+    /**
+     * Held in memory for the repository and the uploader to read; the
+     * durable copy is the AuthStore's. Loaded once at init, written only
+     * through [setWebDav] / [clearWebDav] — which is also where the network
+     * layer's credential pool hears about every change.
+     */
+    val webdavPassword = MutableStateFlow(authStore.webdavPassword.orEmpty())
+
+    // ── Local music ──────────────────────────────────────────────────────────
+
+    /**
+     * The folders the local scan walks, as absolute paths — no SAF tree
+     * indirection on a desktop. Encoded as a JSON array, because a path may
+     * legitimately carry a comma (`C:\music, misc\`) and a split-on-comma
+     * encoding would silently corrupt that; JSON handles every character a
+     * filesystem can throw at a list. Empty is "no folder chosen yet", which
+     * the Local Music page says out loud rather than treating as "scan
+     * everything" — silently walking a user's whole machine on first open
+     * would be the wrong default on both effort and privacy.
+     */
+    val localMusicFolders = MutableStateFlow(decodeFolders(prefs.getStringOrNull(KEY_LOCAL_MUSIC_FOLDERS)))
+
+    val localMusicSort = MutableStateFlow(
+        prefs.getStringOrNull(KEY_LOCAL_MUSIC_SORT)
+            ?.let { stored -> LocalMusicSort.entries.firstOrNull { it.name == stored } }
+            ?: LocalMusicSort.TITLE_ASC,
+    )
+
+    val localMusicViewType = MutableStateFlow(
+        prefs.getStringOrNull(KEY_LOCAL_MUSIC_VIEW_TYPE)
+            ?.let { stored -> LibraryViewType.entries.firstOrNull { it.name == stored } }
+            ?: LibraryViewType.LIST,
+    )
+
+    fun setWebDav(url: String, username: String, password: String) {
+        val normalized = com.music.bitchord.data.webdav.WebDavConfig.normalizeUrl(url)
+        webdavUrl.value = normalized
+        webdavUsername.value = username.trim()
+        webdavPassword.value = password
+        prefs.putString(KEY_WEBDAV_URL, normalized)
+        prefs.putString(KEY_WEBDAV_USERNAME, username.trim())
+        authStore.webdavPassword = password.ifEmpty { null }
+        publishWebDavAuth()
+    }
+
+    /** Forgets the connection: the fields, the stored password and the live credential pool. */
+    fun clearWebDav() {
+        webdavUrl.value = ""
+        webdavUsername.value = ""
+        webdavPassword.value = ""
+        prefs.remove(KEY_WEBDAV_URL)
+        prefs.remove(KEY_WEBDAV_USERNAME)
+        authStore.webdavPassword = null
+        publishWebDavAuth()
+    }
+
+    /**
+     * The network layer never reads settings — it reads
+     * [com.music.bitchord.data.webdav.WebDavAuth]'s volatile pool, published
+     * here on init and on every edit, exactly as upstream's settings object
+     * does (AppSettings.kt:1682-1740's shape).
+     */
+    private fun publishWebDavAuth() {
+        com.music.bitchord.data.webdav.WebDavAuth.update(
+            webdavUrl.value,
+            webdavUsername.value,
+            webdavPassword.value,
+        )
+    }
+
+    fun setLocalMusicFolders(value: List<String>) {
+        localMusicFolders.value = value
+        prefs.putString(KEY_LOCAL_MUSIC_FOLDERS, encodeFolders(value))
+    }
+
+    fun setLocalMusicSort(value: LocalMusicSort) {
+        localMusicSort.value = value
+        prefs.putString(KEY_LOCAL_MUSIC_SORT, value.name)
+    }
+
+    fun setLocalMusicViewType(value: LibraryViewType) {
+        localMusicViewType.value = value
+        prefs.putString(KEY_LOCAL_MUSIC_VIEW_TYPE, value.name)
+    }
+
     init {
         PaxSenix.setApiKey(paxSenixApiKey.value)
+        publishWebDavAuth()
     }
 
     fun setSyncedLyrics(value: Boolean) {
@@ -420,6 +528,38 @@ object AppSettings {
     private const val KEY_DOWNLOAD_QUALITY = "download_quality"
     private const val KEY_OUTPUT_DEVICE_ID = "output_device_id"
     private const val KEY_OUTPUT_DEVICE_NAME = "output_device_name"
+    private const val KEY_WEBDAV_URL = "webdav_url"
+    private const val KEY_WEBDAV_USERNAME = "webdav_username"
+    private const val KEY_LOCAL_MUSIC_FOLDERS = "local_music_folders"
+    private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
+    private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
+}
+
+/**
+ * The folder list's encoding, one JSON array in one property value. Split out
+ * as internal functions so the round-trip can be pinned by a test without
+ * dragging the whole settings object (and its disk file) into it.
+ */
+internal fun encodeFolders(folders: List<String>): String {
+    if (folders.isEmpty()) return ""
+    return Json.encodeToString(ListSerializer(String.serializer()), folders)
+}
+
+/** The inverse of [encodeFolders]; anything unparseable reads as "none chosen". */
+internal fun decodeFolders(stored: String?): List<String> {
+    if (stored.isNullOrBlank()) return emptyList()
+    return runCatching {
+        Json.decodeFromString(ListSerializer(String.serializer()), stored)
+    }.getOrDefault(emptyList())
+}
+
+/**
+ * The one credential store behind the WebDAV password. Its own field, rather
+ * than a lazy inside [AppSettings], so the singleton construction is not
+ * holding DPAPI decryption in its static init.
+ */
+private val AppSettings.authStore: com.music.bitchord.auth.AuthStore by lazy {
+    com.music.bitchord.auth.AuthStore()
 }
 
 /**

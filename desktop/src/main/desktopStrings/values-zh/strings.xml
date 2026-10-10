@@ -44,4 +44,12 @@
          是上游自带的 listen_as 键——向这里加字符串前先查合并后的资源。） -->
     <string name="account">账号</string>
     <string name="remove_account">移除此账号</string>
+
+    <!-- 本地音乐：切片 11 里仅有的桌面专属文案。页面与 WebDAV 设置组的其余
+         措辞全部来自上游 local_music* / webdav* / sort_* 字符串族（合并管线
+         会整族带进来）。 -->
+    <string name="local_music_add_folder">添加文件夹…</string>
+    <string name="local_music_remove_folder">移除此文件夹</string>
+    <string name="local_music_no_folders">还没有可扫描的文件夹。请在「设置 → 本地音乐」中选择音乐文件夹。</string>
+    <string name="local_music_delete_confirm">从磁盘删除所选的 %1$d 个文件？</string>
 </resources>

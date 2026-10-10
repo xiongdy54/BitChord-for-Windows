@@ -27,6 +27,13 @@ sealed interface Destination {
     /** The tracks saved by the download pipeline, on this machine. */
     data object Downloads : Destination
 
+    /**
+     * The personal libraries: the folders the scan walks and the WebDAV
+     * server, one page carrying both (upstream's `local:all` and
+     * `local:webdav` were one screen there too).
+     */
+    data object LocalMusic : Destination
+
     data class Detail(
         val kind: BrowseType,
         val browseId: String,

@@ -195,6 +195,9 @@ tasks.register<JavaExec>("probe") {
     if (project.findProperty("probeAudioDevices") == "true") jvmArgs("-Dbitchord.probeAudioDevices=true")
     (project.findProperty("probeSwitchDevice") as String?)?.let { jvmArgs("-Dbitchord.probeSwitchDevice=$it") }
     (project.findProperty("probeVideoId") as String?)?.let { jvmArgs("-Dbitchord.probeVideoId=$it") }
+    // The local scan's headless probe: -PprobeLocalScan=<folder> walks that
+    // folder and prints the row table. See Probe.kt.
+    (project.findProperty("probeLocalScan") as String?)?.let { jvmArgs("-Dbitchord.probeLocalScan=$it") }
 }
 
 compose.desktop {
@@ -222,6 +225,8 @@ compose.desktop {
             "bitchord.probeOutputPreview",
             "bitchord.probePlayVideoId",
             "bitchord.probeDestination",
+            "bitchord.probeLocalScan",
+            "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",
             "bitchord.autoExitMs",

@@ -50,4 +50,13 @@
          merged strings before adding here.) -->
     <string name="account">Account</string>
     <string name="remove_account">Remove this account</string>
+
+    <!-- Local music: the only genuinely desktop-specific words of slice 11.
+         Everything else the page and the WebDAV group say comes from the
+         upstream `local_music*` / `webdav*` / `sort_*` families, which the
+         string merge copies in wholesale. -->
+    <string name="local_music_add_folder">Add folder…</string>
+    <string name="local_music_remove_folder">Remove this folder</string>
+    <string name="local_music_no_folders">No folders to scan yet. Choose your music folders in Settings → Local Music.</string>
+    <string name="local_music_delete_confirm">Delete %1$d selected file(s) from disk?</string>
 </resources>

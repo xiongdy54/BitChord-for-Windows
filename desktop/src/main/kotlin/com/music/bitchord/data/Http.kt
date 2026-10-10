@@ -97,12 +97,41 @@ object Http {
     }
     // ---- End temporary instrumentation ----------------------------------
 
+    /**
+     * Adds the WebDAV Basic credential to requests aimed at the configured
+     * server, so PROPFIND listings, HEAD existence checks and the artwork
+     * range-reads all authenticate the same way the playback resolve does.
+     * (Playback itself is the exception, as everywhere on this platform:
+     * libvlc fetches media through its own stack and never sees this
+     * interceptor — its credential travels through the engine's header seam,
+     * see [com.music.bitchord.desktop.playback.VlcAudioPlayer].)
+     *
+     * Read off [com.music.bitchord.data.webdav.WebDavAuth] rather than prefs
+     * so the network layer never touches storage: AppSettings publishes here.
+     * Upstream `Http.kt:119`, verbatim.
+     */
+    private val webDavInterceptor = okhttp3.Interceptor { chain ->
+        val request = chain.request()
+        if (request.header("Authorization") == null &&
+            com.music.bitchord.data.webdav.WebDavAuth.shouldAuthorize(request.url.host)
+        ) {
+            val header = com.music.bitchord.data.webdav.WebDavAuth.authHeader
+            if (!header.isNullOrBlank()) {
+                return@Interceptor chain.proceed(
+                    request.newBuilder().header("Authorization", header).build(),
+                )
+            }
+        }
+        chain.proceed(request)
+    }
+
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .addInterceptor(webDavInterceptor)
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
 }

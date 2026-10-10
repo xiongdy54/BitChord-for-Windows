@@ -111,7 +111,7 @@ class VlcAudioPlayer : AudioEngine {
             if (startAtMs > 0) add(":start-time=${startAtMs / 1000.0}")
         }
         statsReported = false
-        player.media().play(url, *options.toTypedArray())
+        player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
     }
 
     override fun pause() {
@@ -178,4 +178,41 @@ class VlcAudioPlayer : AudioEngine {
         runCatching { player.release() }
         runCatching { factory.release() }
     }
+}
+
+/**
+ * Where a `Basic` credential goes when the fetcher is libvlc.
+ *
+ * VLC's HTTP access module has no arbitrary-header media option — the header
+ * seam [PlayerController] resolves through can carry an `Authorization` line,
+ * but there is no `:http-header-…` switch to map it onto, unlike the referrer
+ * and user-agent options above. The one channel libvlc 3.x does offer for
+ * HTTP Basic auth is the MRL's own userinfo, which the module turns into the
+ * `Authorization` header itself. So that is what this mapping does: decode
+ * the header's base64 payload and re-embed it as `scheme://user:pass@host/…`,
+ * percent-encoded for the parts a password may legitimately contain.
+ *
+ * A header that is not Basic (nothing else is produced today), a payload that
+ * does not decode, or a URL that already carries credentials passes through
+ * unchanged — the last so an MRL built by hand is never rewritten.
+ */
+internal fun withBasicAuth(url: String, headers: Map<String, String>): String {
+    val header = headers["Authorization"]?.takeIf { it.startsWith("Basic ", ignoreCase = true) }
+        ?: return url
+    val credentials = runCatching {
+        String(
+            java.util.Base64.getDecoder().decode(header.substringAfter(' ').trim()),
+            Charsets.UTF_8,
+        )
+    }.getOrNull() ?: return url
+    val separator = credentials.indexOf(':')
+    if (separator < 0) return url
+    val user = credentials.substring(0, separator)
+    val pass = credentials.substring(separator + 1)
+    val schemeEnd = url.indexOf("://")
+    if (schemeEnd < 0) return url
+    val rest = url.substring(schemeEnd + 3)
+    if (rest.substringBefore('/').contains('@')) return url
+    fun encode(part: String) = java.net.URLEncoder.encode(part, Charsets.UTF_8).replace("+", "%20")
+    return url.substring(0, schemeEnd + 3) + encode(user) + ":" + encode(pass) + "@" + rest
 }

@@ -436,6 +436,13 @@ fun main() {
         ?.let { Locale.setDefault(Locale.forLanguageTag(it)) }
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // The screenshot pass's local-library seed: the scan's folder list for the
+    // session, comma-separated, seeded into the flow's in-memory value only —
+    // never the file the user's own choices live in (the theme probe's same
+    // discipline, one setting over). A scripted pass has no file picker.
+    System.getProperty("bitchord.localFolders")?.takeIf { it.isNotBlank() }?.let { seeded ->
+        AppSettings.localMusicFolders.value = seeded.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    }
     // Same as the Android service does on create: the object may already hold a value, so
     // assign both true and false rather than only turning it on.
     QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
@@ -575,6 +582,7 @@ fun main() {
                     probeDestination == "library" -> open(Destination.LibrarySongs)
                     probeDestination == "playlists" -> open(Destination.LibraryPlaylists)
                     probeDestination == "downloads" -> open(Destination.Downloads)
+                    probeDestination == "localmusic" -> open(Destination.LocalMusic)
                     probeDestination == "recent" -> open(Destination.RecentlyAdded)
                     probeDestination.startsWith("detail:") -> open(
                         Destination.Detail(
@@ -712,9 +720,15 @@ fun main() {
                     windowState.position = WindowPosition.Aligned(Alignment.Center)
                 }
             }
-            // Coil has no network fetcher off Android; artwork is all remote.
+            // Coil has no network fetcher off Android; artwork is all remote —
+            // plus the local files' embedded covers, which RemoteArtworkStore
+            // serves as file URIs the platform fetcher handles natively. The
+            // WebDAV interceptor rides along so cover loads aimed at the
+            // configured server carry its credential the way playback does
+            // (the Android app registers it the same way, in BitChordApplication).
             setSingletonImageLoaderFactory { context ->
                 ImageLoader.Builder(context)
+                    .components { add(com.music.bitchord.data.webdav.WebDavCoilAuth()) }
                     .components { add(OkHttpNetworkFetcherFactory()) }
                     .build()
             }

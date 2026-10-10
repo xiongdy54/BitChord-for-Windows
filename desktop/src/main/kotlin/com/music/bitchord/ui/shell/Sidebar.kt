@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
@@ -48,6 +49,7 @@ import com.music.bitchord.desktop.resources.browse
 import com.music.bitchord.desktop.resources.downloaded_songs
 import com.music.bitchord.desktop.resources.library
 import com.music.bitchord.desktop.resources.listen_now
+import com.music.bitchord.desktop.resources.local_music
 import com.music.bitchord.desktop.resources.playlists
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.search
@@ -145,6 +147,11 @@ fun Sidebar(
             label = stringResource(Res.string.downloaded_songs),
             selected = current == Destination.Downloads,
         ) { onSelect(Destination.Downloads) }
+        SidebarRow(
+            icon = Icons.Rounded.LibraryMusic,
+            label = stringResource(Res.string.local_music),
+            selected = current == Destination.LocalMusic,
+        ) { onSelect(Destination.LocalMusic) }
 
         // The account's own playlists, one row each, beneath the library's
         // "Playlists" page of them. No rows when the account has none or the
@@ -212,6 +219,7 @@ private fun RailSidebar(
         RailRow(BitChordIcons.Clock, current == Destination.RecentlyAdded) { onSelect(Destination.RecentlyAdded) }
         RailRow(BitChordIcons.MusicNote, current == Destination.LibrarySongs) { onSelect(Destination.LibrarySongs) }
         RailRow(BitChordIcons.Queue, current == Destination.LibraryPlaylists) { onSelect(Destination.LibraryPlaylists) }
+        RailRow(Icons.Rounded.LibraryMusic, current == Destination.LocalMusic) { onSelect(Destination.LocalMusic) }
         RailRow(Icons.Rounded.Settings, selected = false, onClick = onOpenSettings)
     }
 }

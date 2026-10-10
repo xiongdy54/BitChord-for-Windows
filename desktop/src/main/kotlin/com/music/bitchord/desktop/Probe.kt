@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.InnerTubeXResolver
@@ -33,6 +34,39 @@ fun main(args: Array<String>) {
 private suspend fun probe(args: Array<String>) {
     val query = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "周杰伦 晴天"
     InnerTubeXResolver.init()
+
+    // Headless scan of the local music folders — the slice-11 probe. No
+    // network, no window: walk, filter, read, print. `bitchord.probeLocalScan`
+    // names one folder to scan (the app's own setting is deliberately not
+    // read, so a probe run leaves no mark and works before any folder is
+    // configured); timings and a sample of the rows go to stdout.
+    System.getProperty("bitchord.probeLocalScan")?.takeIf { it.isNotBlank() }?.let { path ->
+        println("── local scan: $path ─────────────────")
+        val started = System.currentTimeMillis()
+        val session = com.music.bitchord.data.metadata.LocalMediaMeta.Session.open()
+        try {
+            val songs = com.music.bitchord.data.LocalMediaRepository.scan(listOf(path)) {
+                session.read(it)
+            }
+            val elapsed = System.currentTimeMillis() - started
+            DebugLog.d("BitChord", "probeLocalScan: ${songs.size} songs in ${elapsed}ms from $path")
+            println("songs=${songs.size} elapsed=${elapsed}ms")
+            val albums = songs.mapNotNull { it.albumName }.distinct().size
+            val artists = songs.map { it.artist }.distinct().size
+            val dated = songs.count { it.localDateAddedSeconds != null }
+            val withDuration = songs.count { it.durationText != null }
+            println("artists=$artists albums=$albums withDuration=$withDuration withDates=$dated")
+            songs.take(12).forEach { song ->
+                println(
+                    "  ${song.title} — ${song.artist}" +
+                        " [${song.albumName ?: "-"} · ${song.durationText ?: "-"} · ${song.videoId}]",
+                )
+            }
+        } finally {
+            session.close()
+        }
+        return
+    }
 
     // No network wanted: the engine's own view of the machine's sound
     // endpoints, id and all — the settings dialog's radio list is exactly

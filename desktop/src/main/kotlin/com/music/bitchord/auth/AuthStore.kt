@@ -70,6 +70,22 @@ object DpapiCipher : AuthCipher {
 }
 
 /**
+ * The one [FileStore] behind every default-constructed [AuthStore].
+ *
+ * A FileStore holds the whole file in memory and rewrites it on every write,
+ * so two instances over the same path would clobber each other — each would
+ * save its own snapshot and drop the other's keys (the same hazard the
+ * window-geometry store's comment records for settings.properties). The
+ * account controller and the settings object both need the auth file — the
+ * session registry and the WebDAV password — and both get *this* instance
+ * instead of building their own. Tests construct explicit stores and never
+ * see it.
+ */
+private val SharedAuthFileStore: FileStore by lazy {
+    FileStore(AppFiles.file("auth.properties"))
+}
+
+/**
  * Encrypted-at-rest storage for the YouTube Music session registry — the
  * desktop stand-in for the Android AuthStore, whose Keystore-backed prefs
  * have no Windows equivalent this build wants to manage itself. The value at
@@ -83,16 +99,33 @@ object DpapiCipher : AuthCipher {
  * dangling ids — harmless, because nothing dereferences them without a
  * session behind it.
  *
- * Only the session surface is ported. The Android class's Discord/WebDAV/SMB
- * tokens and the legacy single-cookie entry belong to features their own
- * slices have not carried to desktop yet, and the channel keys died with
- * `v2` on the phone: the multi-account registry is where a chosen channel
- * lives now.
+ * Only the session surface was ported until slice 11 added the WebDAV
+ * password below — the first member of the password family. The Android
+ * class's Discord/SMB tokens and the legacy single-cookie entry belong to
+ * features their own slices have not carried to desktop yet, and the channel
+ * keys died with `v2` on the phone: the multi-account registry is where a
+ * chosen channel lives now.
  */
 class AuthStore(
-    private val store: FileStore = FileStore(AppFiles.file("auth.properties")),
+    private val store: FileStore = SharedAuthFileStore,
     private val cipher: AuthCipher = DpapiCipher,
 ) {
+
+    /**
+     * The WebDAV server's password — the same split the Android app draws:
+     * a credential does not sit in the plain settings file beside its URL.
+     * Null and absent are the same thing here, as for every key above.
+     */
+    var webdavPassword: String?
+        get() = store.getStringOrNull(KEY_WEBDAV_PASSWORD)?.let(cipher::unprotect)?.ifBlank { null }
+        set(value) {
+            val plain = value?.takeIf { it.isNotEmpty() }
+            if (plain == null) {
+                store.remove(KEY_WEBDAV_PASSWORD)
+            } else {
+                store.putString(KEY_WEBDAV_PASSWORD, cipher.protect(plain))
+            }
+        }
 
     /** The durable account registry — one [GoogleAccountSession] per Google login. */
     val sessions: List<GoogleAccountSession>
@@ -197,5 +230,6 @@ class AuthStore(
         private const val KEY_SESSIONS = "google_account_sessions_v2"
         private const val KEY_ACTIVE_ACCOUNT = "active_google_account_id_v2"
         private const val KEY_ACTIVE_PROFILE = "active_youtube_profile_id_v2"
+        private const val KEY_WEBDAV_PASSWORD = "webdav_password"
     }
 }
