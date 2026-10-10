@@ -21,8 +21,10 @@ data class AudioStats(
  *
  * What the slice-1 VLC wrapper already was — five callbacks and seven verbs —
  * said out loud, so that the queue can be tested against a fake engine on a
- * machine with no VLC installed. Every member is [VlcAudioPlayer]'s own; the
- * interface adds nothing to it.
+ * machine with no VLC installed. The output-device pair at the bottom arrived
+ * with slice 9 and carries defaults, so the count still holds for an engine
+ * that only plays. Every core member is [VlcAudioPlayer]'s own; the interface
+ * adds nothing to it.
  *
  * Callbacks arrive on the thread the engine chooses. libvlc runs them on vlcj's
  * own event dispatcher, not on the UI thread, so whoever consumes them has to
@@ -92,4 +94,30 @@ interface AudioEngine {
     fun setVolume(percent: Int)
 
     fun release()
+
+    /**
+     * The endpoints the platform's sound settings would list right now, in the
+     * order the platform lists them. A blocking native call — callers keep it
+     * off the UI thread. The defaults exist so an engine that has no opinion
+     * about endpoints (the fake, a future one) reports an empty world rather
+     * than a lie: this interface has never required more of an engine than
+     * that it plays.
+     */
+    fun audioOutputDevices(): List<AudioOutputDevice> = emptyList()
+
+    /**
+     * Route the sound to [deviceId], or to the platform's own default when
+     * null. Whether the change reaches the stream already playing or only the
+     * next one is the engine's platform fact — [VlcAudioPlayer]'s KDoc carries
+     * what its probe established.
+     */
+    fun setAudioOutputDevice(deviceId: String?) {}
 }
+
+/** One endpoint the operating system's sound settings would list, by its own id. */
+data class AudioOutputDevice(
+    /** The id the engine's platform uses to name this endpoint again. */
+    val id: String,
+    /** What a user calls it ("Speakers (Realtek…)", "耳机 (…)"). */
+    val name: String,
+)

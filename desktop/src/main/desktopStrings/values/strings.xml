@@ -40,4 +40,8 @@
     <!-- Quality badge: the direction-neutral word for a swap in flight (upstream says
          "Upgrading quality", but this swap can run downhill too — the setting fell). -->
     <string name="switching_quality">Switching quality…</string>
+
+    <!-- Output device: the always-present way back to letting the OS choose
+         (the platform itself falls back to this when a chosen endpoint dies). -->
+    <string name="system_default">System default</string>
 </resources>

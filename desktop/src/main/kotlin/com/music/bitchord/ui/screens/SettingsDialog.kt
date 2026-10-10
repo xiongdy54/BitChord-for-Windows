@@ -33,10 +33,12 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeSetting
+import com.music.bitchord.desktop.playback.AudioOutputDevice
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.appearance
+import com.music.bitchord.desktop.resources.audio_output
 import com.music.bitchord.desktop.resources.audio_quality
 import com.music.bitchord.desktop.resources.autoplay
 import com.music.bitchord.desktop.resources.autoplay_subtitle
@@ -55,6 +57,7 @@ import com.music.bitchord.desktop.resources.settings
 import com.music.bitchord.desktop.resources.show_nerd_stats
 import com.music.bitchord.desktop.resources.show_nerd_stats_subtitle
 import com.music.bitchord.desktop.resources.system
+import com.music.bitchord.desktop.resources.system_default
 import com.music.bitchord.desktop.resources.theme
 import com.music.bitchord.desktop.resources.translucent_window
 import com.music.bitchord.desktop.resources.translucent_window_subtitle
@@ -81,15 +84,29 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
     /** The quality switch goes through the player, whose swap seam answers to it. */
     onAudioQualityChanged: (AudioQuality) -> Unit,
+    /** The engine's endpoint enumeration — a blocking native call, handed over as a lambda. */
+    enumerateAudioOutputDevices: () -> List<AudioOutputDevice> = { emptyList() },
+    /** The device switch goes through the player too, which owns the engine call. */
+    onAudioOutputDeviceChanged: (AudioOutputDevice?) -> Unit = {},
+    /** One-shot from the screenshot probe: arrive with the output picker already open. */
+    autoOpenAudioOutput: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var showLyricsSources by remember { mutableStateOf(false) }
     var showTranslationLanguage by remember { mutableStateOf(false) }
+    var showAudioOutput by remember { mutableStateOf(autoOpenAudioOutput) }
     if (showLyricsSources) {
         LyricsSourcesDialog(onDismiss = { showLyricsSources = false })
     }
     if (showTranslationLanguage) {
         TranslationLanguageDialog(onDismiss = { showTranslationLanguage = false })
+    }
+    if (showAudioOutput) {
+        OutputDeviceDialog(
+            onDismiss = { showAudioOutput = false },
+            enumerateDevices = enumerateAudioOutputDevices,
+            onSelect = onAudioOutputDeviceChanged,
+        )
     }
     Dialog(
         onDismissRequest = onDismiss,
@@ -190,6 +207,27 @@ fun SettingsDialog(
                     subtitle = stringResource(Res.string.show_nerd_stats_subtitle),
                     checked = showNerdStats,
                 ) { AppSettings.setShowNerdStats(it) }
+
+                // The endpoint the sound goes out on. The value names the
+                // stored device even after it stops enumerating — the name
+                // rides beside the id for exactly that — and the always
+                // -present system default is the way back.
+                val outputDeviceName by AppSettings.outputDeviceName.collectAsState()
+                Text(
+                    text = stringResource(Res.string.audio_output),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAudioOutput = true }
+                        .padding(top = 8.dp),
+                )
+                Text(
+                    text = outputDeviceName
+                        ?: stringResource(Res.string.system_default),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
 
                 GroupDivider()
 

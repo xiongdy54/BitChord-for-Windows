@@ -156,6 +156,44 @@ class SongActions(
 val LocalSongActions = staticCompositionLocalOf<SongActions?> { null }
 
 /**
+ * One [song]'s menu as a list of items, evaluated *at call time* — the caller
+ * is the `items` builder of a [ContextMenuArea], which runs again on every
+ * open, so `liked`, "is this the current track" and the download state are
+ * read fresh rather than remembered from when the row was drawn.
+ *
+ * Extracted from [SongContextMenuArea] so the player surface (whose right
+ * click opens this same menu with a player-only row on top) builds the same
+ * list instead of a fork of it.
+ */
+fun songMenuItems(
+    song: Song,
+    labels: SongActionLabels,
+    actions: SongActions,
+): List<ContextMenuItem> {
+    val liked = LikeState.overrides.value[song.videoId] == LikeStatus.LIKE
+    val isCurrent = actions.currentVideoId() == song.videoId
+    val saved = song.videoId in Downloads.saved.value
+    val downloadState = Downloads.active.value[song.videoId]
+    return songActions(song, isCurrent, saved, downloadState).map { action ->
+        when (action) {
+            SongAction.PlayNext -> ContextMenuItem(labels.playNext) { actions.playNext(song) }
+            SongAction.AddToQueue -> ContextMenuItem(labels.addToQueue) { actions.addToQueue(song) }
+            SongAction.ToggleLike -> ContextMenuItem(
+                if (liked) labels.removeFromLiked else labels.like,
+            ) { actions.toggleLike(song, liked) }
+            SongAction.StartRadio -> ContextMenuItem(labels.startRadio) { actions.startRadio(song) }
+            SongAction.Download -> ContextMenuItem(labels.download) { actions.download(song) }
+            SongAction.CancelDownload -> ContextMenuItem(labels.cancel) { actions.cancelDownload(song) }
+            SongAction.DeleteDownload -> ContextMenuItem(labels.deleteDownload) { actions.deleteDownload(song) }
+            SongAction.OpenAlbum -> ContextMenuItem(labels.openAlbum) { actions.openAlbum(song) }
+            SongAction.OpenArtist -> ContextMenuItem(labels.openArtist) { actions.openArtist(song) }
+            SongAction.CopyLink -> ContextMenuItem(labels.copyLink) { actions.copyLink(song) }
+            SongAction.CopyLog -> ContextMenuItem(labels.copyLog) { actions.copyLog() }
+        }
+    }
+}
+
+/**
  * The right-click menu of one track row, over the desktop's own
  * `ContextMenuArea`: the platform detects the secondary click (and the
  * keyboard's menu key), draws the menu near the pointer, and hands the item
@@ -175,31 +213,7 @@ fun SongContextMenuArea(song: Song, content: @Composable () -> Unit) {
     }
     val labels = rememberSongActionLabels()
     ContextMenuArea(
-        items = {
-            val liked = LikeState.overrides.value[song.videoId] == LikeStatus.LIKE
-            val isCurrent = actions.currentVideoId() == song.videoId
-            // Read fresh at open time, exactly like `liked`: the menu never
-            // describes a state the tap behind it won't act on.
-            val saved = song.videoId in Downloads.saved.value
-            val downloadState = Downloads.active.value[song.videoId]
-            songActions(song, isCurrent, saved, downloadState).map { action ->
-                when (action) {
-                    SongAction.PlayNext -> ContextMenuItem(labels.playNext) { actions.playNext(song) }
-                    SongAction.AddToQueue -> ContextMenuItem(labels.addToQueue) { actions.addToQueue(song) }
-                    SongAction.ToggleLike -> ContextMenuItem(
-                        if (liked) labels.removeFromLiked else labels.like,
-                    ) { actions.toggleLike(song, liked) }
-                    SongAction.StartRadio -> ContextMenuItem(labels.startRadio) { actions.startRadio(song) }
-                    SongAction.Download -> ContextMenuItem(labels.download) { actions.download(song) }
-                    SongAction.CancelDownload -> ContextMenuItem(labels.cancel) { actions.cancelDownload(song) }
-                    SongAction.DeleteDownload -> ContextMenuItem(labels.deleteDownload) { actions.deleteDownload(song) }
-                    SongAction.OpenAlbum -> ContextMenuItem(labels.openAlbum) { actions.openAlbum(song) }
-                    SongAction.OpenArtist -> ContextMenuItem(labels.openArtist) { actions.openArtist(song) }
-                    SongAction.CopyLink -> ContextMenuItem(labels.copyLink) { actions.copyLink(song) }
-                    SongAction.CopyLog -> ContextMenuItem(labels.copyLog) { actions.copyLog() }
-                }
-            }
-        },
+        items = { songMenuItems(song, labels, actions) },
     ) {
         content()
     }

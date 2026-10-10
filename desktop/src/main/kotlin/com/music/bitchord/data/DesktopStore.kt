@@ -61,6 +61,13 @@ class FileStore(private val file: File) {
         save()
     }
 
+    /** Clears [key] — "the user chose none", as opposed to having never chosen. */
+    @Synchronized
+    fun remove(key: String) {
+        values.remove(key)
+        save()
+    }
+
     @Synchronized
     fun getLong(key: String, default: Long): Long = values.getProperty(key)?.toLongOrNull() ?: default
 

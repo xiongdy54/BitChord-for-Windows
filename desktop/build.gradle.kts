@@ -185,6 +185,9 @@ tasks.register<JavaExec>("probe") {
     jvmArgs("-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
     (project.findProperty("probeQuery") as String?)?.let { args(it) }
     if (project.findProperty("probePlay") == "true") jvmArgs("-Dbitchord.probePlay=true")
+    if (project.findProperty("probeAudioDevices") == "true") jvmArgs("-Dbitchord.probeAudioDevices=true")
+    (project.findProperty("probeSwitchDevice") as String?)?.let { jvmArgs("-Dbitchord.probeSwitchDevice=$it") }
+    (project.findProperty("probeVideoId") as String?)?.let { jvmArgs("-Dbitchord.probeVideoId=$it") }
 }
 
 compose.desktop {
@@ -201,6 +204,11 @@ compose.desktop {
             "bitchord.probeOpenLyrics",
             "bitchord.probeDownload",
             "bitchord.probeQualitySwitch",
+            "bitchord.probeSleepTimerMs",
+            "bitchord.probeSleepAfterTrack",
+            "bitchord.probeArmTimerMs",
+            "bitchord.probeSleepPreview",
+            "bitchord.probeOutputPreview",
             "bitchord.probePlayVideoId",
             "bitchord.probeDestination",
             "bitchord.shot",

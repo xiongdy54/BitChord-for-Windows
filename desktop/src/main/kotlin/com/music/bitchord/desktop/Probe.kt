@@ -34,6 +34,21 @@ private suspend fun probe(args: Array<String>) {
     val query = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "周杰伦 晴天"
     InnerTubeXResolver.init()
 
+    // No network wanted: the engine's own view of the machine's sound
+    // endpoints, id and all — the settings dialog's radio list is exactly
+    // this list.
+    if (System.getProperty("bitchord.probeAudioDevices") == "true") {
+        println("── audio output devices ──────────────")
+        val vlc = VlcAudioPlayer()
+        val devices = vlc.audioOutputDevices()
+        if (devices.isEmpty()) {
+            println("(none enumerated)")
+        }
+        devices.forEach { println("  ${it.name}  [${it.id}]") }
+        vlc.release()
+        return
+    }
+
     // The string pipeline, checked before anything that needs the network: the
     // app's own strings.xml has to reach Res.string.* in every locale it ships.
     println("── strings ───────────────────────────")
@@ -94,7 +109,14 @@ private suspend fun probe(args: Array<String>) {
         }
         .onFailure { println("search all failed: ${it.javaClass.simpleName}: ${it.message}") }
 
-    val song = songs.firstSong()
+    val song = if (System.getProperty("bitchord.probeVideoId") != null) {
+        // Search does not always answer with Track rows (regional answers,
+        // consent walls); a caller who already knows the videoId skips the
+        // guessing game entirely.
+        Song(System.getProperty("bitchord.probeVideoId"), "Probe track", "Probe artist", null)
+    } else {
+        songs.firstSong()
+    }
     println()
     if (song == null) {
         println("── stream resolve ── skipped, no song in the results above")
@@ -137,6 +159,10 @@ private suspend fun probe(args: Array<String>) {
  * proof: it only advances while audio is actually being decoded and sent to
  * the output, so a track that is refused comes back as `playing=false` and a
  * clock stuck at zero.
+ *
+ * `bitchord.probeSwitchDevice=<id>` names an endpoint to switch to five
+ * seconds in — the answer to "does the swap reach the live stream" is in
+ * whether the clock keeps advancing through the switch without an error.
  */
 private suspend fun playForAWhile(url: String, headers: Map<String, String>) {
     println()
@@ -147,8 +173,16 @@ private suspend fun playForAWhile(url: String, headers: Map<String, String>) {
     vlc.onError = { println("vlc: error $it") }
     vlc.setVolume(60)
     vlc.play(url, headers)
+    val switchTo = System.getProperty("bitchord.probeSwitchDevice")
     repeat(15) { second ->
         delay(1_000)
+        if (second == 5 && switchTo != null) {
+            // `default` is the null id — the way back to the system default,
+            // which the enumeration itself has no entry for.
+            val id = switchTo.takeUnless { it == "default" }
+            println("vlc: switching output device -> ${id ?: "system default"}")
+            vlc.setAudioOutputDevice(id)
+        }
         println("  t+${second + 1}s  playing=${vlc.isPlaying}  time=${vlc.timeMs}ms")
     }
     vlc.stop()

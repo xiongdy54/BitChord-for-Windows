@@ -67,4 +67,20 @@ class FakeAudioEngine : AudioEngine {
     override fun seekTo(fraction: Float) { seekFractions += fraction }
     override fun setVolume(percent: Int) { volumes += percent }
     override fun release() { releasedEngine = true }
+
+    /**
+     * What the output-device switch asked for, last call standing, and how
+     * many calls arrived — the sleep-timer/output tests read this the way the
+     * volume list is read. Null is "the system default" having been asked for
+     * explicitly; never-touched is `deviceCalls == 0`.
+     */
+    var outputDevice: String? = null
+        private set
+    var deviceCalls: Int = 0
+        private set
+
+    override fun setAudioOutputDevice(deviceId: String?) {
+        deviceCalls++
+        outputDevice = deviceId
+    }
 }

@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop.playback
 
+import com.music.bitchord.data.DebugLog
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
@@ -132,6 +133,45 @@ class VlcAudioPlayer : AudioEngine {
     /** VLC's own scale, where 100 is unity. */
     override fun setVolume(percent: Int) {
         player.audio().setVolume(percent.coerceIn(0, 100))
+    }
+
+    /**
+     * The WASAPI endpoints libvlc's active output module (mmdevice on Windows)
+     * lists, verbatim from its own enumeration. A blocking native call — the
+     * dialog that wants the list makes it on an IO dispatcher. libvlc's
+     * lister is the one part of this pair that can refuse (no active aout yet,
+     * an odd module); an empty list is what that reads as, never a crash.
+     *
+     * The "Default" entry mmdevice lists first is left out: it carries an
+     * empty id, so it is not a device that can be asked for again — and the
+     * session default it stands for is what [setAudioOutputDevice] with null
+     * already says.
+     */
+    override fun audioOutputDevices(): List<AudioOutputDevice> =
+        runCatching {
+            player.audio().outputDevices()
+                ?.filter { !it.getDeviceId().isNullOrBlank() }
+                ?.map { AudioOutputDevice(id = it.getDeviceId(), name = it.getLongName()) }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+
+    /**
+     * Route playback to [deviceId]; null asks libvlc for its platform default.
+     * The output module is passed as null too — libvlc applies the id to
+     * whichever module is already driving the sound, which on Windows is
+     * mmdevice and never changes under us.
+     *
+     * Probed on the reference machine (slice 9 implementation record): the
+     * switch reaches the *live* stream — VLC's mmdevice aout re-seats itself on
+     * the new endpoint without the media being reopened — and a null id
+     * returns the stream to whatever the system default currently is.
+     */
+    override fun setAudioOutputDevice(deviceId: String?) {
+        runCatching {
+            player.audio().setOutputDevice(null, deviceId)
+        }.onFailure {
+            DebugLog.w("audio", "setOutputDevice(${deviceId ?: "default"}) failed: ${it.message}")
+        }
     }
 
     override fun release() {

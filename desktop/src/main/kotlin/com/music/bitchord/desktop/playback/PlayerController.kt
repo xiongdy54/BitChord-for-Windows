@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop.playback
 
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.SystemClock
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
@@ -34,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -251,6 +253,37 @@ class PlayerController(
         // through [setAudioQuality] — an explicit act the queue thread can own
         // end to end, with none of the subscribe-before-first-value timing a
         // `drop(1)` collector would hang the trigger on.
+        // The output device is like the quality switch: one explicit writer
+        // ([setAudioOutputDevice]) and a one-time apply of whatever a previous
+        // session stored, before the first play can open an aout under the
+        // wrong endpoint.
+        AppSettings.outputDeviceId.value?.let { engine.setAudioOutputDevice(it) }
+        watchSleepTimer()
+    }
+
+    // ---- sleep timer -------------------------------------------------------------------
+
+    /**
+     * Pause when the sleep timer runs out (`PlaybackService.kt:5096`'s watcher,
+     * ported).
+     *
+     * `collectLatest` is what makes re-setting the timer work: the pending wait
+     * is cancelled and restarted on the new deadline instead of both firing.
+     * Pausing is not gated on playing — upstream's `player?.pause()` isn't
+     * either — because a pause on an idle engine is a no-op and checking would
+     * only add a second reading that could disagree with the engine's own.
+     */
+    private fun watchSleepTimer() {
+        scope.launch {
+            SleepTimer.deadline.collectLatest { deadline ->
+                if (deadline == null) return@collectLatest
+                val remaining = deadline - SystemClock.elapsedRealtime()
+                if (remaining > 0) delay(remaining)
+                TrackLog.d(TAG, "sleep timer elapsed; pausing")
+                engine.pause()
+                SleepTimer.cancel()
+            }
+        }
     }
 
     // ---- audio quality ----------------------------------------------------------------
@@ -269,6 +302,32 @@ class PlayerController(
         AppSettings.setAudioQuality(value)
         onQueue { applyQualityChange(value) }
     }
+
+    /**
+     * The output device switch, as the player sees it — [setAudioQuality]'s
+     * shape with the engine call in place of the swap.
+     *
+     * [id] is the platform's own endpoint id, or null for "whatever the system
+     * default is right now"; [name] rides along so the settings row can still
+     * say what was chosen after the device stops enumerating. The engine call
+     * is a native libvlc one-liner, thread-safe like every other audio verb
+     * this class already makes from the UI thread ([setVolume],
+     * [togglePlayPause]) — it does not queue, because it is not a queue edit
+     * and has nothing to say to the snapshot.
+     */
+    fun setAudioOutputDevice(id: String?, name: String?) {
+        if (AppSettings.outputDeviceId.value == id && AppSettings.outputDeviceName.value == name) return
+        AppSettings.setAudioOutputDevice(id, name)
+        engine.setAudioOutputDevice(id)
+        TrackLog.d(TAG, "audio output device -> ${name ?: id ?: "system default"}")
+    }
+
+    /**
+     * The endpoints the engine's platform lists, verbatim — the settings
+     * dialog's list. The one engine call that blocks on native enumeration,
+     * so the dialog that asks runs it on [Dispatchers.IO], not the UI thread.
+     */
+    fun audioOutputDevices(): List<AudioOutputDevice> = engine.audioOutputDevices()
 
     // ---- autoplay -------------------------------------------------------------------
 
@@ -910,11 +969,34 @@ class PlayerController(
      * the other way round would let a failed resolve move the playhead. `null` means the tail with
      * nothing to wrap to — a normal ending, so no [status] message, and the engine has already
      * reported the stop itself.
+     *
+     * The "sleep after this song" branch sits ahead of both, because both are
+     * the queue moving on and the timer's whole meaning is that nothing does
+     * (`PlaybackService.kt:2838`, where the transition callback pauses beside
+     * the advance it cannot refuse). Declining the advance leaves the finished
+     * row under the needle — upstream's player slides the *next* row in paused,
+     * because Media3's transition had already happened by the time the hook
+     * ran; here the needle has not moved yet, and "this was the last thing that
+     * played" is the more honest place to leave it. Repeat-one counts too, or
+     * the timer would never fire with repeat-one on — upstream's comment, and
+     * the same holds: this branch is ahead of the replay `onFinished` would
+     * have ordered.
      */
     private fun advance() {
         onQueue {
+            if (SleepTimer.afterTrack.value) {
+                TrackLog.d(TAG, "sleep timer: after this song; holding at the finished row")
+                SleepTimer.cancel()
+                setLoading(false)
+                return@onQueue
+            }
             val videoId = queue.onFinished()
             if (videoId == null) {
+                // The queue ran dry — no transition will ever close the last
+                // track out, so the timer is spent whether or not it was a
+                // deadline (upstream cancels on STATE_ENDED for the same
+                // reason).
+                SleepTimer.cancel()
                 setLoading(false)
                 return@onQueue
             }

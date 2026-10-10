@@ -96,6 +96,31 @@ object AppSettings {
     }
 
     /**
+     * The sound endpoint the engine routes to, by the platform's own id — null
+     * is "whatever the system default is right now", which is also what a
+     * fresh install finds. The name is kept beside the id for the one case the
+     * id cannot serve alone: the device is unplugged, the id no longer
+     * enumerates, and the settings row still owes the user the name of the
+     * thing they chose.
+     *
+     * The one writer is
+     * [com.music.bitchord.desktop.playback.PlayerController.setAudioOutputDevice],
+     * which owns the engine call the setting asks for — the same shape the
+     * quality switch takes, so no surface can move the flows without the
+     * audio half hearing about it.
+     */
+    val outputDeviceId = MutableStateFlow(prefs.getStringOrNull(KEY_OUTPUT_DEVICE_ID))
+
+    val outputDeviceName = MutableStateFlow(prefs.getStringOrNull(KEY_OUTPUT_DEVICE_NAME))
+
+    fun setAudioOutputDevice(id: String?, name: String?) {
+        outputDeviceId.value = id
+        outputDeviceName.value = name
+        if (id == null) prefs.remove(KEY_OUTPUT_DEVICE_ID) else prefs.putString(KEY_OUTPUT_DEVICE_ID, id)
+        if (name == null) prefs.remove(KEY_OUTPUT_DEVICE_NAME) else prefs.putString(KEY_OUTPUT_DEVICE_NAME, name)
+    }
+
+    /**
      * Turns the artwork-tint crossfades into cuts. Read by
      * [com.music.bitchord.ui.theme.rememberArtworkPalette]; the Android setting
      * that drives it lives in the settings sheet, which is a later slice.
@@ -393,6 +418,8 @@ object AppSettings {
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
     private const val KEY_AUDIO_QUALITY = "audio_quality"
     private const val KEY_DOWNLOAD_QUALITY = "download_quality"
+    private const val KEY_OUTPUT_DEVICE_ID = "output_device_id"
+    private const val KEY_OUTPUT_DEVICE_NAME = "output_device_name"
 }
 
 /**

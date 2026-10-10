@@ -61,6 +61,8 @@ import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.ui.screens.DownloadsPage
 import com.music.bitchord.ui.screens.RecentlyAddedPage
 import com.music.bitchord.ui.screens.SettingsDialog
+import com.music.bitchord.ui.player.PlayerContextMenuArea
+import com.music.bitchord.ui.player.SleepTimerDialog
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -88,6 +90,12 @@ class ShellState {
      * the player, and the key handler reads this before any content exists.
      */
     var lyricsOpen by mutableStateOf(false)
+
+    /**
+     * The sleep timer's picker — window-level like [showSettings], because it
+     * opens from the player's right-click menu, which lives over everything.
+     */
+    var showSleepTimer by mutableStateOf(false)
 }
 
 /**
@@ -127,6 +135,8 @@ fun Shell(
     autoPlayFirst: Boolean = false,
     autoOpenPlayer: Boolean = false,
     autoOpenLyrics: Boolean = false,
+    /** The screenshot pass's way into the output picker, which lives inside settings. */
+    autoOpenAudioOutput: Boolean = false,
 ) {
     // One snapshot for the whole chrome. The playhead is not in it, so a tick
     // still recomposes the scrubber alone; the toolbar shows no position.
@@ -362,6 +372,16 @@ fun Shell(
         SettingsDialog(
             onDismiss = { state.showSettings = false },
             onAudioQualityChanged = player::setAudioQuality,
+            // The output device's enumeration is the engine's own native call,
+            // handed over as a lambda so the dialog stays a surface and the
+            // switch lands in the same place every other audio act does.
+            enumerateAudioOutputDevices = { player.audioOutputDevices() },
+            onAudioOutputDeviceChanged = { device ->
+                player.setAudioOutputDevice(device?.id, device?.name)
+            },
+            // One-shot: the flag is only ever true from the screenshot probe,
+            // which wants the settings dialog up with its child open.
+            autoOpenAudioOutput = autoOpenAudioOutput,
         )
     }
 
@@ -379,50 +399,79 @@ fun Shell(
     // deliberate: unmounting the toolbar to make the player modal would make
     // the transport vanish for the frame the overlay closes on.
     if (state.showPlayer) {
-        PlayerPage(
-            player = player,
-            lyrics = lyrics,
-            state = state,
-            // The player overlay paints over every page, so a tap that means
-            // "take me to that album" has to dismiss it on the way through —
-            // the detail page opens underneath and the overlay would only
-            // keep the user from seeing it.
-            onOpenAlbum = { browseId ->
-                song?.let {
-                    nav.open(
-                        Destination.Detail(
-                            kind = BrowseType.ALBUM,
-                            browseId = browseId,
-                            title = it.albumName ?: it.title,
-                            subtitle = it.artist,
-                            thumbnailUrl = it.thumbnailUrl,
-                        ),
-                    )
-                    state.showPlayer = false
-                }
-            },
-            onOpenArtist = { browseId ->
-                song?.let {
-                    nav.open(
-                        Destination.Detail(
-                            kind = BrowseType.ARTIST,
-                            browseId = browseId,
-                            title = it.artist,
-                            subtitle = null,
-                            thumbnailUrl = it.thumbnailUrl,
-                        ),
-                    )
-                    state.showPlayer = false
-                }
-            },
-            modifier = Modifier
+        // The swallow sits on the *outside*, the context-menu area inside it:
+        // the main pass hands events to the deepest node first, so the menu's
+        // detector is the first thing a right-click reaches and no amount of
+        // swallowing behind it can starve it — the guaranteed shape, where an
+        // ancestor area beside a swallowing descendant would depend on every
+        // consumer in between staying primary-only. The outer swallow keeps
+        // the fall-through rule whole: a dead-area press (either button now)
+        // never reaches the chrome painted underneath, and the player's own
+        // controls — deeper still than the menu area — get their presses
+        // before either. Swallowing at the overlay, instead of not mounting
+        // the chrome beneath it, stays deliberate: unmounting the toolbar to
+        // make the player modal would make the transport vanish for the frame
+        // the overlay closes on.
+        Box(
+            Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false).consume()
                     }
                 },
-        )
+        ) {
+            PlayerContextMenuArea(
+                song = song,
+                onOpenSleepTimer = { state.showSleepTimer = true },
+            ) {
+                PlayerPage(
+                    player = player,
+                    lyrics = lyrics,
+                    state = state,
+                    // The player overlay paints over every page, so a tap that means
+                    // "take me to that album" has to dismiss it on the way through —
+                    // the detail page opens underneath and the overlay would only
+                    // keep the user from seeing it.
+                    onOpenAlbum = { browseId ->
+                        song?.let {
+                            nav.open(
+                                Destination.Detail(
+                                    kind = BrowseType.ALBUM,
+                                    browseId = browseId,
+                                    title = it.albumName ?: it.title,
+                                    subtitle = it.artist,
+                                    thumbnailUrl = it.thumbnailUrl,
+                                ),
+                            )
+                            state.showPlayer = false
+                        }
+                    },
+                    onOpenArtist = { browseId ->
+                        song?.let {
+                            nav.open(
+                                Destination.Detail(
+                                    kind = BrowseType.ARTIST,
+                                    browseId = browseId,
+                                    title = it.artist,
+                                    subtitle = null,
+                                    thumbnailUrl = it.thumbnailUrl,
+                                ),
+                            )
+                            state.showPlayer = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+
+    // The sleep timer's picker, over everything the player lives over: it is
+    // reached from the player's menu, and it is a window-level dialog like
+    // settings — not a layer of the player itself.
+    if (state.showSleepTimer) {
+        SleepTimerDialog(onDismiss = { state.showSleepTimer = false })
     }
 
     // The window's own three, painted over everything — player included.

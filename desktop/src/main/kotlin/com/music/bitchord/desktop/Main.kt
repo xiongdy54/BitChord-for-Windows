@@ -39,6 +39,8 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.desktop.playback.LyricsCoordinator
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.desktop.playback.SleepTimer
+import com.music.bitchord.data.SystemClock
 import com.music.bitchord.desktop.playback.smtc.SmtcButton
 import com.music.bitchord.desktop.playback.smtc.SmtcSession
 import com.music.bitchord.desktop.playback.smtc.WinRtSmtcBackend
@@ -53,10 +55,21 @@ import com.music.bitchord.ui.components.BitChordMenuPanel
 import com.music.bitchord.ui.components.LocalSongActions
 import com.music.bitchord.ui.components.SongActions
 import com.music.bitchord.ui.components.rememberSongActionLabels
+import com.music.bitchord.ui.player.formatSleepCountdown
+import com.music.bitchord.ui.player.sleepTimerRemaining
+import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.after_this_song
+import com.music.bitchord.desktop.resources.sleep_timer
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import com.music.bitchord.ui.screens.OutputDevicePanel
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.LocalContextMenuRepresentation
 import com.music.bitchord.ui.shell.Destination
@@ -114,6 +127,9 @@ private val autoExitMs = System.getProperty("bitchord.autoExitMs")?.toLongOrNull
  */
 private val probeQualitySwitch = System.getProperty("bitchord.probeQualitySwitch")
     ?.let { stored -> com.music.bitchord.data.settings.AudioQuality.entries.firstOrNull { it.name == stored } }
+private val probeSleepTimerMs = System.getProperty("bitchord.probeSleepTimerMs")?.toLongOrNull()
+private val probeSleepAfterTrack = System.getProperty("bitchord.probeSleepAfterTrack") == "true"
+private val probeArmTimerMs = System.getProperty("bitchord.probeArmTimerMs")?.toLongOrNull()
 
 /**
  * Plays exactly this videoId as soon as the shell is up — the playback smoke
@@ -172,6 +188,22 @@ private val shotMs = System.getProperty("bitchord.shotMs")?.toLongOrNull()
 private val menuPreview = System.getProperty("bitchord.menuPreview") == "true"
 
 /**
+ * The menu preview renders the *player's* menu variant: the sleep timer row
+ * on top. Pair with `bitchord.probeArmTimerMs` to screenshot the row in its
+ * countdown state, and with `bitchord.probeSleepAfterTrack` for the
+ * after-this-song wording — the same flows the real row reads.
+ */
+private val probeSleepPreview = System.getProperty("bitchord.probeSleepPreview") == "true"
+
+/**
+ * The output picker's panel, rendered inline — see the menu preview's note:
+ * a dialog nested in the settings dialog lives in a native window of its own,
+ * one layer further out than the capture can reach.
+ */
+private val probeOutputPreview = System.getProperty("bitchord.probeOutputPreview") == "true"
+
+
+/**
  * Window geometry and locale, so the acceptance screenshots can be taken at other
  * sizes and in English. When given they win over whatever the last session
  * remembered — a scripted screenshot pass must not depend on how a human last
@@ -221,13 +253,22 @@ internal fun altArrowNavigates(
 
 /** One capture of the window's own bounds — the scripted screenshot pass. */
 private fun saveWindowShot(window: java.awt.Window, path: String) {
+    val hwnd = com.sun.jna.platform.win32.WinDef.HWND(com.sun.jna.Native.getComponentPointer(window))
+    saveHwndShot(hwnd, path)
+}
+
+/**
+ * One capture of any top-level window by handle — the main window's shot and
+ * the context-menu probe's popup capture are the same PrintWindow routine over
+ * different handles.
+ */
+private fun saveHwndShot(hwnd: com.sun.jna.platform.win32.WinDef.HWND, path: String) {
     // PrintWindow rather than a screen capture: the capture path (Robot /
     // CopyFromScreen) reads the composited desktop and goes black wherever the
     // session is not allowed to read it; PrintWindow asks the *window* to
     // render itself into a memory DC, which needs no screen access at all.
     // PW_RENDERFULLCONTENT (2) is the flag that reaches DirectX-rendered
     // clients — without it a Skia window prints as an empty frame.
-    val hwnd = com.sun.jna.platform.win32.WinDef.HWND(com.sun.jna.Native.getComponentPointer(window))
     val user32 = com.sun.jna.platform.win32.User32.INSTANCE
     val gdi32 = com.sun.jna.platform.win32.GDI32.INSTANCE
 
@@ -275,6 +316,8 @@ private fun saveWindowShot(window: java.awt.Window, path: String) {
 
 /** PrintWindow's flag that renders the window's live (DWM) content. */
 private const val PW_RENDERFULLCONTENT = 2
+
+
 
 /**
  * The screen's work area, in physical pixels — bounds minus the taskbar and any other
@@ -411,6 +454,34 @@ fun main() {
             player.setAudioQuality(target)
         }
     }
+    // The sleep timer's two probes, both needing a track to actually sound
+    // first (pair with bitchord.probePlayVideoId like the quality probe):
+    //   probeSleepTimerMs=<n>  — n ms into the track, arm a deadline 3s out;
+    //                          the watcher's pause is the log line that follows.
+    //   probeSleepAfterTrack   — arm "after this song"; the *absence* of a
+    //                          following resolve when the track ends is the
+    //                          proof, beside the holding-at-the-row log line.
+    probeSleepTimerMs?.let { waitMs ->
+        scope.launch {
+            player.state.first { it.song != null && it.isPlaying }
+            delay(waitMs)
+            SleepTimer.deadline.value = SystemClock.elapsedRealtime() + 3_000
+            DebugLog.d("BitChord", "probe: sleep timer armed for 3s out")
+        }
+    }
+    if (probeSleepAfterTrack) {
+        scope.launch {
+            player.state.first { it.song != null && it.isPlaying }
+            SleepTimer.startAfterTrack()
+            DebugLog.d("BitChord", "probe: sleep timer armed for after this song")
+        }
+    }
+    // The countdown screenshots' arm, through the same entry the picker's
+    // rows use — a deadline set behind the flow's back would tick without
+    // ticking its preset's checkmark.
+    probeArmTimerMs?.let { ms ->
+        SleepTimer.start(((ms + 59_999) / 60_000).toInt().coerceAtLeast(1))
+    }
     // PlaybackService.kt:5286 restores repeat the same way; the shuffle half of that
     // pair is already applied above, before the player exists. Restored here rather
     // than in the controller's init because a constructor that reads the disk makes
@@ -438,6 +509,10 @@ fun main() {
         // its content: nothing `remember`ed inside that content would be reachable from here.
         // A debug query opens on search, since that is the screen it drives.
         val shellState = remember { ShellState() }
+        // The output picker lives inside the settings dialog; the screenshot
+        // pass cannot click, so the dialog gets told to open its own child on
+        // start (see probeDestination == "outputdevices").
+        var openAudioOutputOnStart by remember { mutableStateOf(false) }
         if (probeDownload) {
             var downloadProbeFired by remember { mutableStateOf(false) }
             val snapshot by player.state.collectAsState()
@@ -463,8 +538,14 @@ fun main() {
             }
         }
         // The settings dialog is window-level, not a destination — but the
-        // scripted screenshot pass opens it the same way it opens pages.
+        // scripted screenshot pass opens it the same way it opens pages. The
+        // sleep timer and the output picker are window-level the same way.
         if (probeDestination == "settings") shellState.showSettings = true
+        if (probeDestination == "sleeptimer") shellState.showSleepTimer = true
+        if (probeDestination == "outputdevices") {
+            shellState.showSettings = true
+            openAudioOutputOnStart = true
+        }
         val nav = remember {
             NavState().apply {
                 if (probeQuery.isNotBlank()) open(Destination.Search)
@@ -819,14 +900,34 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     initialQuery = probeQuery,
                     autoPlayFirst = probeAutoplay,
                     autoOpenPlayer = probeOpenPlayer,
+                    // The output picker's scripted open — see probeDestination.
+                    autoOpenAudioOutput = openAudioOutputOnStart,
                 )
                 // The menu panel's styling probe — see [menuPreview]. Rendered
                 // in place rather than through the popup, whose native window
                 // the screenshot pipeline cannot see; the colours and rows are
-                // the real menu's own.
+                // the real menu's own. With a track playing and the sleep
+                // probe armed, the rows are the *player's* menu: the timer row
+                // on top, the song's own rows under it.
                 if (menuPreview) {
                     val labels = rememberSongActionLabels()
-                    val demoItems = listOf(
+                    // The player-menu variant: the sleep timer row on top of
+                    // the current song's rows, exactly what a right-click on
+                    // the full-screen player offers. The armed label reads the
+                    // same flows the real menu does, one second stale at most.
+                    val sleepRow = if (probeSleepPreview) {
+                        val remaining = sleepTimerRemaining()
+                        val afterTrack by SleepTimer.afterTrack.collectAsState()
+                        val base = stringResource(Res.string.sleep_timer)
+                        when {
+                            remaining != null -> "$base · ${formatSleepCountdown(remaining)}"
+                            afterTrack -> "$base · ${stringResource(Res.string.after_this_song)}"
+                            else -> base
+                        }.let { label -> listOf(ContextMenuItem(label) {}) }
+                    } else {
+                        emptyList()
+                    }
+                    val demoItems = sleepRow + listOf(
                         ContextMenuItem(labels.playNext) {},
                         ContextMenuItem(labels.addToQueue) {},
                         ContextMenuItem(labels.like) {},
@@ -843,7 +944,29 @@ if (shotPath.isNotBlank() && shotMs != null) {
                         )
                     }
                 }
+                // The output picker's styling probe — see [probeOutputPreview].
+                // A dialog inside the settings dialog is a window inside a
+                // window, and the capture sees neither; the panel renders here
+                // in its own surface, rows and enumeration the real one's.
+                if (probeOutputPreview) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 6.dp,
+                            modifier = Modifier.widthIn(max = 420.dp),
+                        ) {
+                            OutputDevicePanel(
+                                enumerateDevices = { player.audioOutputDevices() },
+                                onSelect = { device ->
+                                    player.setAudioOutputDevice(device?.id, device?.name)
+                                },
+                            )
+                        }
+                    }
                 }
+                }
+
             }
         }
     }
