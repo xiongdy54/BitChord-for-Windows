@@ -2,7 +2,7 @@
 
 日期:2026-10-11
 分支:`desktop-slice2-now-playing`
-状态:设计定稿(实施记录见 §7,实施后回填)
+状态:已完成(实施记录见 §7)
 
 ## 1. 背景
 
@@ -80,6 +80,18 @@
 
 SMB 全家(独立成片:`SmbConfig/SmbClient/SmbRepository/SmbConnection/SmbCoverFetcher` 移植 + smbj 依赖 + libvlc 对 smb:// 的播放通道 + UI 摘除的回填);下载管理面板、运动封面、交叉淡入淡出、Equalizer(Goal 序列后件);后台扫描与缓存;上传通知;`local:playlist:` 下载集;一起听;Discord/Last.fm;语言热切换;模块源体系。
 
-## 7. 实施记录(实施后回填)
+## 7. 实施记录(2026-10-11 回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+**交付**:决策 1–11 落地。`data/LocalMediaRepository.kt`(文件系统 BFS + 上游过滤常量逐值 + `isInSelectedFolders` 大小写/分隔符折叠前缀匹配 + `sortedForLibrary` 四序逐形;id=绝对路径);`data/metadata/LocalMediaMeta.kt`(读侧:vlcj `media().newMedia` + `parsing().parse(10s, PARSE_LOCAL)` —— **异步语义**,轮询至 DONE/SKIPPED/FAILED/TIMEOUT,时长读 `media.info().duration()`;文件名切分用 `RemoteSong.splitArtistTitle`,一个约定两族共用;每扫描一个 `MediaPlayerFactory`,session 结束释放;并发 4;无 libvlc 降级为纯文件名行);`data/webdav/` 四件 + `WebDavUploads`(逐字移植,`android.net.Uri`→`java.net.URI` 同语义改写,上传进度页内状态行无通知);`data/remote/` 六件逐字移植(RemoteArtReader 只带 http 后端);`Http.kt` webDavInterceptor + `WebDavAuth` publish;`AuthStore.webdavPassword`(DPAPI);AppSettings:`webdavUrl/Username`、`localMusicFolders`(逗号编码)、`LocalMusicSort`、本地页视图;`PlayerController.resolveUrl` 三枝(webdav → 本地文件 → Downloads → resolver,序在 KDoc 钉死)+ `mediaHeaders` 对已配置 WebDAV 主机补 Authorization(libvlc 走自己的网络栈,共享 client 的拦截器管不到它——上游 SmbDataSource 教训的桌面形);`VlcAudioPlayer` Authorization 头映射;`LocalMusicPage`(1318 行:本地音乐/WebDAV 双源 tab + 三内容 tab + 搜索 + 排序 + drill-down + 多选 + 删除/上传);`WebDavUploadDialog`(冲突三选 + apply-to-all);设置〔本地音乐〕〔WebDAV〕两族(JFileChooser 于 IO 派发);sidebar〔本地音乐〕行;RemoteArtwork 兑现 RemoteArtworkStore 预告;`probeLocalScan` 无头探针 + `probeDestination=localmusic` + `bitchord.localFolders` 会话级播种(只写 flow 内存值不落盘,probeTheme 先例)。
+
+**与设计的偏离**:
+
+1. **扫描死锁,验证期发现并修复**(本片最重要的发现):`LocalMediaMeta` 首版用 `java.util.concurrent.Semaphore.acquire()`——阻塞式——做解析限流。全机首扫直接挂死:jstack 显示 64 个 IO 线程全部停在 `acquire`,四个持许可协程挂在 `delay` 轮询里等线程恢复——**协程内阻塞的教科书死锁**,且测试的临时目录太小(几个文件,加载不满 64 线程池)永远踩不到。修复:换 `kotlinx.coroutines.sync.Semaphore`(acquire 是挂起函数,等许可时不占线程);KDoc 把这场死锁写进了限流器的注释。修复后同库复扫:304 首 / 9.8 秒。
+2. **探针属性的命名分叉被压实**:run 任务用 `-Pbitchord.*`、probe 任务用 `-PprobeLocalScan`(无前缀)——两套约定各有其表,首轮探针调用用错前缀静默无效;build.gradle.kts 里两处均已注名。实现代理在 `probe` 任务处正确注册,调用方(本会话)用错了名字,非实现缺陷。
+3. **`bitchord.localFolders` 会话播种超出设计清单**:截图管线无鼠标,设置不可点;按 probeTheme 的只读先例把播种做成"只改 flow 值、永不落盘",Main.kt 注释写明纪律。
+4. **本地歌曲的 30s 时长门槛语义微调(设计 §4 已授权)**:MediaStore 每行自带时长;桌面时长来自解析——解析失败不是"短于 30 秒",时长未知时**不适用门槛**(错误的时长会误杀真曲目,未知不会)。上游语义的诚实投影,非放宽。
+5. **SMB 摘除照设计执行**:页面只接本地音乐/WebDAV 双源;`smb_*` 字符串合并了但不使用。
+
+**验证**:48 类 436 测试全绿(新增 38:LocalMediaRepositoryTest 过滤表/排序、LocalMediaSettingsTest 键与编解码、WebDavConfigTest 归一化/编址/songFor、LocalPlaybackResolveTest resolve 分支表)。实机探针:`probeLocalScan` 对本机真实音乐库(C:\Users\xiongdy\Music,304 文件)——**304 首 / 9841ms**,withDuration=304、withDates=304,专辑/歌手解析正确(中文/日文标题与路径逐字正确;日志里的乱码是控制台编码非数据损坏);死锁修复前同探针 12 分钟无进展。截图 `.shots/slice11/`:本地音乐页(304 首歌曲计数 + 真实元数据行 + 双源 tab + 三内容 tab + 搜索/排序/视图栏,zh-dark)、设置页(账号组 + 侧栏〔本地音乐〕行可见)。**人手验证待做**:点击播放本地行(vlcj 直读路径)、艺人/专辑 drill-down、多选上传至真实 WebDAV 服务器、测试连接——本机无 WebDAV 环境,同切片 10 的先例记录在案。
+
+**已知瑕疵**:设置对话框的〔本地音乐〕〔WebDAV〕组在折叠下方,截图管线不可及(无滚动注入);WebDAV 客户端无 mock 服务器测试(上游亦无,纯逻辑部分已测);`WebDavUploads` 的冲突对话框自动化不可达,待人手;上传无通知(设计决策 9 有意为之),长队列的反馈只有页内状态行。
