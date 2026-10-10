@@ -51,6 +51,27 @@ class FakeAudioEngine : AudioEngine {
     /** Positions the controller asked to start from. Empty is the norm: a row change restarts the clock. */
     val playedStartMs = mutableListOf<Long>()
 
+    /**
+     * The muted-and-paused opens a crossfade's arming asked for, recorded
+     * apart from [playedUrls] because they are a different act: a prepared
+     * engine never sounds until its [resume], so a prepared URL appearing in
+     * [playedUrls] would mean the blend had started with the volume still
+     * down. An armed standby is why a test may hold two of these fakes.
+     */
+    val preparedUrls = mutableListOf<String>()
+
+    /** Cue points the [prepare] calls asked to wait at. Empty is the norm: a standard fade cues at the top. */
+    val preparedStartMs = mutableListOf<Long>()
+
+    override fun prepare(url: String, headers: Map<String, String>, startAtMs: Long) {
+        preparedUrls += url
+        if (startAtMs != 0L) preparedStartMs += startAtMs
+        // Opened, not sounding: `:start-paused` on the real engine, so the
+        // paused event is the honest report.
+        isPlaying = false
+        onPlayingChanged?.invoke(false)
+    }
+
     /** Whether [release] ran — the audition's teardown, once per swap. */
     var releasedEngine = false
 

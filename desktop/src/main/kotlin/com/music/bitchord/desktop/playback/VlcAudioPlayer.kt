@@ -103,8 +103,7 @@ class VlcAudioPlayer : AudioEngine {
 
     override fun play(url: String, headers: Map<String, String>, startAtMs: Long) {
         val options = buildList {
-            headers["Referer"]?.let { add(":http-referrer=$it") }
-            headers["User-Agent"]?.let { add(":http-user-agent=$it") }
+            addHeaders(headers)
             // Input options apply at open time — the only race-free way to
             // land mid-media, which a stream swap mid-track needs (a
             // play-then-seek would have sound out before the seek landed).
@@ -112,6 +111,35 @@ class VlcAudioPlayer : AudioEngine {
         }
         statsReported = false
         player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
+    }
+
+    /**
+     * Opens [url] at [startAtMs] without sounding — the standby half of a
+     * crossfade, which needs a track ready to be heard the moment its fader
+     * moves and heard by nobody until then.
+     *
+     * The hold is libvlc's own `:start-paused` input option, applied at open
+     * time beside `:start-time` (verified present in the installed
+     * libvlccore 3.0.23). Both are input options, so the input never runs
+     * free: there is no play-then-pause race here to document around, and the
+     * `setVolume(0)` beside it is depth rather than the guarantee — the fade
+     * drives this player's volume from its first tick anyway.
+     */
+    override fun prepare(url: String, headers: Map<String, String>, startAtMs: Long) {
+        val options = buildList {
+            addHeaders(headers)
+            if (startAtMs > 0) add(":start-time=${startAtMs / 1000.0}")
+            add(":start-paused")
+        }
+        statsReported = false
+        player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
+        player.audio().setVolume(0)
+    }
+
+    /** The fetch headers libvlc has switches for — see [withBasicAuth] for the one it has not. */
+    private fun MutableList<String>.addHeaders(headers: Map<String, String>) {
+        headers["Referer"]?.let { add(":http-referrer=$it") }
+        headers["User-Agent"]?.let { add(":http-user-agent=$it") }
     }
 
     override fun pause() {

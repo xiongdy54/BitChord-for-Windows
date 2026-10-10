@@ -177,6 +177,23 @@ object AppSettings {
         prefs.putString(KEY_AUTOPLAY, value.toString())
     }
 
+    /**
+     * How long one track blends into the next, in seconds — 0 is off, 12 the
+     * longest the slider offers. Upstream's own range and key
+     * (`AppSettings.kt:278`, `crossfade_seconds`), so a settings file means
+     * the same thing on both platforms. The blend itself lives on
+     * [com.music.bitchord.desktop.playback.CrossfadeController], which reads
+     * this every tick.
+     */
+    val crossfadeSeconds =
+        MutableStateFlow(prefs.getString(KEY_CROSSFADE_SECONDS, "0").toIntOrNull() ?: 0)
+
+    fun setCrossfadeSeconds(value: Int) {
+        val clamped = value.coerceIn(0, 12)
+        crossfadeSeconds.value = clamped
+        prefs.putString(KEY_CROSSFADE_SECONDS, clamped.toString())
+    }
+
     // ── Motion artwork ───────────────────────────────────────────────────────
     //
     // The looping clip some releases publish alongside their cover. Key names
@@ -544,6 +561,7 @@ object AppSettings {
 
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_CROSSFADE_SECONDS = "crossfade_seconds"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_SHOW_NERD_STATS = "show_nerd_stats"

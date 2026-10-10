@@ -71,7 +71,7 @@ import kotlin.math.abs
  */
 class PlayerController(
     private val scope: CoroutineScope,
-    private val engine: AudioEngine = VlcAudioPlayer(),
+    private var engine: AudioEngine = VlcAudioPlayer(),
 ) {
 
     private val queue = QueueTimeline()
@@ -209,6 +209,166 @@ class PlayerController(
     private fun onQueue(block: suspend CoroutineScope.() -> Unit) =
         scope.launch(queueDispatcher, block = block)
 
+    // ---- crossfade --------------------------------------------------------------------
+    //
+    // A second, session-resident engine, held beside the first so a track
+    // boundary can hold two sources at once. The state machine lives in
+    // [CrossfadeController]; what this class contributes is the seam it
+    // stands on — the pair of engines, the listeners that move between them,
+    // and the one act that makes an engine the session.
+
+    /**
+     * The crossfade state machine, standing on the engine pair below. Its
+     * whole knowledge of the queue, the settings and the quality swap arrives
+     * through these lambdas, exactly as upstream's controller received the
+     * player pair and the handoff through its constructor — so the machine
+     * itself is testable without a queue under it.
+     *
+     * Declared before `init`, which starts it, and reading only members that
+     * are consulted lazily (the lambdas run when the machine ticks, not when
+     * this field is built).
+     */
+    internal val crossfade = CrossfadeController(
+        scope = scope,
+        active = { engine },
+        standby = { standbyEngine() },
+        onHandoff = ::onCrossfadeHandoff,
+        sessionPlaying = { _state.value.isPlaying },
+        durationMs = { _state.value.durationMs },
+        hasNext = ::hasNextRow,
+        repeatOne = { queue.repeatMode == RepeatMode.ONE },
+        nextVideoId = ::peekNextVideoId,
+        userVolume = { _volume.value },
+        resolve = { videoId ->
+            // The same hop [resolveAndPlay] makes: the resolve is a blocking
+            // walk, and the machine's ticker runs on the scope.
+            withContext(resolveDispatcher) { resolveUrl(videoId) }
+                .also { armedIncomingUrl = it }
+        },
+        headersFor = ::mediaHeaders,
+        versionSwapActive = { qualitySwapJob?.isActive == true },
+    )
+
+    /**
+     * The idle half of the engine pair, which the next transition loads the
+     * incoming track onto. Built lazily on the first arm and kept for the
+     * whole session — a `MediaPlayerFactory` is minutes of start-up cost the
+     * audition seam's KDoc already warned about, and the pair trades roles at
+     * every handoff, so the engine retired by one fade is the standby the
+     * next one arms.
+     */
+    private var standbyEngineInstance: AudioEngine? = null
+
+    /**
+     * Where the standby comes from. Production builds the real thing (VLC
+     * required); a test injects a fake and drives both halves of the blend.
+     */
+    var crossfadeStandbyEngine: () -> AudioEngine = { VlcAudioPlayer() }
+
+    /**
+     * The stream URL the current arm resolved for its standby, recorded on
+     * the way through [resolve] — the handoff needs it, because [playingUrl]
+     * is what a quality swap measures against and the incoming track's URL
+     * never went through [resolveAndPlay]. Only ever read at a handoff, which
+     * no arm can reach before its own resolve has come back.
+     */
+    private var armedIncomingUrl: String? = null
+
+    private fun standbyEngine(): AudioEngine =
+        standbyEngineInstance ?: crossfadeStandbyEngine().also { created ->
+            standbyEngineInstance = created
+            // A fresh engine knows nothing of the endpoint the listener
+            // chose — the one-time apply [init] gave the first engine.
+            AppSettings.outputDeviceId.value?.let { created.setAudioOutputDevice(it) }
+        }
+
+    /** Whether a row follows the current one, wrap included — the queue's answer, not a guess. */
+    private fun hasNextRow(): Boolean =
+        queue.repeatMode == RepeatMode.ALL || queue.currentIndex + 1 < queue.itemCount
+
+    /**
+     * The row that would play next, read without moving the needle — the same
+     * arithmetic [QueueTimeline.next] answers with, because what arms the
+     * standby must be the very row the handoff's needle move lands on.
+     */
+    private fun peekNextVideoId(): String? {
+        if (queue.itemCount == 0) return null
+        return if (queue.currentIndex + 1 < queue.itemCount) {
+            queue.songAt(queue.currentIndex + 1)?.videoId
+        } else if (queue.repeatMode == RepeatMode.ALL) {
+            queue.songAt(0)?.videoId
+        } else {
+            null
+        }
+    }
+
+    /**
+     * The handoff: the incoming engine becomes the session. Upstream's
+     * `adoptPlayer` (`PlaybackService.kt:2529`), field for field where the
+     * fields exist here — listeners migrate, roles swap, and the bookkeeping
+     * that hung off a track change is driven explicitly, because the incoming
+     * track never went through [resolveAndPlay] to earn it.
+     *
+     * Fires as the incoming track's first note sounds, not at the end of the
+     * blend, so the queue row, the metadata and the system media controls all
+     * flip to the incoming song the moment it becomes audible rather than
+     * trailing the song on its way out.
+     */
+    private fun onCrossfadeHandoff(outgoing: AudioEngine, incoming: AudioEngine) {
+        // The outgoing engine's advance is forgotten here — the desktop form
+        // of upstream truncating the session player's queue so its natural end
+        // cannot start the incoming song a second time on top of itself. What
+        // its end of media is *for* now is the fade's own completion signal;
+        // every other callback comes off it, so a tail still ticking cannot
+        // fight the incoming engine for the display clock.
+        outgoing.onTime = null
+        outgoing.onLength = null
+        outgoing.onPlayingChanged = null
+        outgoing.onAudioStats = null
+        outgoing.onError = null
+        outgoing.onFinished = { crossfade.onOutgoingTailEnded() }
+
+        // Fields move before the listeners attach, so anything the first
+        // callback reads already describes the new arrangement (adoptPlayer's
+        // own rule, restated).
+        engine = incoming
+        standbyEngineInstance = outgoing
+        bindEngine(incoming)
+        AppSettings.outputDeviceId.value?.let { incoming.setAudioOutputDevice(it) }
+
+        // The needle moves here, not at the outgoing track's end: the queue's
+        // whole meaning is "which row is audible", and the incoming row is
+        // audible now. From this point the queue never advances for the
+        // outgoing track again — its advance was the thing just forgotten.
+        queue.next()
+        playGeneration++
+        playingUrl = armedIncomingUrl
+        // The old row's measured figures leave with it: a badge that still
+        // said the previous track's codec while this one opens would be
+        // exactly the lie the ordinary transition path clears the snapshot to
+        // stop.
+        NerdStats.clear()
+        // A new row is a new media: the clock re-seats at the top, and the
+        // scrubber's span becomes the incoming track's, which it reported
+        // while it was being armed (the engine it came from only talks to the
+        // app's listeners once it *is* the session).
+        position.positionMs = 0
+        _state.update { it.copy(durationMs = crossfade.incomingDurationMs) }
+        // Nothing is resolving: the incoming track was resolved and prepared
+        // while the pair was arming.
+        _status.value = null
+        setLoading(false)
+        publish()
+        // The row after the one that just started still gets its read-ahead,
+        // and AutoPlay still tops up behind the new tail — the same two acts
+        // an ordinary row start performs, adoptPlayer's explicit
+        // onTrackBecameCurrent bookkeeping.
+        prefetchNext()
+        autoplaySeed = null
+        maybeTopUpAutoplay()
+        TrackLog.d(TAG, "crossfade handoff -> ${_state.value.song?.videoId ?: "-"}")
+    }
+
     init {
         queue.onPlay = ::playCurrentRow
         // A jump names the position it wants *before* it names the play, so this is the display
@@ -218,41 +378,7 @@ class PlayerController(
         // duration of the row being left behind.
         queue.onSeek = { _, ms -> position.positionMs = ms }
         queue.onChanged = ::publish
-        engine.onTime = { ms -> position.positionMs = ms }
-        engine.onLength = { ms -> onQueue { _state.update { it.copy(durationMs = ms) } } }
-        engine.onPlayingChanged = { playing -> onQueue { setPlaying(playing) } }
-        // The decoder's verdict on what it is being fed, once per row. The
-        // publish goes through the queue thread like every other state write —
-        // vlcj reports from its own event dispatcher — and the videoId it is
-        // bound to is read there too, so a late report from a row the needle
-        // has left cannot land on the new one.
-        engine.onAudioStats = { stats ->
-            onQueue {
-                val videoId = queue.songAt(queue.currentIndex)?.videoId
-                NerdStats.onMeasured(
-                    videoId,
-                    NerdStats.Snapshot(
-                        mimeType = stats.codecName,
-                        // A track bitrate the engine could not state falls back
-                        // to the resolver's figure: measured over recorded, but
-                        // a recorded figure beats an absent one.
-                        bitrateKbps = stats.bitrateKbps
-                            ?: videoId?.let { NerdStats.pickedKbps(it) },
-                        sampleRateHz = stats.sampleRateHz,
-                        channels = stats.channels,
-                        sourceName = videoId?.let { NerdStats.pickedSource(it) },
-                    ),
-                )
-            }
-        }
-        engine.onError = { message ->
-            onQueue {
-                _status.value = PlaybackStatus.EngineError(message)
-                setPlaying(false)
-            }
-        }
-        // The advance hangs on this one callback and nowhere else (spec §4 risk 2).
-        engine.onFinished = { advance() }
+        bindEngine(engine)
         engine.setVolume(_volume.value)
         // The AutoPlay switch is a single source of truth the queue reacts to,
         // wherever it is flipped from — the settings dialog and the queue panel's
@@ -274,6 +400,54 @@ class PlayerController(
         // wrong endpoint.
         AppSettings.outputDeviceId.value?.let { engine.setAudioOutputDevice(it) }
         watchSleepTimer()
+        crossfade.start()
+    }
+
+    /**
+     * Puts the app's listeners on an engine — the whole act that makes an
+     * engine the one the rest of this class talks to, extracted from `init`
+     * because the crossfade's handoff does it a second time: the session
+     * moves by *re-binding*, upstream's `adoptPlayer` moving its listeners
+     * onto the incoming player. The engine's volume is deliberately absent —
+     * it is a fade's own business at handoff time, and everyone else who
+     * needs it applies it beside the call.
+     */
+    private fun bindEngine(e: AudioEngine) {
+        e.onTime = { ms -> position.positionMs = ms }
+        e.onLength = { ms -> onQueue { _state.update { it.copy(durationMs = ms) } } }
+        e.onPlayingChanged = { playing -> onQueue { setPlaying(playing) } }
+        // The decoder's verdict on what it is being fed, once per row. The
+        // publish goes through the queue thread like every other state write —
+        // vlcj reports from its own event dispatcher — and the videoId it is
+        // bound to is read there too, so a late report from a row the needle
+        // has left cannot land on the new one.
+        e.onAudioStats = { stats ->
+            onQueue {
+                val videoId = queue.songAt(queue.currentIndex)?.videoId
+                NerdStats.onMeasured(
+                    videoId,
+                    NerdStats.Snapshot(
+                        mimeType = stats.codecName,
+                        // A track bitrate the engine could not state falls back
+                        // to the resolver's figure: measured over recorded, but
+                        // a recorded figure beats an absent one.
+                        bitrateKbps = stats.bitrateKbps
+                            ?: videoId?.let { NerdStats.pickedKbps(it) },
+                        sampleRateHz = stats.sampleRateHz,
+                        channels = stats.channels,
+                        sourceName = videoId?.let { NerdStats.pickedSource(it) },
+                    ),
+                )
+            }
+        }
+        e.onError = { message ->
+            onQueue {
+                _status.value = PlaybackStatus.EngineError(message)
+                setPlaying(false)
+            }
+        }
+        // The advance hangs on this one callback and nowhere else (spec §4 risk 2).
+        e.onFinished = { advance() }
     }
 
     // ---- sleep timer -------------------------------------------------------------------
@@ -537,6 +711,26 @@ class PlayerController(
                 }
                 if (!proved) {
                     TrackLog.d(TAG, "quality swap for ${song.videoId} failed its audition; nothing changes")
+                    return@onQueue
+                }
+                // A crossfade in flight owns both engines, and the landing
+                // replays the current stream on the session engine — the
+                // source the blend is half-way through. Upstream's upgrade
+                // waits a bounded poll loop for the blend to clear and then
+                // checks once more, authoritatively, right at the swap point;
+                // past the timeout it is shelved rather than forced
+                // (`PlaybackService.kt:3876`). The same shape here: the
+                // resolve and the audition above are silent and harm the
+                // blend not at all — the wait is the one suspension this
+                // landing allows itself, and the re-checks below still own
+                // the landing if the world moved while it ran.
+                var waited = 0L
+                while (crossfade.isTransitioning() && waited < BLEND_WAIT_TIMEOUT_MS) {
+                    delay(BLEND_WAIT_POLL_MS)
+                    waited += BLEND_WAIT_POLL_MS
+                }
+                if (crossfade.isTransitioning()) {
+                    TrackLog.d(TAG, "quality swap for ${song.videoId} shelved: a blend would not clear")
                     return@onQueue
                 }
                 // Re-checked with the audition behind it: minutes of network
@@ -833,7 +1027,14 @@ class PlayerController(
 
     /** The next button. Whether it wraps is the pump's answer, not this one ([QueueTimeline.next]). */
     fun next() {
-        onQueue { startRow(queue.next()) }
+        onQueue {
+            // Crossfade belongs to a track that finishes, not one replaced:
+            // every skip entry asks the state machine to stand down before the
+            // skip is carried out, so the outgoing track is already on its way
+            // down as the new one starts.
+            crossfade.onSkipRequested()
+            startRow(queue.next())
+        }
     }
 
     /**
@@ -848,22 +1049,30 @@ class PlayerController(
      */
     fun previous() {
         val positionMs = engine.timeMs
-        onQueue { startRow(queue.previous(positionMs)) }
+        onQueue {
+            crossfade.onSkipRequested()
+            startRow(queue.previous(positionMs))
+        }
     }
 
     /** A tap on a queue row. Re-seating the list is `jumpToQueueItem`'s rule, not this one's. */
     fun jumpTo(index: Int) {
-        onQueue { queue.jumpToRow(index) }
+        onQueue {
+            crossfade.onSkipRequested()
+            queue.jumpToRow(index)
+        }
     }
 
     /** Scrub to a millisecond position — the engine only takes a fraction, so that is what this becomes. */
     fun seekTo(ms: Long) {
+        crossfade.onSkipRequested()
         val duration = _state.value.durationMs
         engine.seekTo(if (duration > 0) ms.toFloat() / duration.toFloat() else 0f)
     }
 
     /** Scrub to a fraction of the media, which is what a drag on the scrubber reports. */
     fun seekToFraction(fraction: Float) {
+        crossfade.onSkipRequested()
         engine.seekTo(fraction)
     }
 
@@ -1026,6 +1235,15 @@ class PlayerController(
      */
     private fun advance() {
         onQueue {
+            // A fade's own end arrives through here first: a sleep fade's
+            // track ending is the fade's completion, not a queue event — the
+            // timer is retired by the fade itself, which pauses the track
+            // beside it. Anything else the engine reports as finished really
+            // is somebody's track ending, and the ordinary advance proceeds.
+            if (crossfade.onSessionEnded()) {
+                TrackLog.d(TAG, "engine end absorbed by the crossfade's sleep fade")
+                return@onQueue
+            }
             if (SleepTimer.afterTrack.value) {
                 TrackLog.d(TAG, "sleep timer: after this song; holding at the finished row")
                 SleepTimer.cancel()
@@ -1058,6 +1276,14 @@ class PlayerController(
      * for can be history before the URL arrives. [playGeneration] is what makes that harmless.
      */
     private fun resolveAndPlay(videoId: String) {
+        // The door every new row's audio enters through, so it is where a
+        // blend is told to stand down: the four skip entries land here via
+        // their queue moves, and so does a queue *replacement* (a new
+        // playOneOff, a new radio) — upstream's playlist-changed bail, since
+        // a tail still playing then belongs to a session that no longer
+        // exists. An advance whose track genuinely finished is a no-op here:
+        // at idle the machine has nothing to stand down.
+        crossfade.onSkipRequested()
         val generation = ++playGeneration
         engine.stop()
         position.positionMs = 0
@@ -1150,7 +1376,11 @@ class PlayerController(
     }
 
     fun release() {
+        // The state machine first: it retires whatever blend is in flight,
+        // and stops an engine this call is about to release anyway.
+        crossfade.release()
         engine.release()
+        standbyEngineInstance?.release()
     }
 
     private companion object {
@@ -1178,5 +1408,16 @@ class PlayerController(
          * without forgiving a different edit.
          */
         const val QUALITY_SWAP_LENGTH_SLACK_MS = 2_000L
+
+        /**
+         * How often the landing of a quality swap rechecks whether a
+         * crossfade is still in flight, and how long it waits on one —
+         * upstream's `UPGRADE_CROSSFADE_POLL_MS` and
+         * `UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS`, well past the longest
+         * transition this machine plans, so the timeout is a guard against
+         * something stuck rather than a limit expected to bind.
+         */
+        const val BLEND_WAIT_POLL_MS = 250L
+        const val BLEND_WAIT_TIMEOUT_MS = 20_000L
     }
 }

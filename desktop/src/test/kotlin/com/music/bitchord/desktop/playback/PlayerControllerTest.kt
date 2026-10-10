@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.RepeatMode
@@ -11,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,6 +32,23 @@ import kotlin.test.assertTrue
  * does (spec §3.1).
  */
 class PlayerControllerTest {
+
+    /** The crossfade setting is process-wide: a case that raised it puts it back, or the next
+     * controller built here would come up ticking. */
+    @AfterTest
+    fun resetCrossfadeSetting() {
+        AppSettings.crossfadeSeconds.value = 0
+    }
+
+    /** A bounded wait for something a wall-clock coroutine is about to do — see the quality
+     * swap's blend-clear poll, the one place a test cannot pump a scheduler for. */
+    private fun waitUntil(timeoutMs: Long = 3_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition()) {
+            check(System.currentTimeMillis() < deadline) { "condition not met within ${timeoutMs}ms" }
+            Thread.sleep(10)
+        }
+    }
 
     private fun song(id: String) = Song(id, "T$id", "A$id", null)
 
@@ -460,5 +479,171 @@ class PlayerControllerTest {
         // reporting belongs to whoever replaces it.
         assertEquals(PlaybackStatus.Resolving, player.status.value)
         assertTrue(player.state.value.isLoading)
+    }
+
+    // ---- crossfade handoffs --------------------------------------------------------
+    //
+    // The machine's own arithmetic is CrossfadeControllerTest's business; what this file pins is
+    // the seam it hands off across: that a blend really makes the incoming engine the session,
+    // that the queue follows it at the first sound rather than at the outgoing track's end, and
+    // that the outgoing engine's own end — the advance it used to carry — moves nothing.
+
+    /** A controller with a 6-second crossfade standing on two fake engines, driven by hand. */
+    private class CrossfadeCase {
+        private fun song(id: String) = Song(id, "T$id", "A$id", null)
+
+        val engine = FakeAudioEngine()
+        var standby: FakeAudioEngine? = null
+        val player = PlayerController(CoroutineScope(Dispatchers.Unconfined), engine).apply {
+            // The same pins `controller()` makes — process-wide state a case
+            // must not inherit from the one before it.
+            QueueShuffle.setEnabled(false)
+            AppSettings.setAutoplay(false)
+            resolveUrl = { videoId -> "https://test/$videoId" }
+            resolveDispatcher = Dispatchers.Unconfined
+            queueDispatcher = Dispatchers.Unconfined
+            crossfadeStandbyEngine = { FakeAudioEngine().also { standby = it } }
+            // The tick loop would race these tests on a wall clock; the machine moves when the
+            // test says so instead.
+            crossfade.manualTicks = true
+            AppSettings.crossfadeSeconds.value = 6
+        }
+
+        /** Plays a three-row queue and walks it to the moment b becomes audible. */
+        fun handOffToB(): FakeAudioEngine {
+            player.playFrom(listOf(song("a"), song("b"), song("c")), index = 0,
+                source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
+            engine.length(180_000)
+            engine.tick(170_000) // remaining 10s = fade 6s + lead 4s: the arm window opens
+            player.crossfade.tickForTest()
+            val standby = standby!!
+            standby.length(200_000)
+            engine.tick(174_000) // remaining 6s: the fade point
+            player.crossfade.tickForTest()
+            return standby
+        }
+    }
+
+    @Test
+    fun `a crossfade makes the incoming engine the session and the queue follows it`() {
+        val case = CrossfadeCase()
+        val player = case.player
+        val engine = case.engine
+        val standby = case.handOffToB()
+        // The incoming track was armed, not played: it never went through a resolve-and-play,
+        // and it is audible now.
+        assertEquals(listOf("https://test/b"), standby.preparedUrls)
+        assertEquals(emptyList(), standby.playedUrls)
+        assertTrue(standby.isPlaying)
+        assertTrue(player.state.value.isPlaying)
+        // The session moved: the needle, the metadata, the scrubber's span and the clock.
+        assertEquals(1, player.state.value.queueIndex)
+        assertEquals("b", player.state.value.song?.videoId)
+        assertEquals(200_000L, player.state.value.durationMs)
+        assertEquals(0L, player.position.positionMs)
+        // The engine the rest of the class talks to is the incoming one — the user's volume
+        // control now reaches it, and only it.
+        player.setVolume(50)
+        assertEquals(50, standby.volumes.last())
+        // The outgoing engine's own end is not an advance: its advance was forgotten at the
+        // handoff, and the queue it can no longer move stays put.
+        engine.finish()
+        assertEquals(1, player.state.value.queueIndex)
+        assertEquals("b", player.state.value.song?.videoId)
+        assertEquals(listOf("https://test/a"), engine.playedUrls)
+        // Its end is the blend's completion, though.
+        player.crossfade.tickForTest()
+        assertFalse(player.crossfade.isTransitioning())
+        // And the queue advances from the incoming engine when IT runs out — exactly one advance
+        // per track, as ever.
+        standby.finish()
+        assertEquals(2, player.state.value.queueIndex)
+        assertEquals(listOf("https://test/c"), standby.playedUrls)
+    }
+
+    @Test
+    fun `a skip during a fade stands the blend down and the new row does not wait for it`() {
+        val case = CrossfadeCase()
+        val player = case.player
+        val engine = case.engine
+        val standby = case.handOffToB()
+        standby.tick(1_000)
+        player.crossfade.tickForTest()
+        assertEquals(77, engine.volumes.last()) // the outgoing track is mid-blend
+        player.next()
+        // The skip is instant — c sounds now, on the session engine — and the outgoing one is
+        // being ramped away rather than cut.
+        assertEquals(2, player.state.value.queueIndex)
+        assertEquals(listOf("https://test/c"), standby.playedUrls)
+        assertTrue(player.crossfade.isTransitioning())
+        // The tail only ever goes down from here.
+        val descending = engine.volumes.filter { it < 80 }
+        assertTrue(descending.isNotEmpty())
+        assertEquals(descending.sortedDescending(), descending)
+        // BAIL_MS is 120ms of wall clock; past it the machine is idle and the retired engine
+        // is stopped.
+        Thread.sleep(140)
+        player.crossfade.tickForTest()
+        assertFalse(player.crossfade.isTransitioning())
+        assertFalse(engine.isPlaying)
+    }
+
+    @Test
+    fun `repeat-one is never crossfaded into itself`() {
+        val case = CrossfadeCase()
+        val player = case.player
+        val engine = case.engine
+        player.playFrom(listOf(song("a"), song("b")), index = 0,
+            source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
+        player.setRepeat(RepeatMode.ONE)
+        engine.length(180_000)
+        engine.tick(170_000)
+        player.crossfade.tickForTest()
+        // Deep inside the arm window, with a row queued after the loop: still nothing armed.
+        assertNull(case.standby)
+        assertFalse(player.crossfade.isTransitioning())
+        // The loop itself still replays in place.
+        engine.finish()
+        assertEquals(listOf("https://test/a", "https://test/a"), engine.playedUrls)
+    }
+
+    @Test
+    fun `a quality change waits out a blend and lands once it clears`() {
+        val case = CrossfadeCase()
+        val player = case.player
+        val engine = case.engine
+        val standby = case.handOffToB()
+        var auditions = 0
+        player.auditionEngine = {
+            auditions++
+            FakeAudioEngine().also { fake ->
+                // The proof, answered the way vlcj's events would.
+                fake.onPlayHook = {
+                    fake.reportStats("mp4a", 256, 44_100, 2)
+                    fake.length(200_000)
+                }
+            }
+        }
+        player.repickUrl = { _, _ -> "https://test/b-alt" }
+        try {
+            player.setAudioQuality(AudioQuality.HIGH)
+            // The proof ran on its own silent engine — it costs the blend
+            // nothing — but the landing waited: the blend's engines are
+            // untouched while it is in flight.
+            assertEquals(1, auditions)
+            assertEquals(emptyList(), standby.playedUrls)
+            assertTrue(player.crossfade.isTransitioning())
+            // The blend ends; the waiting swap lands on the session engine.
+            // The landing runs on the wall clock (the blend-clear poll), so
+            // the test meets it with a bounded wait rather than by freezing
+            // the poll interval into an assertion.
+            engine.finish()
+            player.crossfade.tickForTest()
+            assertFalse(player.crossfade.isTransitioning())
+            waitUntil { standby.playedUrls.isNotEmpty() }
+            assertEquals("https://test/b-alt", standby.playedUrls.last())
+        } finally {
+            AppSettings.setAudioQuality(AudioQuality.LOSSLESS)
+        }
     }
 }

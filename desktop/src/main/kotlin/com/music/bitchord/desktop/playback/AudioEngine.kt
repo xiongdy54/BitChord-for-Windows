@@ -81,6 +81,25 @@ interface AudioEngine {
      */
     fun play(url: String, headers: Map<String, String> = emptyMap(), startAtMs: Long = 0L)
 
+    /**
+     * Opens [url] at [startAtMs] *without sounding*: fetched, decoded to its
+     * cue and held there paused, waiting for [resume] to be told to speak.
+     * The standby half of a crossfade — a track that is ready to be heard the
+     * moment its fader starts to move, and is heard by nobody until then.
+     *
+     * A default in terms of [play] and [pause] would race — sound out in the
+     * gap between the two calls — so engines that cannot open-and-hold are
+     * expected to say so in their own implementation. [VlcAudioPlayer]'s is
+     * race-free at the input (`:start-paused`, decided at open time beside
+     * `:start-time`); this default is the documented shape of the gap for an
+     * engine that has no opinion, so the interface keeps asking nothing more
+     * of an engine than that it plays.
+     */
+    fun prepare(url: String, headers: Map<String, String> = emptyMap(), startAtMs: Long = 0L) {
+        play(url, headers, startAtMs)
+        pause()
+    }
+
     fun pause()
 
     fun resume()

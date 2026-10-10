@@ -55,6 +55,9 @@ import com.music.bitchord.desktop.resources.audio_output
 import com.music.bitchord.desktop.resources.audio_quality
 import com.music.bitchord.desktop.resources.autoplay
 import com.music.bitchord.desktop.resources.autoplay_subtitle
+import com.music.bitchord.desktop.resources.crossfade
+import com.music.bitchord.desktop.resources.crossfade_subtitle
+import com.music.bitchord.desktop.resources.off
 import com.music.bitchord.desktop.resources.connected
 import com.music.bitchord.desktop.resources.dark_theme
 import com.music.bitchord.desktop.resources.library_sign_in_description
@@ -101,11 +104,13 @@ import com.music.bitchord.desktop.resources.webdav_not_configured
 import com.music.bitchord.desktop.resources.webdav_server_url_hint
 import com.music.bitchord.desktop.resources.webdav_test_failed
 import com.music.bitchord.ui.components.PillTextField
+import com.music.bitchord.ui.player.ThinSlider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.stringResource
+import kotlin.math.roundToInt
 
 /**
  * The desktop's settings, as a modal window rather than a page: settings are
@@ -314,6 +319,40 @@ fun SettingsDialog(
                         checked = prioritizeSpotifyCanvas,
                     ) { AppSettings.setPrioritizeSpotifyCanvas(it) }
                 }
+
+                // How long one track blends into the next; 0 is off, which is
+                // also the default, so the row reads "Off" until the slider
+                // moves. Upstream's row offers the same 0..12s in eleven
+                // steps; the strings are the merged copy's own.
+                val crossfadeSeconds by AppSettings.crossfadeSeconds.collectAsState()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(Res.string.crossfade),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = if (crossfadeSeconds == 0) stringResource(Res.string.off)
+                        else "${crossfadeSeconds}s",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = stringResource(Res.string.crossfade_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                ThinSlider(
+                    value = crossfadeSeconds / 12f,
+                    onValueChange = { AppSettings.setCrossfadeSeconds((it * 12).roundToInt()) },
+                    modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
+                )
 
                 GroupDivider()
 
