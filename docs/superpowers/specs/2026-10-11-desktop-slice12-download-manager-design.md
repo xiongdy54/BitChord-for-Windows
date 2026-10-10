@@ -2,7 +2,7 @@
 
 日期:2026-10-11
 分支:`desktop-slice2-now-playing`
-状态:设计定稿(实施记录见 §7,实施后回填)
+状态:已完成(实施记录见 §7)
 
 ## 1. 背景
 
@@ -54,6 +54,16 @@
 
 `requested` 流与整张/歌单批量下载(独立小片);暂停/恢复;通知;`local:playlist:` 下载集;运动封面、交叉淡入淡出、Equalizer(Goal 后件);本地音乐/登录(已在切片 10/11 收讫)。
 
-## 7. 实施记录(实施后回填)
+## 7. 实施记录(2026-10-11 回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+**交付**:决策 1–6 落地。`ui/components/DownloadManagerPanel.kt`(580 行,三件套:`TopBarDownloadButton` —— `AnimatedVisibility(session.visible)` 原样、26dp 进度环 ≥0.02f 起步 + 环内 ArrowDownward、失败 ErrorOutline + error 色、空闲 DownloadDone;`DownloadManagerPanel` —— 自宿主窗口级 Dialog(420dp/16dp 圆角,设置对话框形),标题 + 汇总行、忙碌〔清除全部〕/空闲〔清除〕、批级 LinearProgressIndicator、380dp 帽 LazyColumn 按 sequence 排序 videoId 为 key;行 —— 44dp 封面 settled 盖罩、ExplicitSongTitle、艺人·来源、四态状态行、失败 Refresh 重试/未定 Close 取消/完成 36dp 占位);`State.summary()` 拆成纯函数 `batchSummary()`(密封 `BatchSummary`:Empty/Counting(waiting?/finished?/failed?)/AllDone(finished))+ 机械的 composable 资源映射——语义与上游逐值同(零计数段省略、" · " 连接、空闲且无失败才说 all_songs_downloaded);Shell `ShellState.showDownloadsManager` + 宿主块(**关闭即 markSeen**,Esc/清除/系统关闭都经 onDismissRequest 覆盖);Toolbar `onOpenDownloadsManager` 参 + 音量后槽位,junction KDoc 更新为"两个例外皆是转换而非表面";Main.kt `probeDestination=downloadsmanager`。
+
+**与设计的偏离**:
+
+1. **`State.summary()` 拆为纯函数**(设计交付物只说"提取使可测"):上游在 @Composable 里内联算参数,离机不可测;`batchSummary()` 返回密封值,plural 的**参数计算**成表,composable 半边只做资源映射。语义零变。
+2. **`visible` 时序测试未新增**——读 `DownloadSessionTest` 发现四条时序行(markSeen 后隐、中途看一眼不签收、新批次重新武装、失败保持可见)已逐字在场,补测是重复。
+3. **build.gradle.kts 零改动**——`bitchord.probeDestination` 已在传递白名单(设计 §3 预期命中)。
+
+**验证**:49 类 444 测试全绿(新增 8:`DownloadManagerSummaryTest` 计数表——空态/三段全忙/部分忙/单排队/单失败/静默带失败/全完成复数/全完成单数)。截图 `.shots/slice12/`:**面板失败态**(真实批次驱动——`probePlayVideoId` + `probeDownload`,流解析被 YouTube 拒后落 Failed 行:"1 个失败"汇总 + "No downloadable audio for this track" 原文 error 色 + 重试行,**且工具栏指示器同帧以错误态出现在音量右侧**——自决可见性的一张截图同时证据了两个消费端);面板空态("当前没有下载任务" + 清除);静默主页(指示器缺席 = 空闲路径的缺席证据)。**人手验证待做**:运行中进度环的动态观感、完成态 DownloadDone、Esc 关闭后指示器消失(markSeen)——流解析当日被 YouTube 风控拦截(切片 6 以来已知),成功下载的运行中/完成态截图待人手或网络解封后补。
+
+**已知瑕疵**:批次运行中/完成两态的截图依赖一次成功的流解析(当日 YouTube 对本机 IP bot-check),失败态已由真实驱动覆盖;面板打开时 toolbar 指示器同屏,两处 collect 同一条流(无第三状态),代码审读确认无漂移面。
