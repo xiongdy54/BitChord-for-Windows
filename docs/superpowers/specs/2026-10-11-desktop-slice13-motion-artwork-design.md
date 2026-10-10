@@ -2,7 +2,7 @@
 
 日期:2026-10-11
 分支:`desktop-slice2-now-playing`
-状态:设计定稿(实施记录见 §7,实施后回填)
+状态:已完成(实施记录见 §7)
 
 ## 1. 背景
 
@@ -60,6 +60,20 @@
 
 Spotify auto-hide 玻璃 deck;`SpotifyToken` JCEF harvest(Spotify 源在本片缺席但架构就位);DetailScreen/LandscapePlayer 的动封面面;HLS 缓存;`canvas_over_cellular`;交叉淡入淡出、Equalizer(Goal 后件);登录/本地音乐/下载面板(已在 10–12 收讫)。
 
-## 7. 实施记录(实施后回填)
+## 7. 实施记录(2026-10-11 回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+**交付**:决策 1–8 落地。`data/canvas/` 六件逐字移植(CanvasArtwork/CanvasRepository/Community/Tidal/AppleMusic/Spotify 含手写 protobuf);`SpotifyToken.kt` 桌面占位(上游函数名,答 null——JCEF harvest 后续片只填这两个函数,SpotifyCanvas 本体不动);`CanvasCache.kt`(MP4 按 URL hash 落 `AppFiles.dir("canvas")`、后台预取下次用、首播直连流、LRU 150MB、HLS 永不缓存);`CanvasArtworkPlayer.kt`(640 行:`CallbackMediaPlayerComponent` + `RenderCallbackAdapter` RV32 帧 → Skia `installPixels` → Compose Canvas;CROP/FIT_PORTRAIT 用 `drawImage` src/dst rect;底部渐隐 DstIn 同族;上游状态机照抄——320ms 淡入、fallbackUrl 一次、700ms 兜底、帧 128px 喂取色);NowPlayingScreen 按 append-only 协议追加(四状态 + hero 接线 + `ALBUM_SETTLE_MS=700L`/`MESH_REFRESH_MS=3_000L` 恢复 + `rememberCanvasArtwork`,`canvasAllowedNow = animatedCanvas`);ArtworkMeshBackdrop 收到 `canvasFrame`(含上游黑帧拒绝);设置两开关(`animated_canvas`/`prioritize_spotify_canvas` 上游键名);`probeCanvas` 探针双登记。
+
+**javap 关键发现**:vlcj 的直接缓冲是 `ByteOrder.nativeOrder()`,libvlc RV32 写 B,G,R,A → int 恰为 Java `0xAARRGGBB`——**无需 R/B 交换**(与 vlcj 自家渲染器写 `TYPE_INT_ARGB` 同一事实),KDoc 记录;`CallbackMediaPlayerComponent` 的 Swing surface 参数可空(native add 判空,bytecode 核实);adapter 复用同一 int[],故回调内拷贝(`buffer.copyOf`,libvlc 视频线程域)。
+
+**与设计的偏离**:
+
+1. **`REPAINT_TIMEOUT_MS` 看门狗换钥**:上游盯"表面重建"(TextureView 的 surface 会丢),桌面内存回调面无 surface 丢失——同一常量、同一判词,改为"媒体 700ms 未产帧"。
+2. **挂载恒为 banner 界**(`fillMaxWidth().height(heroHeight)`),非上游 portrait 的 `fillMaxSize`——无 Spotify 全屏 presentation 则全屏 portrait 情形不存在;FIT_PORTRAIT 链保留待 harvest。
+3. **`portraitRevealBounds`/`bottomFadeEndPx` 不入参数表**:它们是 TextureView 首帧对布局的栅栏与 Android mask 的指向器;桌面渲染器自己映射视频矩形并在映射矩形上渐隐。
+4. **CanvasRepository 的测试缝**:`internal fun songChain(spotifyFirst)` 造 ChainLink 列表传入 internal 重载(object 无构造器);生产语义不变,双序皆有测试钉名。
+5. **测试驱出真 bug**:缓存键最初哈希原始 URL 而非去查询参数的路径——单测抓出修正。
+
+**验证**:52 类 482 测试全绿(新增 38:匹配表 16/仓储 13/缓存 9)。实机探针三连(真实网络):`SJKoWAd5ySo`(晴天)→ **负路径全链正确**——Apple web token 自动获取("good until Dec 11 2026")、社区 manifest 187 条命中 'Dracula' by 'Tame Impala' 后被严格复核**正确拒绝**(冒名顶替者)、Spotify 无 token 跳过、3.9s 归 none;`dQw4w9WgXcQ` → none;`G7KNmW9a75Y`(Flowers — Miley Cyrus)→ **正路径命中**:Apple Music 报 "motion artwork on album 'Endless Summer Vacation'",产出 HLS `mvod.itunes.apple.com/…​.m3u8`,8.5s。设置开关截图 `.shots/slice13/settings-canvas-zh-dark.png`。**人手验证待做**:播放器 hero 的动封面实际渲染与循环(当日 YouTube 流解析遭 bot-check,播放不可脚本化)、断网回静帧、性能(帧转换上界 `DISPLAY_MAX_EDGE=1280` 分配,掉帧则降到 hero 像素高——记录在案)。
+
+**已知瑕疵**:Spotify 源本片缺席(token harvest 是后续件),`heroMode` 的 OR 支路注释写明在等它;HLS 每圈重取段(设计决策 4 的 v1 诚实态);渲染性能未经 GPU 窗口实测。
