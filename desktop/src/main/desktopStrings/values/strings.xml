@@ -44,4 +44,10 @@
     <!-- Output device: the always-present way back to letting the OS choose
          (the platform itself falls back to this when a chosen endpoint dies). -->
     <string name="system_default">System default</string>
+
+    <!-- Account: the settings group header and account removal. (The identity
+         picker's "Listen as" row is upstream's own `listen_as` key — grep the
+         merged strings before adding here.) -->
+    <string name="account">Account</string>
+    <string name="remove_account">Remove this account</string>
 </resources>

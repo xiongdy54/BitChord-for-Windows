@@ -39,4 +39,9 @@
     <!-- Output device: the always-present way back to letting the OS choose
          (the platform itself falls back to this when a chosen endpoint dies). -->
     <string name="system_default">系统默认</string>
+
+    <!-- 账号：设置的分组标题与账号移除。（身份选择器的"收听身份"行用的
+         是上游自带的 listen_as 键——向这里加字符串前先查合并后的资源。） -->
+    <string name="account">账号</string>
+    <string name="remove_account">移除此账号</string>
 </resources>

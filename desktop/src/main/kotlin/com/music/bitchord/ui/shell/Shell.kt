@@ -40,6 +40,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import com.music.bitchord.auth.AccountController
+import com.music.bitchord.auth.WebSessionMode
+import com.music.bitchord.auth.YtMusicLoginWindow
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -96,6 +99,18 @@ class ShellState {
      * opens from the player's right-click menu, which lives over everything.
      */
     var showSleepTimer by mutableStateOf(false)
+
+    /**
+     * The Google sign-in window — window-level like [showSettings], for the
+     * same airspace reason it exists at all: a heavyweight Chromium child
+     * window cannot layer over the transparent Skia chrome without tearing,
+     * so the login is an independent modal [androidx.compose.ui.window.Dialog]
+     * hosted beside the settings dialog rather than inside it.
+     */
+    var showLogin by mutableStateOf(false)
+
+    /** What the login window is for; set together with [showLogin]. */
+    var loginMode by mutableStateOf(WebSessionMode.SIGN_IN)
 }
 
 /**
@@ -123,6 +138,10 @@ fun Shell(
     detailPages: DetailPages,
     nav: NavState,
     state: ShellState,
+    /** The session registry — the account group's reads and acts route through it. */
+    accounts: AccountController,
+    /** Opens the Google sign-in window in the given mode. */
+    onOpenLogin: (WebSessionMode) -> Unit,
     /** The settings switch this chrome paints for — partial alpha over Mica, or solid. */
     translucentWindow: Boolean,
     windowMaximized: Boolean,
@@ -372,6 +391,8 @@ fun Shell(
         SettingsDialog(
             onDismiss = { state.showSettings = false },
             onAudioQualityChanged = player::setAudioQuality,
+            accountController = accounts,
+            onOpenLogin = onOpenLogin,
             // The output device's enumeration is the engine's own native call,
             // handed over as a lambda so the dialog stays a surface and the
             // switch lands in the same place every other audio act does.
@@ -382,6 +403,37 @@ fun Shell(
             // One-shot: the flag is only ever true from the screenshot probe,
             // which wants the settings dialog up with its child open.
             autoOpenAudioOutput = autoOpenAudioOutput,
+        )
+    }
+
+    // The sign-in window, beside the settings dialog rather than inside it:
+    // its browser is a native child window the settings dialog's surface
+    // cannot host. SWITCH_CHANNEL opens on the active account's own cookie
+    // snapshot — the picker must show that account's Google login, not
+    // whichever one signed in most recently in the browser's jar.
+    if (state.showLogin) {
+        val mode = state.loginMode
+        YtMusicLoginWindow(
+            mode = mode,
+            initialCookie = if (mode == WebSessionMode.SWITCH_CHANNEL) {
+                accounts.accounts.value.firstOrNull {
+                    it.accountId == accounts.activeAccountId.value
+                }?.cookie
+            } else {
+                null
+            },
+            captureRequest = 0,
+            onPageReady = {},
+            onCaptureUnavailable = {},
+            onCaptured = { session ->
+                // Validation-first, inside the controller: the window only
+                // closes once the session is accepted, so a rejected capture
+                // leaves the page up for another try.
+                accounts.onWebSession(session, mode) { accepted ->
+                    if (accepted) state.showLogin = false
+                }
+            },
+            onDismiss = { state.showLogin = false },
         )
     }
 

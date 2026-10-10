@@ -31,7 +31,11 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.music.bitchord.data.AppFiles
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.FileStore
+import com.music.bitchord.auth.AccountController
+import com.music.bitchord.auth.CefRuntime
+import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -493,6 +497,22 @@ fun main() {
     val explore = ExploreViewModel(scope)
     val detailPages = DetailPages(scope)
 
+    // The session: the stored Google login is restored before the window is
+    // up, and every accepted sign-in, profile switch and sign-out reloads the
+    // listener's pages. The reload list is the shell's knowledge — which view
+    // models exist, which pages they own — which is why it is wired here and
+    // not inside the controller. Cookie before channel: the cookie setter
+    // clears any channel choice, so the controller applies them in that order.
+    val accounts = AccountController(scope)
+    accounts.onSessionChanged = {
+        Innertube.ensureSessionScope()
+        home.refresh()
+        library.retrySongs()
+        library.retryPlaylists()
+        library.retryRecents()
+    }
+    accounts.restoreActiveSession()
+
     // Pays InnerTubeX's cold costs (player config, EJS solve, cipher) while the
     // window is still being opened rather than on the first tap.
     InnerTubeXResolver.init()
@@ -542,6 +562,7 @@ fun main() {
         // sleep timer and the output picker are window-level the same way.
         if (probeDestination == "settings") shellState.showSettings = true
         if (probeDestination == "sleeptimer") shellState.showSleepTimer = true
+        if (probeDestination == "signin") shellState.showLogin = true
         if (probeDestination == "outputdevices") {
             shellState.showSettings = true
             openAudioOutputOnStart = true
@@ -623,6 +644,11 @@ fun main() {
                 windowStore.putString("geometry", geometry.encode())
                 smtc.release()
                 player.release()
+                // The login browser's engine. Open dialogs' browsers close
+                // first — the app's own native shutdown faults under a live
+                // browser — then the engine itself; whatever thread survives
+                // anyway is reaped by the JVM's halt a line below.
+                CefRuntime.shutdown()
                 scope.cancel()
                 exitApplication()
             }
@@ -872,6 +898,11 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     detailPages = detailPages,
                     nav = nav,
                     state = shellState,
+                    accounts = accounts,
+                    onOpenLogin = { mode ->
+                        shellState.loginMode = mode
+                        shellState.showLogin = true
+                    },
                     // The chrome's own half of the same switch — whether the
                     // toolbar and the sidebar paint at partial alpha or solid.
                     translucentWindow = translucentWindow,

@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.music.bitchord.BuildConfig
+import com.music.bitchord.auth.AccountController
+import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
@@ -37,16 +39,21 @@ import com.music.bitchord.desktop.playback.AudioOutputDevice
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
+import com.music.bitchord.desktop.resources.account
 import com.music.bitchord.desktop.resources.appearance
 import com.music.bitchord.desktop.resources.audio_output
 import com.music.bitchord.desktop.resources.audio_quality
 import com.music.bitchord.desktop.resources.autoplay
 import com.music.bitchord.desktop.resources.autoplay_subtitle
 import com.music.bitchord.desktop.resources.dark_theme
+import com.music.bitchord.desktop.resources.library_sign_in_description
+import com.music.bitchord.desktop.resources.listen_as
 import com.music.bitchord.desktop.resources.lyrics
 import com.music.bitchord.desktop.resources.download_quality
 import com.music.bitchord.desktop.resources.language
 import com.music.bitchord.desktop.resources.playback
+import com.music.bitchord.desktop.resources.sign_in_youtube_music
+import com.music.bitchord.desktop.resources.sign_out
 import com.music.bitchord.desktop.resources.translation_language
 import com.music.bitchord.desktop.resources.lyrics_sources
 import com.music.bitchord.desktop.resources.synced_lyrics
@@ -70,20 +77,27 @@ import org.jetbrains.compose.resources.stringResource
  * outside the navigation stack, where Esc would otherwise have to learn a
  * second meaning.
  *
- * Four groups, each one a switch or a small radio list over [AppSettings]:
- * appearance (the theme override the desktop build has never had, and the
- * window's translucency — the one setting the platform cannot apply to a
- * window it is already showing), language, the nerd-stats switch the player
- * has been reading since slice 2 without a way to turn it on, and the about
- * box. Everything else upstream's sheet carries waits for the slices that can
- * serve it — audio quality is bound to the resolver, downloads to the download
- * manager.
+ * Five groups, each one a switch, a row or a small radio list: the account —
+ * the "who am I" question the signed-in features hang from, whose sign-in act
+ * opens the login window — appearance, language, the lyrics cluster, and the
+ * about box. Everything else upstream's sheet carries waits for the slices
+ * that can serve it — audio quality is bound to the resolver, downloads to
+ * the download manager.
  */
 @Composable
 fun SettingsDialog(
     onDismiss: () -> Unit,
     /** The quality switch goes through the player, whose swap seam answers to it. */
     onAudioQualityChanged: (AudioQuality) -> Unit,
+    /**
+     * The session registry and its flows — the account group reads who the app
+     * is acting as from it and routes every identity act through it. Kept a
+     * parameter like the engine's device enumeration: this dialog stays a
+     * surface, the controller stays the actor.
+     */
+    accountController: AccountController,
+    /** Opens the login window; the mode says whether it signs in or switches. */
+    onOpenLogin: (WebSessionMode) -> Unit,
     /** The engine's endpoint enumeration — a blocking native call, handed over as a lambda. */
     enumerateAudioOutputDevices: () -> List<AudioOutputDevice> = { emptyList() },
     /** The device switch goes through the player too, which owns the engine call. */
@@ -95,6 +109,7 @@ fun SettingsDialog(
     var showLyricsSources by remember { mutableStateOf(false) }
     var showTranslationLanguage by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(autoOpenAudioOutput) }
+    var showAccountDialog by remember { mutableStateOf(false) }
     if (showLyricsSources) {
         LyricsSourcesDialog(onDismiss = { showLyricsSources = false })
     }
@@ -106,6 +121,13 @@ fun SettingsDialog(
             onDismiss = { showAudioOutput = false },
             enumerateDevices = enumerateAudioOutputDevices,
             onSelect = onAudioOutputDeviceChanged,
+        )
+    }
+    if (showAccountDialog) {
+        AccountDialog(
+            controller = accountController,
+            onOpenLogin = onOpenLogin,
+            onDismiss = { showAccountDialog = false },
         )
     }
     Dialog(
@@ -128,6 +150,43 @@ fun SettingsDialog(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
+
+                // The "who am I" question, at the top because every other
+                // group's content depends on its answer. Signed out is one
+                // row; signed in is the identity, the way to change it, and
+                // the way out — the same three acts the phone's avatar menu
+                // offers, gathered where the desktop gathers decisions.
+                GroupHeader(stringResource(Res.string.account))
+                val signedIn by accountController.signedIn.collectAsState()
+                if (!signedIn) {
+                    ClickableRow(
+                        title = stringResource(Res.string.sign_in_youtube_music),
+                        subtitle = stringResource(Res.string.library_sign_in_description),
+                    ) { onOpenLogin(WebSessionMode.SIGN_IN) }
+                } else {
+                    val activeAccount by accountController.activeAccountId.collectAsState()
+                    val accounts by accountController.accounts.collectAsState()
+                    val stored = accounts.firstOrNull { it.accountId == activeAccount }
+                    // The identity row states a fact and takes no click; the
+                    // rows under it are the acts.
+                    ClickableRow(
+                        title = stored?.name?.ifBlank { null }
+                            ?: stringResource(Res.string.account),
+                        subtitle = stored?.email?.ifBlank { null },
+                        onClick = null,
+                    )
+                    ClickableRow(
+                        title = stringResource(Res.string.listen_as),
+                        subtitle = stored?.profiles
+                            ?.firstOrNull { it.profileId == stored.activeProfileId }?.name,
+                    ) { showAccountDialog = true }
+                    ClickableRow(
+                        title = stringResource(Res.string.sign_out),
+                        destructive = true,
+                    ) { accountController.signOut() }
+                }
+
+                GroupDivider()
 
                 GroupHeader(stringResource(Res.string.appearance))
                 val themeSetting by AppSettings.themeSetting.collectAsState()
@@ -311,6 +370,44 @@ private fun GroupHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
     )
+}
+
+/**
+ * A row that answers a click somewhere else — the sign-in offer, the child
+ * dialogs, sign-out — or, with a null [onClick], one that only states a fact
+ * (the signed-in identity). The whole row is the target, not a trailing
+ * glyph; the output-device row set that precedent.
+ */
+@Composable
+private fun ClickableRow(
+    title: String,
+    subtitle: String? = null,
+    destructive: Boolean = false,
+    onClick: (() -> Unit)?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 8.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (destructive) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable

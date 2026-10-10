@@ -44,6 +44,13 @@ dependencies {
     // the same reason the Android app depends on innertubex-android.
     implementation("com.github.MetrolistGroup.innertubex:innertubex-desktop:v0.7.2")
 
+    // ---- Login UI: the embedded Chromium (JCEF) the Google sign-in runs in ----
+    // jcefmaven downloads the CEF natives on first CEF startup into the install
+    // dir the builder is given, so no binary rides in this jar. Windows-only by
+    // way of this build being Windows-only; the cookie API is the whole point —
+    // see auth/BrowserSession.
+    implementation("me.friwi:jcefmaven:152.0.6")
+
     // ---- Stream extraction: NewPipe solves signatures and n-parameter throttling ----
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
     implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
@@ -196,6 +203,10 @@ compose.desktop {
         // Without this the JVM prints the console's codepage and the Chinese
         // in the log comes out as mojibake once redirected to a file.
         jvmArgs += listOf("-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8")
+        // JCEF (the login browser) makes native calls through JNA; without this
+        // warning-suppression flag a JRE 17+ run logs a native-access warning
+        // per CEF call on the EDT. ALL-UNNAMED covers the JNA and JCEF jars.
+        jvmArgs += "--enable-native-access=ALL-UNNAMED"
         // Debug hooks — see Main.kt for what they do and how to use them.
         listOf(
             "bitchord.probeQuery",
