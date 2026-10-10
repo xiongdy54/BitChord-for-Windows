@@ -62,4 +62,17 @@ Automix/smart fade 全家(`playback/smart/` 13 文件 5201 行 + 滤波器常量
 
 ## 7. 实施记录(实施后回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+交付:`desktop/playback/CrossfadeController.kt`(新,状态机全族:IDLE/ARMING/FADING/SLEEP_FADE/BAILING、tick 步长 250/40/30/30/15、ARM_LEAD_MS=4000、ARM_TIMEOUT_MS=12000、BAIL_MS=120、等功率 sin/cos 曲线、fadeFor=min(秒×1000,时长/3)、sleep-fade 分支、bail 无爆音斜坡——常量逐字照搬);`AudioEngine.prepare`(默认实现=play+pause,带竞态注释)/`VlcAudioPlayer.prepare`/`resume` 落地;`PlayerController` 双引擎(`engine` 改 var + `standbyEngineInstance` 惰性建、整会话复用、handoff 角色互换)+ `bindEngine` 抽取 + `onCrossfadeHandoff`(≈adoptPlayer:监听器迁移、字段先行、queue.next() 移针、NerdStats.clear、时长换座、prefetch、autoplay top-up)+ 六处 bail 入口(next/previous/jumpTo/seekTo/seekToFraction/resolveAndPlay)+ advance 前置 `onSessionEnded` 消费 + 质量换源互斥;`AppSettings.crossfadeSeconds`(0–12,KEY `crossfade_seconds`,照上游);设置对话框播放组滑杆行(`crossfade`/`crossfade_subtitle`/`off` 均为合并拷贝既有字符串,零新增);`FakeAudioEngine` 双实例扩展(`preparedUrls`/`preparedStartMs`);`CrossfadeControllerTest` 16 行 + `PlayerControllerTest` 4 行 handoff/bail/quality。
+
+偏离(均有因):
+1. **`:start-paused` 采纳**:javap/二进制探针核实所装 libvlccore 3.0.23 含 `start-paused` 选项串——prepare 走输入选项(与 `:start-time` 同为开时生效),无 play-then-pause 竞态可文档化;`setVolume(0)` 降为纵深防御。
+2. **advance 抑制的形态**:决策 4 的"一次性标志由 advance() 消费"改为 handoff 时把 outgoing 引擎的 `onFinished` 重绑到状态机的尾端标记(`onOutgoingTailEnded`)——即上游队列截断的桌面等价物。原因:共享标志若在 finish() 之后才消费(尾部自然终了与 fade 完成同刻竞速),会吞掉 incoming 轨道自己的合法 advance;重绑是同一抑制且无标志生命周期。outgoing 的其余五个回调同时摘除(否则与 incoming 争显示时钟)。
+3. **reconcileQueue 不需要**:桌面引擎各持一个 URL,队列从不复制,AutoPlay 追加在结构上安全;`onArmIncoming`(响度归一化)一并省略——桌面无响度处理器。
+4. **tick 循环随设置启停**:仿 watchSleepTimer 但用 `collect`+幂等启动(collectLatest 会在滑杆拖动时取消心跳、把两个引擎冻在半程增益);`crossfadeSeconds=0` 不建循环(该状态下机器无事可做);`manualTicks` 测试缝把墙钟 tick 挡在单测外。
+5. **质量换源互斥照上游 3876 行的"等"**:落点前有界轮询(250ms/20s,上游 UPGRADE_CROSSFADE_* 常量)待 `isTransitioning()` 清除,再与既有 re-check 一起把关;解析与试听(自有静音引擎)照常先行。
+6. 状态机加 `now: () -> Long` 时钟缝(ARM_TIMEOUT/BAIL 的墙钟等待在单测里需虚拟钟);arm 解析用 `withContext(resolveDispatcher)` 跳线程(否则阻塞 Main)。
+7. `SleepTimerTest`"过期限不倒负"一行放宽为 `null || 0`:测试类顺序因新文件重排后,同一 JVM 里任何早建的 PlayerController 的 watchSleepTimer 会对过期限就地 `cancel()`——属于既有潜在测试隔离瑕疵的显形,已在行注说明。
+
+验证:纯 JVM 全绿——53 个测试类 / 502 用例 ×3 连跑零失败;`bitchord.probeCrossfade` 实机探针、`.shots/slice14/` 截图与接缝听感属机外人工验证(§5.2–5.4 未行)。
+
+已知瑕疵:fade 段双流并发解码的 CPU(§4 既记,待实机听感);ARMING 期间 standby 的陈旧 error 事件会误杀一次 arm(漏一次 crossfade,非破碎一次);fade 中拖动音量滑杆只写 session 引擎(outgoing 保持曲线,与上游 session-volume 语义同形)。
