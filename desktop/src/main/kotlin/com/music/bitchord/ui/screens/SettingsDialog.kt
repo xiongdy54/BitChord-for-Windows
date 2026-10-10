@@ -48,6 +48,8 @@ import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.account
+import com.music.bitchord.desktop.resources.animated_cover_art
+import com.music.bitchord.desktop.resources.animated_cover_art_subtitle
 import com.music.bitchord.desktop.resources.appearance
 import com.music.bitchord.desktop.resources.audio_output
 import com.music.bitchord.desktop.resources.audio_quality
@@ -66,6 +68,8 @@ import com.music.bitchord.desktop.resources.download_quality
 import com.music.bitchord.desktop.resources.language
 import com.music.bitchord.desktop.resources.password
 import com.music.bitchord.desktop.resources.playback
+import com.music.bitchord.desktop.resources.prioritize_spotify_canvas
+import com.music.bitchord.desktop.resources.prioritize_spotify_canvas_subtitle
 import com.music.bitchord.desktop.resources.sign_in_youtube_music
 import com.music.bitchord.desktop.resources.sign_out
 import com.music.bitchord.desktop.resources.sort_date_added
@@ -290,6 +294,26 @@ fun SettingsDialog(
                     subtitle = stringResource(Res.string.autoplay_subtitle),
                     checked = autoplayEnabled,
                 ) { AppSettings.setAutoplay(it) }
+
+                // Motion artwork — the looping clip some releases publish
+                // alongside their cover. The subordinate switch sits under the
+                // one that governs it, upstream's hierarchy; there is no
+                // cellular row on this platform, because the machine is the
+                // network and there is no metered case to ask about.
+                val animatedCanvas by AppSettings.animatedCanvas.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.animated_cover_art),
+                    subtitle = stringResource(Res.string.animated_cover_art_subtitle),
+                    checked = animatedCanvas,
+                ) { AppSettings.setAnimatedCanvas(it) }
+                if (animatedCanvas) {
+                    val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsState()
+                    SwitchRow(
+                        title = stringResource(Res.string.prioritize_spotify_canvas),
+                        subtitle = stringResource(Res.string.prioritize_spotify_canvas_subtitle),
+                        checked = prioritizeSpotifyCanvas,
+                    ) { AppSettings.setPrioritizeSpotifyCanvas(it) }
+                }
 
                 GroupDivider()
 

@@ -29,14 +29,18 @@
 //     `coil3.PlatformContext.INSTANCE`, as `MeshGradient.kt:225` and
 //     `ArtworkPalette.kt:154` already do.
 //
-// `rememberArtworkMesh`'s `canvasFrame` stays in the signature, so the player's
-// call site can read like upstream's, but it is typed `Any?` and only the null
-// path is kept: motion artwork does not ship in this slice.
+// `rememberArtworkMesh`'s `canvasFrame` is now the real thing (slice 13): the
+// player's frame capture hands it a 128px Skia bitmap, and the third effect
+// below is upstream's frame path back — mesh rebuilt off the clip, dark
+// rejects included (`isLikelyBlackFrame` waited in FrameHeuristics.kt for
+// exactly this). It stays a `Bitmap?` rather than upstream's
+// `android.graphics.Bitmap?` — the same substitution every pixel in this
+// port makes — and only `null` means "no frame", as it did before this slice.
 //
 // Upstream's motion-clip paragraphs — `MESH_SAMPLE`, `MESH_FADE_MS` and
-// `ArtworkMeshBackdrop`'s clip wording — stay verbatim and are inert on this
-// build: no frame producer was removed here, there simply is not one on desktop,
-// so a reader who wonders where the clip frames come from can stop looking.
+// `ArtworkMeshBackdrop`'s clip wording — stay verbatim and are live again:
+// `MESH_SAMPLE` bounds the stride a clip frame is read at, which is now the
+// path fresh frames take every `MESH_REFRESH_MS`.
 // (`MESH_SAMPLE`'s `[source]` link is the one word changed — `meshOf`'s parameter
 // is `pixels` now, and the reference would dangle.)
 package com.music.bitchord.ui.player
@@ -88,6 +92,7 @@ import com.music.bitchord.ui.theme.hslToColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.jetbrains.skia.Bitmap
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -230,15 +235,14 @@ fun FullArtworkBlurBackdrop(
  * keeps sending fresh ones gets a backdrop that follows the clip; see
  * [CanvasArtworkPlayer]'s `frameCapturePx` for what one of them costs.
  *
- * On desktop nothing arrives here: motion artwork is not in this slice, so the
- * parameter is `Any?` and only the null path of the original survives. It stays
- * so the player's call site reads the same as upstream's. `isLikelyBlackFrame`
- * waits in FrameHeuristics.kt for the day there is a frame producer.
+ * The frame arrives as a 128px Skia bitmap (see [CanvasArtworkPlayer]'s
+ * `onFrameCaptured`), read back through the same pixel adapter every other
+ * decode in this port goes through.
  */
 @Composable
 fun rememberArtworkMesh(
     imageUrl: String?,
-    canvasFrame: Any? = null,
+    canvasFrame: Bitmap? = null,
     /**
      * The artwork size to read, which should be the one the caller already has
      * on screen. Nothing here survives being averaged into thirty-six cells, so
@@ -309,9 +313,18 @@ fun rememberArtworkMesh(
             }
         }
     }
-    // Upstream's third effect here rebuilt the mesh from whatever frame
-    // [canvasFrame] carried, dark rejects included. There is no frame source on
-    // desktop, so there is nothing to key it on and it is not here.
+    // Upstream's third effect, back: whatever frame the caller last captured
+    // off the playing clip rebuilds the mesh, dark rejects included — the
+    // first read after a surface recreation is decoder noise, and averaging
+    // that would black out the backdrop for nothing.
+    LaunchedEffect(canvasFrame) {
+        val frame = canvasFrame ?: return@LaunchedEffect
+        if (isLikelyBlackFrame(frame)) return@LaunchedEffect
+        mesh = withContext(Dispatchers.Default) {
+            frame.argbPixels()?.let { pixels -> meshOf(pixels, frame.width, frame.height, imageUrl?.hashCode() ?: 0) }
+        } ?: mesh
+        meshUrl = imageUrl
+    }
     return mesh
 }
 

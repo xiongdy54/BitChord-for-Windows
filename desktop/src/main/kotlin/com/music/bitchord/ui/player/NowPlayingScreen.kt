@@ -119,6 +119,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -126,6 +127,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.constrain
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
@@ -137,6 +139,8 @@ import coil3.PlatformContext
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
+import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
@@ -163,6 +167,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.jetbrains.skia.Bitmap
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -529,6 +534,32 @@ private var lastControlSpread: Dp = 0.dp
  */
 private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 
+// app NowPlayingScreen.kt:188-193 — the constants layer left this one out as
+// "canvas + lossless-upgrade path"; the canvas half is here now. The
+// lossless-upgrade half (REVERT_CUE_MS) stays out with the switch that drove it.
+/**
+ * How long a canvas lookup waits for the track's album name before giving up
+ * on it. Long enough to cover the album lookup on a normal connection, short
+ * enough not to be noticed on a track that has no album to find.
+ */
+private const val ALBUM_SETTLE_MS = 700L
+
+// app NowPlayingScreen.kt:273-282 — the constants layer recorded this one as
+// "the Canvas mesh refresh, a later slice". This is that slice.
+/**
+ * How often the backdrop re-reads the colours of a playing Canvas clip.
+ *
+ * Every three seconds, with `MESH_FADE_MS` easing each read into the last so
+ * the backdrop arrives at its new colour rather than cutting to it. The read
+ * is the expensive half — upstream read the frame back off the GPU — and this
+ * is the number that decides how many of them there are; the fade is the
+ * cheap half and is over well inside the gap, which leaves the backdrop still
+ * for most of it. On this platform the frames already sit in memory, so the
+ * read is only the 128px downsample the renderer hands over — the cadence
+ * stays, because the fade budget it was tuned against is the same fade.
+ */
+private const val MESH_REFRESH_MS = 3_000L
+
 @Composable
 @OptIn(ExperimentalHazeApi::class, ExperimentalHazeMaterialsApi::class)
 fun NowPlayingScreen(
@@ -692,6 +723,41 @@ fun NowPlayingScreen(
     // source tree, so it needs its own source for the same frosted material as
     // the bottom navigation pill.
     val playerHaze = remember { HazeState() }
+
+    // app NowPlayingScreen.kt:658-705 — the canvas four states, with the
+    // Spotify presentation half of the block left out: no `sp_dc` harvest on
+    // this platform (slice 13's own record) means no SPOTIFY source ever
+    // arrives, so there is no phone presentation, deck or auto-hide to state.
+    // The four states the IOU named are all here.
+    //
+    // Animated cover art: the looping video some labels publish alongside a
+    // release, laid over the sleeve. A miss is the normal answer — see
+    // CanvasRepository, which is also where the "is this actually the right
+    // track" check lives.
+    val canvas = rememberCanvasArtwork(song)
+    var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
+    // Whether the clip actually has a frame on screen right now, and one of
+    // them — used to blow the sleeve out to the full-bleed hero treatment and
+    // to re-tint the backdrop off the clip's own colours rather than the
+    // still sleeve's.
+    // All four keyed on the clip rather than the song, so a switch that keeps
+    // the same clip — the common case, same title, same search — carries them
+    // through untouched: the player never re-reports a first frame, the
+    // sleeve never flashes back in under a clip that never went away. A
+    // different clip resets them with itself.
+    var canvasRendered by remember(canvas?.url) { mutableStateOf(false) }
+    var canvasFrame by remember(canvas?.url) { mutableStateOf<Bitmap?>(null) }
+    // How much of the still artwork the clip is covering, reported by the clip
+    // itself. Read from a draw scope rather than in composition: it moves every
+    // frame of the fade, and the still art it governs is an AsyncImage whose
+    // request is rebuilt on each pass and so would not be skipped.
+    val canvasCover = remember(canvas?.url) { mutableFloatStateOf(0f) }
+    // The one thing about it worth recomposing for: whether the clip is opaque
+    // enough that the still frame under it can go entirely. Derived, so this
+    // flips twice across a fade instead of once per frame of it.
+    val stillCovered by remember(canvas?.url) {
+        derivedStateOf { canvasCover.floatValue > 0.999f }
+    }
 
     val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].
@@ -946,9 +1012,12 @@ fun NowPlayingScreen(
     //
     // Upstream ORed a second answer in here — a Spotify clip is the background
     // whatever the preference says — and ANDed the user's own
-    // `AppSettings.fullBleedArtwork` switch in. The clip is not in this slice and
-    // the switch has no desktop setting sheet yet, so what is left is the width
-    // rule, with the switch taken at its default (on).
+    // `AppSettings.fullBleedArtwork` switch in. The clip half is in this build
+    // now (slice 13), but its second answer can only fire for a
+    // [CanvasSource.SPOTIFY] clip, and no Spotify source can be resolved until
+    // the token harvest lands — so what is left is still the width rule, with
+    // the switch taken at its default (on). The line waits, unedited, for the
+    // harvest to give the OR something to OR.
     val heroMode = playerFillsWindow(windowWidth)
 
     // Whether there's a still image to blow out — a placeholder tile is a card
@@ -980,9 +1049,23 @@ fun NowPlayingScreen(
     // the same frame. The sleeve must not hand over to a banner which is still
     // empty just because its own painter finished first.
     var heroArtLoaded by remember(art.url, heroMode) { mutableStateOf(false) }
-    LaunchedEffect(art.loaded) {
-        if (art.loaded) heroSettled = true
+    // app NowPlayingScreen.kt:1094-1096 — the clip latches the banner too, for
+    // a cover that never arrives at all and leaves the banner standing on the
+    // clip alone.
+    LaunchedEffect(art.loaded, canvasRendered) {
+        if (art.loaded || canvasRendered) heroSettled = true
     }
+    // app NowPlayingScreen.kt:1102-1111 — the clip that gets the banner, if
+    // any, hoisted because the still frame underneath keys its handover on
+    // exactly what is mounted here. The Spotify presentation pair that sat
+    // between upstream's `heroClip` and `canvasFirstPortrait` is left with the
+    // deck it drove; without a SPOTIFY source the fullscreen branch is dead,
+    // and `canvasFirstPortrait` is the whole of what survives of it.
+    val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
+    val canvasFirstPortrait = heroClip != null && canvasAspect > 0f && canvasAspect < 1f
+    // app NowPlayingScreen.kt:1003 — the collapse that pauses the decode for
+    // its whole length rather than only once the still frame has taken over.
+    val collapseStarted by remember { derivedStateOf { p() > 0f } }
     // The backdrop's colours, taken off the artwork's own arrangement rather than
     // quantised out of it — see [ArtworkMesh].
     //
@@ -994,12 +1077,16 @@ fun NowPlayingScreen(
     // slice 1 and is drawn by the home screen — goes uncalled here. The mesh is
     // the first layer the player stands on, exactly as it is on an Android phone
     // with its settings untouched.
-    val artMesh = key(song.videoId) { rememberArtworkMesh(remoteArt, null, ART_PX) }
+    //
+    // app NowPlayingScreen.kt:1141-1142 — the second argument is the frame
+    // capture again, as upstream's call was all along: a playing clip
+    // re-tints the backdrop off itself every [MESH_REFRESH_MS].
+    val artMesh = key(song.videoId) { rememberArtworkMesh(remoteArt, canvasFrame, ART_PX) }
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this
     // — see [heroVisible].
     val heroT = animateFloatAsState(
-        targetValue = if (heroMode && (art.loaded || heroSettled)) 1f else 0f,
+        targetValue = if (heroMode && (canvasRendered || art.loaded || heroSettled)) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
@@ -1037,6 +1124,26 @@ fun NowPlayingScreen(
     // the bottom of a contained portrait clip (`renderedCanvasBottom`) — and that
     // one is gone, which is why the seam has only the hero's own height left.
     var heroHeight by remember { mutableStateOf(0.dp) }
+
+    // app NowPlayingScreen.kt:1183-1196 — the portrait clip's presentation
+    // geometry, back with the clip. Upstream measured the whole player box;
+    // what the video here actually maps into is the clip's own mount
+    // (full-width banner, [heroHeight] tall), so that is what is measured —
+    // the same rectangle `videoMapping` inside the renderer works from.
+    var playerBounds by remember { mutableStateOf(IntSize.Zero) }
+    // The bottom a top-aligned contained clip reaches in the full-player view.
+    // Use measured pixels and the decoded display aspect, never screen constants.
+    val renderedCanvasBottom = if (canvasFirstPortrait && playerBounds.width > 0 && playerBounds.height > 0) {
+        val viewAspect = playerBounds.width.toFloat() / playerBounds.height
+        val videoHeight = if (canvasAspect >= viewAspect) playerBounds.width / canvasAspect
+            else playerBounds.height.toFloat()
+        with(density) { videoHeight.toDp() }
+    } else 0.dp
+    // Match the old hero's fade height in physical pixels, not its much larger
+    // percentage of a portrait video. The mask ends at the real video bottom.
+    val canvasFirstFadeFraction = if (renderedCanvasBottom > 0.dp) {
+        (heroHeight.value * HERO_FADE_FRACTION / renderedCanvasBottom.value).coerceIn(0f, 1f)
+    } else 0f
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip. Read
     // in three places — the strip itself,
@@ -1482,7 +1589,15 @@ fun NowPlayingScreen(
             // behind it is still transparent at that point, so pulling the
             // banner straight out leaves a frame or two with no artwork anywhere
             // on screen before the card catches up.
-            if (heroMode && (!collapsePastHalf || heroShowing)) {
+            // app NowPlayingScreen.kt:1715-1717 — the extra conjunct drops the
+            // still banner once the clip is opaque over it: down in the fade
+            // the clip is only part-opaque, and what shows through it there is
+            // the cover art rather than the backdrop — the artwork and the
+            // clip on screen at once. Held at alpha 0 that is exactly what
+            // would keep happening, so the layer is dropped outright.
+            if (heroMode && !(stillCovered && heroClip != null) &&
+                (!collapsePastHalf || heroShowing)
+            ) {
                 // Dropping this painter (while a panel is open) also drops the
                 // proof that this particular destination can draw. If it is
                 // mounted again, keep the sleeve visible until the new painter
@@ -1513,7 +1628,12 @@ fun NowPlayingScreen(
                         // mesh backdrop, leaving the cover sharp in the pill.
                         .hazeSource(playerHaze)
                         .graphicsLayer {
-                            alpha = heroVisible()
+                            // app NowPlayingScreen.kt:1750-1753 — hands its
+                            // opacity to the clip as the clip takes over, and
+                            // takes it straight back if there is no clip
+                            // mounted to hand it to.
+                            alpha = heroVisible() *
+                                (1f - if (heroClip != null) canvasCover.floatValue else 0f)
                             // The mask below erases part of what this layer
                             // drew, which it can only do in a buffer of its own.
                             compositingStrategy = CompositingStrategy.Offscreen
@@ -1529,6 +1649,59 @@ fun NowPlayingScreen(
                                 blendMode = BlendMode.DstIn,
                             )
                         },
+                )
+            }
+
+            // app NowPlayingScreen.kt:1775-1832 — the clip itself, mounted once
+            // behind the controls. The desktop renderer delivers its fade and
+            // its contain/crop mapping itself (no TextureView, no RenderEffect,
+            // no Matrix), so the two geometry-only parameters upstream passed —
+            // `portraitRevealBounds`, which gated a TextureView's first frame
+            // on the view reaching full-player layout, and `bottomFadeEndPx`,
+            // which pointed the mask at the video's real bottom — are inside
+            // the renderer here. `spotifyCanvasFullscreen` is dropped with the
+            // presentation it drove: without a SPOTIFY source the CROP branch
+            // it selected is unreachable, and what remains is upstream's else
+            // branch verbatim.
+            heroClip?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = isPlaying,
+                    // Paused for the whole collapse into the queue/lyrics panel
+                    // and back, not just once it hands off to the still frame at
+                    // p >= 0.5 — see [CanvasArtworkPlayer.pausedForTransition].
+                    pausedForTransition = collapseStarted,
+                    // Apple, Tidal and the community index all retain the
+                    // contained portrait treatment introduced for motion cover
+                    // art; Spotify's fullscreen CROP is the branch that went.
+                    contentMode = CanvasContentMode.FIT_PORTRAIT,
+                    alignPortraitTop = canvasFirstPortrait,
+                    onAspectRatioChanged = { canvasAspect = it },
+                    presentationAlpha = if (canvasFirstPortrait) {
+                        { (1f - 2f * p()).coerceIn(0f, 1f) }
+                    } else {
+                        { 1f }
+                    },
+                    onRenderedChanged = { canvasRendered = it },
+                    onFrameCaptured = {
+                        if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) canvasFrame = it
+                    },
+                    // The clip has no mesh to re-tint over a full-cover blur or
+                    // an open panel; upstream's Spotify answer is gone with the
+                    // presentation.
+                    refreshFrameEveryMs = if (tabletArtworkBackdrop || lyricsOpen || queueOpen) {
+                        null
+                    } else {
+                        MESH_REFRESH_MS
+                    },
+                    onCoverChanged = { canvasCover.floatValue = it },
+                    bottomFade = if (canvasFirstPortrait) canvasFirstFadeFraction else HERO_FADE_FRACTION,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .height(heroHeight)
+                        .onSizeChanged { playerBounds = it }
+                        .hazeSource(playerHaze),
                 )
             }
         }
@@ -2691,4 +2864,63 @@ private fun rememberPlayerScrub(
     LaunchedEffect(trackId) { pendingSeek = null }
 
     return scrub
+}
+
+/**
+ * The looping clip some releases publish alongside their cover, for [song], or
+ * null — a miss is the normal answer.
+ *
+ * app `ui/player/PlayerState.kt:44-95`, which no other task carried; it comes
+ * with the screen that reads it. Two desktop differences, both recorded at the
+ * lines they replace: `collectAsState` stands in for the lifecycle-aware one,
+ * and `canvasAllowedNow` is [AppSettings.animatedCanvas] alone — the cellular
+ * guard upstream ANDed in has no metered connection to ask about on a machine
+ * that *is* the network.
+ */
+@Composable
+private fun rememberCanvasArtwork(song: Song): CanvasArtwork? {
+    val canvasEnabled by AppSettings.animatedCanvas.collectAsState()
+    val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsState()
+    // The switch turns the feature off outright; upstream's narrower "not over
+    // cellular" case has no desktop domain — a clip's own loop costs network
+    // here exactly as it does there, but no connection this build can run on
+    // is ever metered, so the one switch is the whole gate.
+    val canvasAllowedNow = canvasEnabled
+    // Keyed on the song's identity rather than its videoId: a version switch
+    // swaps the videoId for another cut of the *same* song, and a canvas is
+    // searched for by title and artist — resetting here threw the clip out
+    // mid-loop, blanked the player down to the still sleeve and restarted it,
+    // which is the flicker. A different song keys differently and starts
+    // clean; the same-titled-impostor case is guarded where the clip is
+    // adopted, by [CanvasArtwork.matches].
+    var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow, prioritizeSpotifyCanvas) {
+        if (!canvasAllowedNow) {
+            canvas = null
+            return@LaunchedEffect
+        }
+        // Anything already settled for this track paints immediately: a
+        // reopened player, or a track coming round again in the queue.
+        //
+        // Across a version switch the clip found for the last cut is carried
+        // over rather than dropped — same title and artist, so the same
+        // search, so the same clip — and only while it still *answers* to
+        // what is playing: [CanvasArtwork.matches] is what stops a preserved
+        // clip from being a different song's that happens to share a title.
+        canvas = CanvasRepository.cached(song)
+            ?: canvas?.takeIf { it.matches(song.title, song.artist, song.albumName) }
+
+        // The album name is looked up separately and lands a moment after the
+        // player opens, and it is the field that makes the catalogue searches
+        // match. Give it that moment: if it arrives, this effect restarts and
+        // all that was spent waiting is the wait. If it never does — a track
+        // with no album, or a lookup that failed — the search still goes out,
+        // just a beat later, which is imperceptible for decoration.
+        if (canvas == null && song.albumName == null) delay(ALBUM_SETTLE_MS)
+        // Keep what an earlier pass found if this one comes back empty, rather
+        // than pulling a playing clip out from under itself.
+        canvas = CanvasRepository.canvasFor(song) ?: canvas
+    }
+
+    return canvas
 }

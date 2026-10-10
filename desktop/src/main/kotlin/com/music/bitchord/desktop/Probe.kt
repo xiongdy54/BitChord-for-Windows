@@ -68,6 +68,40 @@ private suspend fun probe(args: Array<String>) {
         return
     }
 
+    // The motion-artwork probe — the slice-13 one. `bitchord.probeCanvas`
+    // names a videoId: the track's metadata is resolved the way the player
+    // resolves it, the four-provider chain runs against it, and the verdict —
+    // which provider answered, what it answered, and whether the answer
+    // survives the strict re-check — goes to stdout. The catalogue search is
+    // network behaviour with no visual half, so this is the probe that can
+    // prove the chain before any window is opened at all.
+    System.getProperty("bitchord.probeCanvas")?.takeIf { it.isNotBlank() }?.let { videoId ->
+        println("── canvas resolve: $videoId ───────────")
+        val song = YtMusicRepository.trackLinks(videoId).getOrNull()
+        if (song == null) {
+            println("metadata resolve failed; the chain needs a title and an artist to search on")
+            return
+        }
+        println(
+            "track: ${song.title} — ${song.artist}" +
+                (song.albumName?.let { " · $it" } ?: ""),
+        )
+        val started = System.currentTimeMillis()
+        val found = com.music.bitchord.data.canvas.CanvasRepository.canvasFor(song)
+        val elapsed = System.currentTimeMillis() - started
+        if (found == null) {
+            println("canvas: none (${elapsed}ms)")
+        } else {
+            println("canvas: source=${found.source} in ${elapsed}ms")
+            println("  url: ${found.url}")
+            found.fallbackUrl?.let { println("  fallback: $it") }
+            println("  title=${found.title} artist=${found.artist} album=${found.album}")
+            println("  matches track: ${found.matches(song.title, song.artist, song.albumName)}")
+        }
+        DebugLog.d("BitChord", "probeCanvas: $videoId -> ${found?.url ?: "none"}")
+        return
+    }
+
     // No network wanted: the engine's own view of the machine's sound
     // endpoints, id and all — the settings dialog's radio list is exactly
     // this list.

@@ -177,6 +177,39 @@ object AppSettings {
         prefs.putString(KEY_AUTOPLAY, value.toString())
     }
 
+    // ── Motion artwork ───────────────────────────────────────────────────────
+    //
+    // The looping clip some releases publish alongside their cover. Key names
+    // are upstream's (`animated_canvas`, `prioritize_spotify_canvas`) so a
+    // settings file means the same thing on both platforms. The Android pair's
+    // other two keys stay out deliberately: `canvas_over_cellular` has no
+    // metered connection to ask about on a desktop — the machine *is* the
+    // network, so "allowed now" is simply [animatedCanvas] — and
+    // `spotify_canvas_auto_hide` drives the auto-hide glass deck, a live
+    // behaviour that is its own later slice.
+
+    /**
+     * Costs a video stream on top of the audio one and reaches three
+     * services that have nothing to do with playback, so it stays a switch —
+     * but it is the better default, and most tracks resolve to no canvas at
+     * all. See [CanvasRepository][com.music.bitchord.data.canvas.CanvasRepository].
+     */
+    val animatedCanvas = MutableStateFlow(prefs.getString(KEY_ANIMATED_CANVAS, "true") == "true")
+
+    fun setAnimatedCanvas(value: Boolean) {
+        animatedCanvas.value = value
+        prefs.putString(KEY_ANIMATED_CANVAS, value.toString())
+    }
+
+    /** Tries Spotify before Apple Music and the other animated-art providers. */
+    val prioritizeSpotifyCanvas =
+        MutableStateFlow(prefs.getString(KEY_PRIORITIZE_SPOTIFY_CANVAS, "false") == "true")
+
+    fun setPrioritizeSpotifyCanvas(value: Boolean) {
+        prioritizeSpotifyCanvas.value = value
+        prefs.putString(KEY_PRIORITIZE_SPOTIFY_CANVAS, value.toString())
+    }
+
     /**
      * Whether the home feed's "Recents" shelf is a list or a grid. The Android
      * setter writes it to storage; here it lives for the session, which is all
@@ -511,6 +544,8 @@ object AppSettings {
 
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_ANIMATED_CANVAS = "animated_canvas"
+    private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_SHOW_NERD_STATS = "show_nerd_stats"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_THEME_SETTING = "theme_setting"

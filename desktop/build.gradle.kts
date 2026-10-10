@@ -198,6 +198,10 @@ tasks.register<JavaExec>("probe") {
     // The local scan's headless probe: -PprobeLocalScan=<folder> walks that
     // folder and prints the row table. See Probe.kt.
     (project.findProperty("probeLocalScan") as String?)?.let { jvmArgs("-Dbitchord.probeLocalScan=$it") }
+    // The motion-artwork probe: -PprobeCanvas=<videoId> resolves the track's
+    // metadata and runs the four-provider canvas chain against it, printing
+    // the source, the URL shape and the strict-match verdict. See Probe.kt.
+    (project.findProperty("probeCanvas") as String?)?.let { jvmArgs("-Dbitchord.probeCanvas=$it") }
 }
 
 compose.desktop {
@@ -226,6 +230,7 @@ compose.desktop {
             "bitchord.probePlayVideoId",
             "bitchord.probeDestination",
             "bitchord.probeLocalScan",
+            "bitchord.probeCanvas",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",
