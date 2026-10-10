@@ -2,7 +2,7 @@
 
 日期:2026-10-11
 分支:`desktop-slice2-now-playing`
-状态:设计定稿(实施记录见 §7,实施后回填)
+状态:已完成(实施记录见 §7)
 
 ## 1. 背景
 
@@ -76,6 +76,20 @@
 
 Discord 登录与 RPC、Last.fm scrobble(切片 8 既有判词);WebDAV/SMB/本地音乐(独立切片,凭据存储骨架可后接);一起听;`stepProfile` 的手势/快捷键;Equalizer/交叉淡入淡出/运动封面/下载管理面板/本地扫描(Goal 序列的后件);CEF natives 离线捆绑(决策 2 备选);语言热切换;模块源体系。
 
-## 7. 实施记录(实施后回填)
+## 7. 实施记录(2026-10-11 回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+**交付**:决策 1–11 全部落地。`auth/AccountSessions.kt`(注册表数据类 + kotlinx.serialization 编解码,存储形状与上游 `google_account_sessions_v2` 逐字段一致,org.json 的"缺省全写、null 略去、空 id 回退派生 id、空 cookie 条目跳过"语义在 codec 里重现);`auth/AuthStore.kt`(`DpapiCipher`——JNA `Crypt32Util`,`dpapi:<base64>` 前缀,protect 失败降明文、unprotect 失败按无会话 fail-closed;cipher 可注入;键名与 Android v2 相同;`hasApiSid` 连 KDoc 逐字);`auth/WebSession.kt`(新增 `WebSessionMode`/`CapturedSession`/CEF 版 `BrowserSession`:清 Google cookie 按"枚举含 HttpOnly → 按名 deleteCookies + 过期对(域内/宿主两形)"、装快照按 origin 重发 `Secure`、读 music 全量含 HttpOnly 且读后 flush);`auth/AccountController.kt`(五条 StateFlow;`onWebSession` 验证先行 + 失败回滚 + email 去重;`selectProfile` 零网络;`removeAccount` 回退;`signOut` 多账号语义;`loadChannels`+`persistDetectedProfiles` 占位 id 合并逐语义;`restoreActiveSession` cookie 先于 channel;`onSessionChanged` 钩子);`auth/YtMusicLoginWindow.kt`(模态 880×640,`CefRuntime` lazy 单例,窗口化 Chromium,`CefDisplayHandler.onAddressChange` 驱动 pageReady,探针走 `window.cefQuery` MessageRouter,`captureRequest` 计数语义);`ui/screens/AccountDialog.kt`(收听身份单选 + 在 YT 中选择 + 添加账号 + 移除/退出);设置对话框〔账号〕组;Shell 宿主登录窗(`ShellState.showLogin/loginMode`);Main.kt 接线(启动恢复、会话变更重载 home+library 三页、quit 时 `CefRuntime.shutdown()`、`probeDestination=signin`);双语字符串。
+
+**与设计的偏离**:
+
+1. **`listen_as` 上游已有**(设计 §11 以为 Android 硬编码需要新增)——直接用合并拷贝的键;桌面字符串只新增 `account`/`remove_account`,比设计少一个。
+2. **退出路径的原生崩溃,实施期发现并修复**:`autoExit` 在登录窗开着时退出,`CefApp.dispose()` 在浏览器仍存活时于 `CefApp.N_Shutdown()` 原生崩溃(`hs_err`:`EXCEPTION_ACCESS_VIOLATION` @ jcef.dll)。修复:`CefRuntime` 登记打开的 `BrowserHolder`,`shutdown()` 先经各 holder 关浏览器(`close(true)` + client/router dispose,cookie 店顺带落盘)再 dispose app;复跑原崩溃路径干净退出。
+3. **浏览器表面被 Three 重试证明脚本盲**:PrintWindow 对 Chromium 152 的渲染子窗口(`CefBrowserWindow → Chrome_WidgetWin_1`)拿到的恒是白图——主窗拍、加 `--disable-gpu`/`--disable-gpu-compositing` 拍、对子窗口句柄直拍,三路全白(Chromium 的 DirectComposition 表面绕过窗口自身 DC);CopyFromScreen 在本会话整屏黑(既有记载)。页面确实在加载:`onAddressChange` 日志两度记录 `accounts.google.com/v3/signin/identifier?continue=https://music.youtube.com/…`。**登录窗内浏览器面的视觉验收留待人手**(切片 4 右键、切片 8 SMTC 的同一先例);GPU 关闭保留,但注释改写真理由——登录表单页不需要 GPU,软件渲染在 RDP/虚拟机/残缺 GPU 栈的机器上确定性最好,不是为了截图。
+4. **`AccountController` 多一条 `channelLister` 注入缝**(与 `validator` 同形),`loadChannels` 的合并逻辑进测试而网络不进。
+5. **探针 10s 上界**(上游 `evaluateJavascript` 无界)——模态对话框挂死在"checking"比全屏更不可原谅。
+6. **验证失败的回弹**:捕获被 controller 拒(验证 false)时窗口回就绪态(按钮重新可点、提示行可见)而非显示 `profile_unavailable`——该串只用于"页面上没有已登录身份"。窗口自持状态,签名里没有回调能把它按下去。
+7. **Android-only 件按设计丢弃**:MainViewModel 的 listener cache(`cacheCurrentListener`,桌面无逐身份 UI 缓存)、`removeAccount` 的 legacy `cookie` 键写回(设计禁 legacy);`adjacentProfile` 移植并测试但无手势/快捷键接线(决策 12)。
+
+**验证**:44 类 398 测试全绿(新增 38:AccountSessions 11、AuthStore 16——含 `__Secure-3PAPISID` 陷阱表、形近名钉死、外来 cipher fail-closed、明文降级、真 DPAPI 往返按假设守门;AccountController 11——假 validator/channelLister,拒绝回滚不动注册表、email 去重、换身份不再验证、占位合并、多账号退出)。实机探针:CEF 首开完成下载解压(`%LOCALAPPDATA%\BitChord\cef`,进度进 DebugLog)、二开走 `LOCATING→INITIALIZING→INITIALIZED` 免下载;登录窗打开且页面导航至 Google 登录页(日志);autoExit-with-open-dialog 崩溃修复后 45s 干净退出无残留 java 进程;`probeDestination=settings` 截图两态。截图 `.shots/slice10/`:设置〔账号〕组未登录态 zh-dark + en-light、登录窗(浏览器面白 = 已证脚本盲)。
+
+**已知瑕疵**:登录窗内浏览器表面脚本盲(偏离 3)——真实登录、cookie 捕获、库/历史/点赞写回、多账号并存、SWITCH_CHANNEL 装回快照,均待人手验证(设计 §5.2 本就计划人手);`CefApp` 是进程级单例,auth 测试不触它(单测只测纯逻辑与假件),真 DPAPI 往返测试在非 Windows 上按 assumption 跳过;CEF 下载进度日志的百分比口径不是 0–100(jcefmaven 的 value 语义超出分数),纯日志美观问题;设置对话框既有探针污染 `settings.properties` 的瑕疵与此片无关仍在。
