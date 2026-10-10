@@ -64,6 +64,7 @@ import com.music.bitchord.desktop.resources.status_resolving
 import com.music.bitchord.desktop.resources.volume
 import com.music.bitchord.playback.PlaybackStatus
 import com.music.bitchord.playback.RepeatMode
+import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.MarqueeText
@@ -75,10 +76,11 @@ import org.jetbrains.compose.resources.stringResource
  * The Apple Music toolbar, laid out the way the Windows app lays it out — and
  * the way the user called out when it drifted from that: back/forward at the
  * frame's left edge, then **one cluster around the centre** — transport, the
- * now-playing display, volume — with nothing pulling any of the three out to
- * the edges. The window's own three buttons live at the frame's right edge in
- * their own overlay ([WindowControls]), not in this row, so they keep their
- * place when the full-screen player covers the chrome. One row of
+ * now-playing display, volume, and the download indicator at the cluster's
+ * end whenever a batch gives it a reason to exist — with nothing pulling any
+ * of them out to the edges. The window's own three buttons live at the frame's
+ * right edge in their own overlay ([WindowControls]), not in this row, so they
+ * keep their place when the full-screen player covers the chrome. One row of
  * [TOOLBAR_HEIGHT], painted in the sidebar's chrome colour so the two read as
  * one surface.
  *
@@ -88,9 +90,13 @@ import org.jetbrains.compose.resources.stringResource
  *
  * Everything here is a *junction*, not a surface of its own: every value it
  * shows arrives as a parameter and every gesture leaves as a callback, so the
- * wiring stays in [Shell] where the controllers live. The one exception is
- * the volume scale — `PlayerController` speaks 0..100, `ThinSlider` speaks
- * 0f..1f, and the conversion sits beside the slider that needs it.
+ * wiring stays in [Shell] where the controllers live. Two exceptions, both
+ * conversions rather than surfaces: the volume scale — `PlayerController`
+ * speaks 0..100, `ThinSlider` speaks 0f..1f, and the conversion sits beside
+ * the slider that needs it — and the download indicator, which keeps
+ * upstream's self-deciding visibility and reads [com.music.bitchord.download.DownloadSession]
+ * directly, because whether a batch should be announced is a question about
+ * the batch, not about the chrome's wiring.
  */
 @Composable
 fun Toolbar(
@@ -113,6 +119,8 @@ fun Toolbar(
     onNext: () -> Unit,
     onCycleRepeat: () -> Unit,
     onOpenPlayer: () -> Unit,
+    /** Opens the download manager; the indicator that leads there decides its own visibility. */
+    onOpenDownloadsManager: () -> Unit,
     windowMaximized: Boolean,
     onToggleMaximize: () -> Unit,
     /**
@@ -280,6 +288,16 @@ fun Toolbar(
                 volumePercent = volumePercent,
                 onVolumeChange = onVolumeChange,
             )
+
+            // The download indicator, right of the volume — the desktop seat
+            // for upstream's top-bar slot beside the account photo. The button
+            // decides its own presence (AnimatedVisibility on DownloadSession's
+            // `visible` stream, handed in whole by the shell), so a quiet day
+            // costs the row nothing and a batch announces itself; the appear/
+            // disappear pushes the centred cluster the way upstream's top bar
+            // pushed its neighbours — a behaviour to re-judge on screenshots,
+            // not to pre-empt here.
+            TopBarDownloadButton(onClick = onOpenDownloadsManager)
         }
 
         // Back and forward, pinned to the frame's left edge. A desktop

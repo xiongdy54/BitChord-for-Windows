@@ -570,6 +570,7 @@ fun main() {
         if (probeDestination == "settings") shellState.showSettings = true
         if (probeDestination == "sleeptimer") shellState.showSleepTimer = true
         if (probeDestination == "signin") shellState.showLogin = true
+        if (probeDestination == "downloadsmanager") shellState.showDownloadsManager = true
         if (probeDestination == "outputdevices") {
             shellState.showSettings = true
             openAudioOutputOnStart = true

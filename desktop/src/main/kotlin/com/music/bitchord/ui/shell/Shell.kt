@@ -48,10 +48,12 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
+import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.local_music
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.songs
+import com.music.bitchord.ui.components.DownloadManagerPanel
 import com.music.bitchord.ui.DetailPages
 import com.music.bitchord.ui.ExploreViewModel
 import com.music.bitchord.ui.HomeViewModel
@@ -101,6 +103,14 @@ class ShellState {
      * opens from the player's right-click menu, which lives over everything.
      */
     var showSleepTimer by mutableStateOf(false)
+
+    /**
+     * The download manager's panel — window-level like [showSettings], reached
+     * from the toolbar's own download indicator. Marking the batch seen is the
+     * *host's* act, not the panel's: it belongs to this flag going down, so
+     * every way out of the panel signs off on the result.
+     */
+    var showDownloadsManager by mutableStateOf(false)
 
     /**
      * The Google sign-in window — window-level like [showSettings], for the
@@ -245,6 +255,7 @@ fun Shell(
             onNext = player::next,
             onCycleRepeat = player::cycleRepeat,
             onOpenPlayer = { if (song != null) state.showPlayer = true },
+            onOpenDownloadsManager = { state.showDownloadsManager = true },
             windowMaximized = windowMaximized,
             onToggleMaximize = onToggleMaximize,
             window = window,
@@ -545,6 +556,21 @@ fun Shell(
     // settings — not a layer of the player itself.
     if (state.showSleepTimer) {
         SleepTimerDialog(onDismiss = { state.showSleepTimer = false })
+    }
+
+    // The download manager, a window-level dialog like the sleep timer — the
+    // desktop counterpart of the phone's global download sheet. The batch is
+    // marked seen on the way *out* (upstream's close callback did the same):
+    // what the exit signs off on is the result, so a look in halfway through a
+    // running batch signs nothing, and the indicator stays up until the queue
+    // has finished and been read.
+    if (state.showDownloadsManager) {
+        DownloadManagerPanel(
+            onDismiss = {
+                state.showDownloadsManager = false
+                DownloadSession.markSeen()
+            },
+        )
     }
 
     // The window's own three, painted over everything — player included.
