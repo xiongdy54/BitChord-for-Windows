@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,10 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.glass.LocalAppBackdrop
+import com.music.bitchord.ui.glass.rememberAppBackdrop
+import com.music.bitchord.ui.glass.layerBackdrop
 import com.music.bitchord.auth.AccountController
 import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.auth.YtMusicLoginWindow
@@ -505,6 +510,16 @@ fun Shell(
         // the chrome beneath it, stays deliberate: unmounting the toolbar to
         // make the player modal would make the transport vanish for the frame
         // the overlay closes on.
+        //
+        // The glass's view of the world (slice 17): the player's own content
+        // recorded for the bottom controls' glass to sample. Recorded only
+        // while the glass is wanted — the recorder is one extra full-content
+        // capture per frame, and upstream gates it the same way
+        // (glassSamplesBackdrop).
+        val liquidGlassWanted by AppSettings.liquidGlass.collectAsState()
+        val reduceBlur by AppSettings.reduceDynamicBlur.collectAsState()
+        val playerBackdrop = rememberAppBackdrop()
+        CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -554,9 +569,16 @@ fun Shell(
                             state.showPlayer = false
                         }
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().then(
+                        if (liquidGlassWanted && !reduceBlur) {
+                            Modifier.layerBackdrop(playerBackdrop)
+                        } else {
+                            Modifier
+                        },
+                    ),
                 )
             }
+        }
         }
     }
 

@@ -52,4 +52,6 @@
     <string name="local_music_remove_folder">移除此文件夹</string>
     <string name="local_music_no_folders">还没有可扫描的文件夹。请在「设置 → 本地音乐」中选择音乐文件夹。</string>
     <string name="local_music_delete_confirm">从磁盘删除所选的 %1$d 个文件？</string>
+    <string name="liquid_glass_subtitle_desktop">播放器控件上的真折射玻璃。会占用更多 GPU。</string>
+    <string name="reduce_dynamic_blur_subtitle_desktop">把应用内的磨砂玻璃换成实底填充。</string>
 </resources>

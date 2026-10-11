@@ -147,6 +147,9 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.glass.GlassEffects
+import com.music.bitchord.ui.glass.LocalLiquidGlassEnabled
+import com.music.bitchord.ui.glass.liquidGlass
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.desktop.playback.LyricsProviderState
@@ -2477,8 +2480,32 @@ fun NowPlayingScreen(
             // of the player. Whatever is left over above it is the artwork's,
             // which is what keeps this row of controls in the same place on
             // every screen instead of being shoved off the bottom of a tall one.
+            //
+            // The glass seat (slice 17): when liquid glass is on, this cluster
+            // sits on a real glass surface — the recorded player content
+            // blurred, saturated and refracted behind the controls — the
+            // desktop's stand-in for upstream GlassNavBar's docked now-playing
+            // controls. Off (or reduce-blur on), the block draws exactly as it
+            // always has: nothing between it and the artwork.
+            val reduceBlur by AppSettings.reduceDynamicBlur.collectAsState()
+            val glassBar = LocalLiquidGlassEnabled.current && GlassEffects.isGlassSupported && !reduceBlur
+            val barShape = RoundedCornerShape(28.dp)
             Column(
-                modifier = Modifier
+                modifier = (
+                    if (glassBar) {
+                        Modifier.liquidGlass(barShape)
+                    } else {
+                        Modifier
+                    }
+                    ).let { base ->
+                    if (glassBar) {
+                        base
+                            .clip(barShape)
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    } else {
+                        base
+                    }
+                }
                     .widthIn(max = PLAYER_MAX_WIDTH)
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,

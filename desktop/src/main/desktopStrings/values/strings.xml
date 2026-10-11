@@ -59,4 +59,6 @@
     <string name="local_music_remove_folder">Remove this folder</string>
     <string name="local_music_no_folders">No folders to scan yet. Choose your music folders in Settings → Local Music.</string>
     <string name="local_music_delete_confirm">Delete %1$d selected file(s) from disk?</string>
+    <string name="liquid_glass_subtitle_desktop">Real refracting glass on the player's controls. Uses more GPU.</string>
+    <string name="reduce_dynamic_blur_subtitle_desktop">Swaps frosted glass for solid fills across the app.</string>
 </resources>

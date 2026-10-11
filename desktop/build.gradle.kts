@@ -252,6 +252,7 @@ compose.desktop {
             "bitchord.probeEqualizer",
             "bitchord.probeEqualizerPreview",
             "bitchord.probeSourceEditorPreview",
+            "bitchord.liquidGlass",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",

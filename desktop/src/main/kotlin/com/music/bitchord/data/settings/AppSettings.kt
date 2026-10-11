@@ -209,7 +209,12 @@ object AppSettings {
     val reduceAnimation = MutableStateFlow(false)
 
     /** Trades the live backdrop blur for a cheaper static one. Settings sheet, later slice. */
-    val reduceDynamicBlur = MutableStateFlow(false)
+    val reduceDynamicBlur = MutableStateFlow(prefs.getString(KEY_REDUCE_DYNAMIC_BLUR, "false") == "true")
+
+    fun setReduceDynamicBlur(value: Boolean) {
+        reduceDynamicBlur.value = value
+        prefs.putString(KEY_REDUCE_DYNAMIC_BLUR, value.toString())
+    }
 
     /** Swipe a queue row sideways to jump to it. Off by default upstream too. */
     val swipeToPlayNext = MutableStateFlow(false)
@@ -459,6 +464,21 @@ object AppSettings {
     fun setTranslucentWindow(value: Boolean) {
         translucentWindow.value = value
         prefs.putString(KEY_TRANSLUCENT_WINDOW, value.toString())
+    }
+
+    /**
+     * Whether glass surfaces draw the real thing — backdrop sample, saturation,
+     * blur, lens refraction, rim highlight — rather than a solid fill.
+     *
+     * Default off, as upstream defaults off: the glass costs a full-window
+     * layer recording per frame at a third of the resolution, and it is a
+     * taste, not an improvement — the controls underneath are identical.
+     */
+    val liquidGlass = MutableStateFlow(prefs.getString(KEY_LIQUID_GLASS, "false") == "true")
+
+    fun setLiquidGlass(value: Boolean) {
+        liquidGlass.value = value
+        prefs.putString(KEY_LIQUID_GLASS, value.toString())
     }
 
     /**
@@ -747,6 +767,8 @@ object AppSettings {
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_THEME_SETTING = "theme_setting"
     private const val KEY_TRANSLUCENT_WINDOW = "translucent_window"
+    private const val KEY_LIQUID_GLASS = "liquid_glass"
+    private const val KEY_REDUCE_DYNAMIC_BLUR = "reduce_dynamic_blur"
     private const val KEY_LANGUAGE = "language"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"

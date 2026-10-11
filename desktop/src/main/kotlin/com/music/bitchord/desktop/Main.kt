@@ -459,6 +459,12 @@ fun main() {
     // Upstream BitChordApplication.onCreate: seed the built-in kinds and load
     // the stored list before anything can ask for a source.
     com.music.bitchord.data.sources.SourceRegistry.init()
+    // The glass probe's read-only override of AppSettings.liquidGlass. In-memory
+    // only, never the file the user's own choice lives in — the theme probe's
+    // same discipline, one setting over.
+    System.getProperty("bitchord.liquidGlass")?.let { seeded ->
+        AppSettings.liquidGlass.value = seeded == "true"
+    }
     val player = PlayerController(scope)
     val lyrics = LyricsCoordinator(scope)
     // The quality swap's scripted half: wait for a track to actually sound,
@@ -925,6 +931,10 @@ if (shotPath.isNotBlank() && shotMs != null) {
             BitChordTheme(darkTheme = darkTheme) {
                 CompositionLocalProvider(
                     LocalSongActions provides songActions,
+                    // The glass relay (slice 17): upstream MainActivity's
+                    // LocalLiquidGlassEnabled, fed from the same setting.
+                    com.music.bitchord.ui.glass.LocalLiquidGlassEnabled provides
+                        AppSettings.liquidGlass.value,
                     // The right-click menus draw in the app's own style, not
                     // the platform default's — see BitChordContextMenu.
                     LocalContextMenuRepresentation provides

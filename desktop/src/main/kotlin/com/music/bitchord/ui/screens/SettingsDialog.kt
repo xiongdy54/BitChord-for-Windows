@@ -58,6 +58,15 @@ import com.music.bitchord.desktop.resources.autoplay_subtitle
 import com.music.bitchord.desktop.resources.crossfade
 import com.music.bitchord.desktop.resources.crossfade_subtitle
 import com.music.bitchord.desktop.resources.equalizer
+import com.music.bitchord.desktop.resources.liquid_glass
+import com.music.bitchord.desktop.resources.liquid_glass_subtitle_desktop
+import com.music.bitchord.desktop.resources.reduce_dynamic_blur
+import com.music.bitchord.desktop.resources.reduce_dynamic_blur_subtitle_desktop
+import com.music.bitchord.desktop.resources.equalizer
+import com.music.bitchord.desktop.resources.liquid_glass
+import com.music.bitchord.desktop.resources.liquid_glass_subtitle_desktop
+import com.music.bitchord.desktop.resources.reduce_dynamic_blur
+import com.music.bitchord.desktop.resources.reduce_dynamic_blur_subtitle_desktop
 import com.music.bitchord.desktop.resources.equalizer_subtitle
 import com.music.bitchord.desktop.resources.off
 import com.music.bitchord.desktop.resources.connected
@@ -286,6 +295,24 @@ fun SettingsDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+
+                // The glass pair (slice 17). Liquid glass turns the player's
+                // bottom controls into real refracting glass; reduce dynamic
+                // blur is the solid-fill escape hatch, and while it is on the
+                // glass modifier itself draws the fallback look — the switch
+                // wins without needing the glass row to move.
+                val liquidGlass by AppSettings.liquidGlass.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.liquid_glass),
+                    subtitle = stringResource(Res.string.liquid_glass_subtitle_desktop),
+                    checked = liquidGlass,
+                ) { AppSettings.setLiquidGlass(it) }
+                val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.reduce_dynamic_blur),
+                    subtitle = stringResource(Res.string.reduce_dynamic_blur_subtitle_desktop),
+                    checked = reduceDynamicBlur,
+                ) { AppSettings.setReduceDynamicBlur(it) }
 
                 GroupDivider()
 
