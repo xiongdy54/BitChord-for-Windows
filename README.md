@@ -35,16 +35,16 @@
 
 <h1><a id="screenshots"></a>Screenshots</h1>
 
-<img src="docs/screenshots/player-lyrics.jpg" alt="The full-screen player with word-synced lyrics" width="100%" />
+<img src="docs/screenshots/v0.2/player-lyrics.jpg" alt="The full-screen player with word-synced lyrics" width="100%" />
 
 <table>
   <tr>
-    <td width="50%" align="center"><img src="docs/screenshots/home.jpg" alt="Listen Now home page" /><br/><sub><b>Listen Now</b> — your personalized home shelf</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/player.jpg" alt="The full-screen now playing view" /><br/><sub><b>Now Playing</b> — artwork-driven backdrop, stats for nerds</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/home.jpg" alt="Listen Now home page" /><br/><sub><b>Listen Now</b> — your personalized home shelf</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/player.jpg" alt="The full-screen now playing view" /><br/><sub><b>Now Playing</b> — artwork-driven backdrop, stats for nerds</sub></td>
   </tr>
   <tr>
-    <td width="50%" align="center"><img src="docs/screenshots/search.jpg" alt="The search page" /><br/><sub><b>Search</b> — filterable by songs, videos, albums, artists and playlists</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/localmusic.jpg" alt="The local music page" /><br/><sub><b>Local Music</b> — your own folders and WebDAV, in the same library</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/search.jpg" alt="The search page" /><br/><sub><b>Search</b> — filterable by songs, videos, albums, artists and playlists</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/localmusic.jpg" alt="The local music page" /><br/><sub><b>Local Music</b> — your own folders and WebDAV, in the same library</sub></td>
   </tr>
 </table>
 

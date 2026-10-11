@@ -35,16 +35,16 @@
 
 <h1><a id="截图"></a>截图</h1>
 
-<img src="docs/screenshots/player-lyrics.jpg" alt="全屏播放器与逐字歌词" width="100%" />
+<img src="docs/screenshots/v0.2/player-lyrics.jpg" alt="全屏播放器与逐字歌词" width="100%" />
 
 <table>
   <tr>
-    <td width="50%" align="center"><img src="docs/screenshots/home.jpg" alt="「立即收听」首页" /><br/><sub><b>立即收听</b> — 为你推荐的首页内容</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/player.jpg" alt="全屏正在播放视图" /><br/><sub><b>正在播放</b> — 封面驱动的动态背景、极客数据</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/home.jpg" alt="「立即收听」首页" /><br/><sub><b>立即收听</b> — 为你推荐的首页内容</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/player.jpg" alt="全屏正在播放视图" /><br/><sub><b>正在播放</b> — 封面驱动的动态背景、极客数据</sub></td>
   </tr>
   <tr>
-    <td width="50%" align="center"><img src="docs/screenshots/search.jpg" alt="搜索页" /><br/><sub><b>搜索</b> — 可按歌曲、视频、专辑、艺人、播放列表过滤</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/localmusic.jpg" alt="本地音乐页" /><br/><sub><b>本地音乐</b> — 你自己的文件夹与 WebDAV，同一个资料库</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/search.jpg" alt="搜索页" /><br/><sub><b>搜索</b> — 可按歌曲、视频、专辑、艺人、播放列表过滤</sub></td>
+    <td width="50%" align="center"><img src="docs/screenshots/v0.2/localmusic.jpg" alt="本地音乐页" /><br/><sub><b>本地音乐</b> — 你自己的文件夹与 WebDAV，同一个资料库</sub></td>
   </tr>
 </table>
 
