@@ -77,4 +77,14 @@
     <string name="check_for_updates">Check for updates</string>
     <string name="update_none">BitChord is up to date</string>
     <string name="update_open_release">Open release page</string>
+
+    <!-- Downloads' hold-and-continue (slice 20): the row states and the actions
+         the manager's rows carry. Upstream has no pause; the words are the
+         desktop's own, and the download-location row is desktop-only by nature. -->
+    <string name="download_paused">Paused</string>
+    <string name="resume">Resume</string>
+    <string name="download_location">Download location</string>
+    <string name="download_location_reset">Reset to the BitChord folder</string>
+    <string name="download_all_moving">Downloading…</string>
+    <string name="download_all_done">Downloaded</string>
 </resources>

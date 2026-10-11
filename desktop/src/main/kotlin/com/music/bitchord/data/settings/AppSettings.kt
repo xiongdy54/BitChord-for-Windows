@@ -162,6 +162,7 @@ object AppSettings {
         KEY_OUTPUT_DEVICE_ID,
         KEY_OUTPUT_DEVICE_NAME,
         KEY_LOCAL_MUSIC_FOLDERS,
+        KEY_DOWNLOAD_FOLDER,
     )
 
     val audioQuality = MutableStateFlow(
@@ -226,6 +227,20 @@ object AppSettings {
     fun setDownloadQuality(value: DownloadQuality) {
         downloadQuality.value = value
         prefs.putString(KEY_DOWNLOAD_QUALITY, value.name)
+    }
+
+    /**
+     * Where downloads land — the user's own folder, or null for the app's
+     * downloads directory. Desktop-specific (upstream has no such choice; the
+     * phone's MediaStore decided), so the key is the desktop's own; it rides
+     * [DEVICE_LOCAL] — a path on this machine is not a fact a backup should
+     * carry — and the download store reads it per download.
+     */
+    val downloadFolder = MutableStateFlow(prefs.getStringOrNull(KEY_DOWNLOAD_FOLDER)?.takeIf { it.isNotBlank() })
+
+    fun setDownloadFolder(value: String?) {
+        downloadFolder.value = value
+        if (value == null) prefs.remove(KEY_DOWNLOAD_FOLDER) else prefs.putString(KEY_DOWNLOAD_FOLDER, value)
     }
 
     /**
@@ -906,6 +921,7 @@ object AppSettings {
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
     private const val KEY_AUDIO_QUALITY = "audio_quality"
     private const val KEY_DOWNLOAD_QUALITY = "download_quality"
+    private const val KEY_DOWNLOAD_FOLDER = "download_folder"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_UPGRADE_LENGTH_SLACK = "upgrade_length_slack_seconds"
     private const val UPGRADE_LENGTH_SLACK_DEFAULT = 3

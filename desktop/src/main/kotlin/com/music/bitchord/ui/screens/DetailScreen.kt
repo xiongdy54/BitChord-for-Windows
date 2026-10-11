@@ -50,10 +50,15 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.download.DownloadState
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.album
 import com.music.bitchord.desktop.resources.artist
 import com.music.bitchord.desktop.resources.couldnt_load_tracks
+import com.music.bitchord.desktop.resources.download_all
+import com.music.bitchord.desktop.resources.download_all_done
+import com.music.bitchord.desktop.resources.download_all_moving
 import com.music.bitchord.desktop.resources.ic_player_play
 import com.music.bitchord.desktop.resources.monthly_listeners
 import com.music.bitchord.desktop.resources.no_tracks_here
@@ -89,6 +94,7 @@ fun DetailScreen(
     onPlayFrom: (List<Song>, Int) -> Unit,
     onShufflePlay: (List<Song>) -> Unit,
     onShelfItemClick: (ShelfItem) -> Unit,
+    onDownloadAll: (List<Song>) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
@@ -126,6 +132,7 @@ fun DetailScreen(
             onPlayFrom = onPlayFrom,
             onShufflePlay = onShufflePlay,
             onShelfItemClick = onShelfItemClick,
+            onDownloadAll = onDownloadAll,
             modifier = modifier,
         )
     }
@@ -139,6 +146,7 @@ private fun DetailContent(
     onPlayFrom: (List<Song>, Int) -> Unit,
     onShufflePlay: (List<Song>) -> Unit,
     onShelfItemClick: (ShelfItem) -> Unit,
+    onDownloadAll: (List<Song>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Walk to the end of a paginated listing without a "show more" button:
@@ -162,6 +170,7 @@ private fun DetailContent(
                 kind = viewModel.kind,
                 onPlay = { if (ui.songs.isNotEmpty()) onPlayFrom(ui.songs, 0) },
                 onShuffle = { if (ui.songs.isNotEmpty()) onShufflePlay(ui.songs) },
+                onDownloadAll = { if (ui.songs.isNotEmpty()) onDownloadAll(ui.songs) },
             )
         }
 
@@ -224,6 +233,7 @@ private fun DetailHeader(
     kind: BrowseType,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
+    onDownloadAll: () -> Unit,
 ) {
     Box(Modifier.fillMaxWidth()) {
         // The wash: the cover itself, blurred past recognition, pulled back
@@ -328,6 +338,25 @@ private fun DetailHeader(
                     filled = false,
                     onClick = onShuffle,
                 )
+                // The collection's own download, slice 20's answer to the
+                // batch question: the label states where the release's batch
+                // stands (nothing asked / some of it moving / all of it on
+                // disk), and the tap is always live — a second tap on a
+                // partially-landed release re-asks for what is still missing,
+                // which is exactly what "download all" means mid-batch.
+                DetailPill(
+                    label = collectionDownloadLabel(ui.songs),
+                    icon = {
+                        Icon(
+                            BitChordIcons.Download,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    },
+                    filled = false,
+                    onClick = onDownloadAll,
+                )
             }
         }
     }
@@ -390,4 +419,43 @@ private fun kindLabel(kind: BrowseType): String = when (kind) {
     BrowseType.ALBUM -> stringResource(Res.string.album).uppercase()
     BrowseType.ARTIST -> stringResource(Res.string.artist).uppercase()
     else -> stringResource(Res.string.playlist).uppercase()
+}
+
+/**
+ * The header download pill's word, from where the release's batch stands.
+ * The derivation is the pure [releaseDownloadState] below; this half is only
+ * the resource mapping, the batch-summary split slice 12 established.
+ */
+@Composable
+private fun collectionDownloadLabel(songs: List<Song>): String = when (
+    releaseDownloadState(
+        ids = songs.map { it.videoId },
+        active = Downloads.active.collectAsState().value,
+        saved = Downloads.saved.collectAsState().value,
+    )
+) {
+    ReleaseDownloadState.IDLE -> stringResource(Res.string.download_all)
+    ReleaseDownloadState.MOVING -> stringResource(Res.string.download_all_moving)
+    ReleaseDownloadState.ALL_SAVED -> stringResource(Res.string.download_all_done)
+}
+
+/** Where a release's batch stands, as the header pill words it. */
+internal enum class ReleaseDownloadState { IDLE, MOVING, ALL_SAVED }
+
+/**
+ * A release's batch state from the download flows, pure: everything on disk is
+ * done; anything of it still in the queue (moving or held — a paused batch is
+ * still "its download", and the tap is a no-op the queue's dedupe answers)
+ * is moving; otherwise the ask has not happened or has not landed, and the
+ * pill is the invitation.
+ */
+internal fun releaseDownloadState(
+    ids: List<String>,
+    active: Map<String, DownloadState>,
+    saved: Map<String, String>,
+): ReleaseDownloadState = when {
+    ids.isEmpty() -> ReleaseDownloadState.IDLE
+    ids.all { it in saved } -> ReleaseDownloadState.ALL_SAVED
+    ids.any { it in active } -> ReleaseDownloadState.MOVING
+    else -> ReleaseDownloadState.IDLE
 }

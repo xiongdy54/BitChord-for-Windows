@@ -68,4 +68,13 @@
     <string name="check_for_updates">检查更新</string>
     <string name="update_none">BitChord 已是最新版本</string>
     <string name="update_open_release">打开发布页</string>
+
+    <!-- 下载的暂停与恢复（切片 20）：管理面板行的状态与动作。上游没有暂停，
+         措辞是桌面自拟的；下载位置一行天然是桌面专属。 -->
+    <string name="download_paused">已暂停</string>
+    <string name="resume">恢复</string>
+    <string name="download_location">下载位置</string>
+    <string name="download_location_reset">重置回 BitChord 文件夹</string>
+    <string name="download_all_moving">下载中…</string>
+    <string name="download_all_done">已下载</string>
 </resources>

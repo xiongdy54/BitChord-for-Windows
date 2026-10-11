@@ -97,6 +97,9 @@ import com.music.bitchord.desktop.resources.reduce_dynamic_blur_subtitle_desktop
 import com.music.bitchord.desktop.resources.equalizer_subtitle
 import com.music.bitchord.desktop.resources.off
 import com.music.bitchord.desktop.resources.connected
+import com.music.bitchord.desktop.resources.download_location
+import com.music.bitchord.desktop.resources.download_location_reset
+import com.music.bitchord.desktop.resources.saved_to_bitchord_folder
 import com.music.bitchord.desktop.resources.dark_theme
 import com.music.bitchord.desktop.resources.library_sign_in_description
 import com.music.bitchord.desktop.resources.listen_as
@@ -229,6 +232,9 @@ fun SettingsDialog(
         onDismissRequest = onDismiss,
     ) {
         val scrollState = rememberScrollState()
+        // One scope for the dialog's own errands — the file choosers (which
+        // block their thread, so they hop to IO) and the update check.
+        val dialogScope = rememberCoroutineScope()
         if (scrollToEnd) {
             LaunchedEffect(Unit) {
                 kotlinx.coroutines.delay(500)
@@ -578,6 +584,50 @@ fun SettingsDialog(
                     ) { AppSettings.setDownloadQuality(quality) }
                 }
 
+                // Where the files land (slice 20). The value row states the
+                // folder; the picker row and the reset below it are the two
+                // acts. The default — the app's own downloads folder — is what
+                // a fresh install finds, and the reset row only exists while a
+                // custom choice does.
+                val downloadFolder by AppSettings.downloadFolder.collectAsState()
+                Text(
+                    text = stringResource(Res.string.download_location),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Text(
+                    text = downloadFolder ?: stringResource(Res.string.saved_to_bitchord_folder),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                ClickableRow(
+                    title = stringResource(Res.string.download_location),
+                    subtitle = stringResource(Res.string.local_music_folder),
+                ) {
+                    dialogScope.launch {
+                        val chosen = withContext(Dispatchers.IO) {
+                            val chooser = javax.swing.JFileChooser().apply {
+                                fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                                isMultiSelectionEnabled = false
+                            }
+                            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                chooser.selectedFile.absolutePath
+                            } else {
+                                null
+                            }
+                        }
+                        chosen?.let { AppSettings.setDownloadFolder(it) }
+                    }
+                }
+                if (downloadFolder != null) {
+                    ClickableRow(
+                        title = stringResource(Res.string.download_location_reset),
+                    ) { AppSettings.setDownloadFolder(null) }
+                }
+
                 GroupDivider()
 
                 // The lyric settings, hanging where slice 4's groups hang. The
@@ -653,7 +703,6 @@ fun SettingsDialog(
                 // local-music precedent — and the errands themselves are
                 // [com.music.bitchord.data.backup.Backup]'s.
                 val backupMessage = remember { mutableStateOf<String?>(null) }
-                val dialogScope = rememberCoroutineScope()
                 ClickableRow(
                     title = stringResource(Res.string.export_data),
                     subtitle = stringResource(Res.string.export_data_subtitle_desktop),

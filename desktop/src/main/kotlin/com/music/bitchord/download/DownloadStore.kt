@@ -14,6 +14,7 @@ package com.music.bitchord.download
 import com.music.bitchord.data.AppFiles
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import java.io.File
 import java.io.OutputStream
 import java.util.Locale
@@ -37,7 +38,27 @@ object DownloadStore {
 
     private const val TAG = "BitChord"
 
-    private val folder: File by lazy { AppFiles.dir("downloads") }
+    /**
+     * Where downloads land: the user's choice ([AppSettings.downloadFolder])
+     * when they have made one, the app's own downloads folder otherwise. A
+     * function and not a val — the choice can change under a long-lived
+     * process, and the next download should land where the user last said.
+     * A custom folder that cannot be created falls back to the default:
+     * a download that fails on a bad path is worse than one that lands
+     * somewhere the user did not ask for, and the setting row is where the
+     * bad path gets corrected.
+     */
+    private fun folder(): File {
+        AppSettings.downloadFolder.value?.takeIf { it.isNotBlank() }?.let { stored ->
+            return runCatching {
+                File(stored).apply { mkdirs() }.takeIf { it.isDirectory }
+            }.getOrNull() ?: run {
+                Log.w(TAG, "download folder '$stored' is not usable; falling back to the default")
+                AppFiles.dir("downloads")
+            }
+        }
+        return AppFiles.dir("downloads")
+    }
 
     // ---- Naming -------------------------------------------------------------
 
@@ -110,7 +131,7 @@ object DownloadStore {
      * no way to tell them apart.
      */
     fun existing(name: String): String? =
-        File(folder, name).takeIf { it.exists() }?.absolutePath
+        File(folder(), name).takeIf { it.exists() }?.absolutePath
 
     /**
      * Whether [path] still names a file that is there.
@@ -145,7 +166,9 @@ object DownloadStore {
         /** The bytes being built — where [MediaTagger] rewrites tags before the rename. */
         val tagPath: String get() = part.absolutePath
 
-        fun openStream(): OutputStream = part.outputStream()
+        /** [append] is a resume's truth: the stream continues a .part the pause kept. */
+        fun openStream(append: Boolean = false): OutputStream =
+            java.io.FileOutputStream(part, append)
 
         /** @return the path the finished file can be reached at. */
         fun commit(): String {
@@ -165,15 +188,23 @@ object DownloadStore {
      * one, which is a freedom the MediaStore did not have and the reason the
      * upstream version of this function was half its length longer.
      *
+     * [keepPart] is a pause's word: a .part left on disk by a paused download
+     * is the bytes a [resume][Downloads.resume] will continue, so it is left
+     * exactly where it stopped instead of the delete a fresh start gives it.
+     *
      * @throws IllegalStateException if the folder can't be made — a failure
      *   worth surfacing, since it means the download cannot start rather than
      *   that it might not finish.
      */
-    fun begin(name: String, mimeType: String): Pending {
-        val target = File(folder, name)
-        if (!folder.exists() && !folder.mkdirs()) error("Could not create ${folder.path}")
-        val part = File(folder, ".$name.part")
-        part.delete()
+    fun begin(name: String, mimeType: String, keepPart: Boolean = false): Pending {
+        val target = File(folder(), name)
+        if (!folder().exists() && !folder().mkdirs()) error("Could not create ${folder().path}")
+        val part = File(folder(), ".$name.part")
+        if (!keepPart) part.delete()
         return Pending(target.absolutePath, name, part = part, target = target)
     }
+
+    /** How many bytes a paused download's .part already holds — the resume's offset. */
+    fun partLength(name: String): Long =
+        runCatching { File(folder(), ".$name.part").takeIf { it.isFile }?.length() }.getOrNull() ?: 0L
 }

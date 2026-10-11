@@ -16,6 +16,9 @@ sealed interface DownloadProgress {
     /** [fraction] is 0f until the length is known, which is one request in. */
     data class Running(val fraction: Float) : DownloadProgress
 
+    /** Held by the user, partial bytes on disk kept — the row waits for [Downloads.resume]. */
+    data class Paused(val fraction: Float) : DownloadProgress
+
     data object Done : DownloadProgress
 
     data class Failed(val reason: String) : DownloadProgress
@@ -78,7 +81,16 @@ object DownloadSession {
         /** When the last thing in the queue stopped moving, on [tick]'s clock. */
         val settledAt: Long = 0L,
     ) {
-        val waiting: Int get() = items.count { !it.progress.settled }
+        /**
+         * Rows still moving or about to. A paused row is deliberately *not*
+         * waiting: the queue is not working on it, and an indicator that
+         * spins forever over a batch the user parked themselves reads as a
+         * broken download rather than a held one. [paused] is their count.
+         */
+        val waiting: Int get() = items.count { !it.progress.settled && it.progress !is DownloadProgress.Paused }
+
+        /** Rows the user parked. Shown in the list; absent from [busy]. */
+        val paused: Int get() = items.count { it.progress is DownloadProgress.Paused }
         val finished: Int get() = items.count { it.progress is DownloadProgress.Done }
         val failed: Int get() = items.count { it.progress is DownloadProgress.Failed }
 
@@ -89,7 +101,8 @@ object DownloadSession {
          * How far through the whole batch this is, counting a settled track as
          * a whole one whichever way it settled — a failure is not progress, but
          * it is finished, and a bar that can never fill because one track died
-         * reads as a download that is still going.
+         * reads as a download that is still going. A paused row counts at its
+         * own partial progress: the bytes are real, the hold is not a zero.
          */
         val fraction: Float
             get() {
@@ -97,6 +110,7 @@ object DownloadSession {
                 val total = items.sumOf { item ->
                     when (val progress = item.progress) {
                         is DownloadProgress.Running -> progress.fraction.toDouble()
+                        is DownloadProgress.Paused -> progress.fraction.toDouble()
                         DownloadProgress.Queued -> 0.0
                         else -> 1.0
                     }
@@ -165,6 +179,9 @@ object DownloadSession {
 
     fun running(videoId: String, fraction: Float) =
         set(videoId, DownloadProgress.Running(fraction))
+
+    fun paused(videoId: String, fraction: Float) =
+        set(videoId, DownloadProgress.Paused(fraction))
 
     fun done(videoId: String) = set(videoId, DownloadProgress.Done)
 

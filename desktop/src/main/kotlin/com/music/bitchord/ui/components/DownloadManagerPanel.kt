@@ -35,6 +35,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -42,6 +51,8 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -81,8 +92,11 @@ import com.music.bitchord.desktop.resources.downloads
 import com.music.bitchord.desktop.resources.downloads_failed_count
 import com.music.bitchord.desktop.resources.downloads_finished
 import com.music.bitchord.desktop.resources.downloads_progress
+import com.music.bitchord.desktop.resources.download_paused
 import com.music.bitchord.desktop.resources.nothing_downloading
+import com.music.bitchord.desktop.resources.pause
 import com.music.bitchord.desktop.resources.queued
+import com.music.bitchord.desktop.resources.resume
 import com.music.bitchord.desktop.resources.retry
 import com.music.bitchord.desktop.resources.saved_to_bitchord_folder
 import com.music.bitchord.desktop.resources.starting
@@ -325,6 +339,8 @@ private fun PanelBody(onDismiss: () -> Unit) {
                     item = item,
                     onCancel = { Downloads.cancel(item.videoId) },
                     onRetry = { Downloads.enqueue(item.song, item.from) },
+                    onPause = { Downloads.pause(item.videoId) },
+                    onResume = { Downloads.resume(item.videoId) },
                 )
             }
         }
@@ -338,9 +354,12 @@ private fun DownloadManagerRow(
     item: DownloadSession.Item,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
 ) {
     val progress = item.progress
     val failed = progress as? DownloadProgress.Failed
+    val paused = progress as? DownloadProgress.Paused
 
     Row(
         modifier = Modifier
@@ -409,6 +428,7 @@ private fun DownloadManagerRow(
             Spacer(Modifier.height(4.dp))
             when (progress) {
                 is DownloadProgress.Queued -> RowStatus(stringResource(Res.string.queued))
+                is DownloadProgress.Paused -> RowStatus(stringResource(Res.string.download_paused))
                 is DownloadProgress.Running -> {
                     LinearProgressIndicator(
                         // Indeterminate until the first response names a
@@ -443,12 +463,28 @@ private fun DownloadManagerRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        // One control, and which one it is follows the row's state: a running
-        // track can be stopped, a failed one can be asked for again, and a
-        // finished one needs nothing at all.
+        // The row's controls, which follow its state: a running or queued track
+        // can be held (and stopped), a held one can be continued (and given up
+        // on), a failed one can be asked for again, and a finished one needs
+        // nothing at all. The pause/resume pair arrived with slice 20 — the
+        // cancel beside it is the upstream control, kept so a hold never has
+        // to become the only way out.
         when {
             failed != null -> RowAction(Icons.Rounded.Refresh, stringResource(Res.string.retry), onRetry)
-            !progress.settled -> RowAction(Icons.Rounded.Close, stringResource(Res.string.cancel), onCancel)
+            paused != null -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                RowAction(Icons.Rounded.PlayArrow, stringResource(Res.string.resume), onResume)
+                RowAction(Icons.Rounded.Close, stringResource(Res.string.cancel), onCancel)
+            }
+            !progress.settled -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                RowAction(Icons.Rounded.Pause, stringResource(Res.string.pause), onPause)
+                RowAction(Icons.Rounded.Close, stringResource(Res.string.cancel), onCancel)
+            }
             else -> Spacer(Modifier.width(36.dp))
         }
     }

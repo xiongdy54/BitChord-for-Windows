@@ -54,6 +54,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.download.DownloadSession
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.history
 import com.music.bitchord.desktop.resources.local_music
@@ -677,6 +678,15 @@ private fun DetailRoute(
             )
         },
         onShelfItemClick = { item -> openShelfItem(item, player, onOpenDetail = nav::open) },
+        onDownloadAll = { songs ->
+            // The batch ask (slice 20): the release is recorded as the asker —
+            // the header pill reads [Downloads.requested] to say where its own
+            // batch stands — and every row goes into the queue under it. The
+            // enqueue's own dedupe makes a second tap on a partially-landed
+            // release a top-up rather than a doubling.
+            Downloads.markRequested(destination.browseId, songs.map { it.videoId })
+            songs.forEach { Downloads.enqueue(it, destination.browseId) }
+        },
     )
 }
 

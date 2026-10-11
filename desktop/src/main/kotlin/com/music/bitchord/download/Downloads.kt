@@ -70,6 +70,9 @@ sealed interface DownloadState {
     /** [fraction] is 0f until the length is known, which is the first thing asked for. */
     data class Running(val fraction: Float) : DownloadState
 
+    /** Held by the user, bytes on disk kept — [resume] continues from where it stopped. */
+    data class Paused(val fraction: Float) : DownloadState
+
     data class Failed(val reason: String) : DownloadState
 }
 
@@ -117,6 +120,22 @@ object Downloads {
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
 
+    /**
+     * Which release asked for which tracks — the per-release question the
+     * flat [active] map cannot answer ("queued because *I* asked, or because
+     * another release sharing the track did?"). Ported verbatim from
+     * upstream's `Downloads.kt:98-104`, stale ids included: they are harmless
+     * once the track drops out of [active], and pruning them would need a
+     * lifecycle nothing else here has.
+     */
+    private val _requested = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val requested: StateFlow<Map<String, Set<String>>> = _requested.asStateFlow()
+
+    fun markRequested(browseId: String, videoIds: Collection<String>) {
+        if (videoIds.isEmpty()) return
+        _requested.update { it + (browseId to (it[browseId].orEmpty() + videoIds)) }
+    }
+
     private val _saved = MutableStateFlow(
         runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_SAVED, "{}"))
@@ -134,6 +153,43 @@ object Downloads {
 
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
+
+    /**
+     * The tracks the user paused, with what a resume needs to pick up where
+     * the bytes stopped: the row (and its `from`), the .part file's name, the
+     * extension it was being written as and the quality rung that chose it —
+     * the last two are the resume guard, since a rung or format changed
+     * between pause and resume would splice two renditions into one file.
+     * Guarded by [lock]; a session list like [pending], since a process death
+     * during a pause is a download that did not happen (and an orphan .part
+     * the next full run overwrites).
+     */
+    private class PausedTrack(
+        val song: Song,
+        val from: String?,
+        val part: PartIdentity?,
+    )
+
+    /** What a .part on disk is, for the resume that may one day continue it. */
+    private class PartIdentity(
+        val name: String,
+        val extension: String,
+        val qualityName: String,
+        val describe: String,
+    )
+
+    private val paused = LinkedHashMap<String, PausedTrack>()
+
+    /**
+     * The .part identity of every track with a destination open, written when
+     * [transfer] reserves it and removed when the destination is committed or
+     * aborted — [pause] reads it to know what the pause is keeping, and a
+     * resume plants it back for the next transfer to continue from.
+     */
+    private val liveParts = HashMap<String, PartIdentity>()
+
+    /** A resume waiting for its transfer to pick it up — see [resume]. */
+    private val resumingParts = HashMap<String, PartIdentity>()
 
     private val lock = Any()
 
@@ -168,11 +224,64 @@ object Downloads {
     fun enqueue(song: Song, from: String? = null) {
         val id = song.videoId
         synchronized(lock) {
-            if (id in pending || id in running) return
+            if (id in pending || id in running || id in paused) return
             pending[id] = song
         }
         _active.update { it + (id to DownloadState.Queued) }
         DownloadSession.queued(song, from)
+        ensureDraining()
+    }
+
+    /**
+     * Hold [videoId]: stop its fetch (or take it out of the queue) but keep
+     * the partial file, so [resume] can continue from where the bytes
+     * stopped. The row leaves the workers' sight — a paused track is neither
+     * queued nor running — and the manager's row stays, at its partial
+     * progress, waiting for the user's word.
+     *
+     * Pausing is registered *before* the job is cancelled, so the transfer's
+     * cancellation path can tell a pause from a cancel: the one keeps the
+     * .part, the other aborts it.
+     */
+    fun pause(videoId: String) {
+        val fraction = (_active.value[videoId] as? DownloadState.Running)?.fraction
+            ?: (_active.value[videoId] as? DownloadState.Queued)?.let { 0f }
+            ?: return
+        val job: Job?
+        synchronized(lock) {
+            if (videoId in paused) return
+            val queuedSong = pending.remove(videoId)
+            job = running.remove(videoId)
+            if (queuedSong == null && job == null) return
+            paused[videoId] = PausedTrack(
+                song = queuedSong
+                    ?: DownloadSession.state.value.items.firstOrNull { it.videoId == videoId }?.song
+                    ?: return,
+                from = DownloadSession.state.value.items.firstOrNull { it.videoId == videoId }?.from,
+                part = if (queuedSong != null) null else liveParts.remove(videoId),
+            )
+        }
+        job?.cancel()
+        _active.update { it + (videoId to DownloadState.Paused(fraction)) }
+        DownloadSession.paused(videoId, fraction)
+    }
+
+    /**
+     * Put a paused [videoId] back in the queue. The .part the pause kept, when
+     * there was one, rides along as a pending resume: the transfer that picks
+     * this track up continues from its own length — provided the fresh plan
+     * would still write the same format under the same rung ([PartIdentity]'s
+     * guard fields); anything else starts the bytes over, because resuming
+     * into a different rendition is a corrupt file, not a faster one.
+     */
+    fun resume(videoId: String) {
+        val track = synchronized(lock) { paused.remove(videoId) } ?: return
+        synchronized(lock) {
+            track.part?.let { resumingParts[videoId] = it }
+            pending[videoId] = track.song
+        }
+        _active.update { it + (videoId to DownloadState.Queued) }
+        DownloadSession.queued(track.song, track.from)
         ensureDraining()
     }
 
@@ -469,6 +578,11 @@ object Downloads {
      */
     internal suspend fun run(song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
+        // The rung, read once for the whole of this track — [prepare]'s route
+        // and [transfer]'s resume guard have to name the same one, and
+        // re-reading the setting per call would let a change made mid-download
+        // splice two renditions into one file.
+        val quality = AppSettings.downloadQuality.value
         // Set before the lookup, not after it. Resolving where the track's
         // stream comes from is the long part of a download, and leaving the row
         // on "Queued" for all of it reads as a queue that has stopped rather
@@ -477,14 +591,19 @@ object Downloads {
         DownloadSession.running(id, 0f)
 
         try {
-            val plan = prepare(song)
+            val plan = prepare(song, quality)
             // The manager is showing the row that was tapped, which for a
             // substituted track is the wrong title for the file actually being
             // written. Corrected here rather than left to disagree with the
             // Downloads page afterwards.
             DownloadSession.retitle(id, plan.track)
-            transfer(song, plan)
+            transfer(song, plan, quality)
         } catch (e: CancellationException) {
+            // A pause is a cancellation the user asked to keep bytes for: the
+            // Paused state is [pause]'s own write, and clearing here would
+            // race it (and could erase it). Any other cancellation — a
+            // cancel() call, a queue shutdown — is a download that un-happened.
+            if (synchronized(lock) { id in paused }) throw e
             clear(id)
             throw e
         } catch (e: Exception) {
@@ -505,16 +624,13 @@ object Downloads {
      * running for a track that is still queued — or for one that gets cancelled
      * before its turn — and a preparation is not a download.
      */
-    internal suspend fun prepare(song: Song): Prepared = withContext(Dispatchers.IO) {
+    internal suspend fun prepare(song: Song, quality: DownloadQuality): Prepared = withContext(Dispatchers.IO) {
         // Downloads preserve the exact item the listener picked. Catalogue
         // matching is a manual playback action and must not silently change a
         // download or its filename.
         val track = song
-        // Read once, here, for the whole of this track. The route below and
-        // the re-resolve inside [Downloader.fetch] have to agree on which rung
-        // they are fetching, and re-reading the setting per call would let a
-        // change made mid-download splice two renditions into one file.
-        val quality = AppSettings.downloadQuality.value
+        // [quality] arrives read once by [run] — the rung the whole track,
+        // route and resume guard alike, agrees on.
 
         // Asked before the resolve rather than after it. A file already sitting
         // in the downloads folder under a lossless extension is the answer to
@@ -560,9 +676,12 @@ object Downloads {
      *
      * Owns the destination from end to end: every exit out of here either
      * commits or aborts, so a caller is free to call it a second time with a
-     * freshly resolved plan without the first attempt leaving anything behind.
+     * freshly resolved plan without the first attempt leaving anything behind
+     * — with the one deliberate exception a pause plants: a cancellation that
+     * [pause] registered keeps the .part, and [resume] re-enters here with a
+     * plan to continue it.
      */
-    private suspend fun transfer(song: Song, plan: Prepared) {
+    private suspend fun transfer(song: Song, plan: Prepared, quality: DownloadQuality) {
         val id = song.videoId
         val track = plan.track
 
@@ -575,6 +694,27 @@ object Downloads {
             return
         }
         val route = plan.route ?: error("Nothing to download")
+
+        // The resume, if a pause planted one: the part's format, rung and
+        // provenance must all match what this fresh plan would write, or the
+        // bytes on disk are the wrong rendition's and the file restarts rather
+        // than splices. (Same extension, different source — a source route
+        // answering where YouTube did before — is exactly the splice the
+        // third field exists to stop.)
+        val resumeOffset = synchronized(lock) { resumingParts.remove(id) }
+            ?.let { part ->
+                resumeOffsetIfSameRendition(
+                    partExtension = part.extension,
+                    partQuality = part.qualityName,
+                    partDescribe = part.describe,
+                    partLength = DownloadStore.partLength(part.name),
+                    routeExtension = route.extension,
+                    routeQuality = quality.name,
+                    routeDescribe = route.describe,
+                )
+            }
+            ?: 0L
+        if (resumeOffset > 0L) Log.d(TAG, "resuming $id at ${resumeOffset}B of .${route.extension}")
 
         var pending: DownloadStore.Pending? = null
         var lyrics: Deferred<LyricsTag.Embeddable?>? = null
@@ -610,10 +750,13 @@ object Downloads {
                     return@coroutineScope
                 }
 
-                val destination = DownloadStore.begin(name, route.mimeType)
+                val destination = DownloadStore.begin(name, route.mimeType, keepPart = resumeOffset > 0L)
                 pending = destination
-                destination.openStream().use { sink ->
-                    route.write(sink) { written, total ->
+                synchronized(lock) {
+                    liveParts[id] = PartIdentity(name, route.extension, quality.name, route.describe)
+                }
+                destination.openStream(append = resumeOffset > 0L).use { sink ->
+                    route.write(sink, resumeOffset) { written, total ->
                         val fraction = written.toFloat() / total
                         _active.update { it + (id to DownloadState.Running(fraction)) }
                         DownloadSession.running(id, fraction)
@@ -632,10 +775,17 @@ object Downloads {
                 clear(id)
                 Log.d(TAG, "saved $name")
             }
+        } catch (e: CancellationException) {
+            // A pause keeps the bytes it stopped on — [pause] read the part's
+            // identity out of [liveParts] before cancelling, and the file stays
+            // for [resume] to continue. Any other cancellation aborts.
+            if (synchronized(lock) { id !in paused }) pending?.abort()
+            throw e
         } catch (e: Throwable) {
             pending?.abort()
             throw e
         } finally {
+            synchronized(lock) { liveParts.remove(id) }
             // Every exit needs this, not just the failing ones: the adopt-it
             // path above returns with the lookup still in flight, and
             // [coroutineScope] does not return while a child of it is running —
@@ -661,7 +811,8 @@ object Downloads {
         val describe: String,
         /** Short rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
-        val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
+        /** [offset] is where the sink's bytes begin — a resume's part length. */
+        val write: suspend (OutputStream, Long, (written: Long, total: Long) -> Unit) -> Unit,
     )
 
     /**
@@ -683,8 +834,8 @@ object Downloads {
                     mimeType = storable.mimeType,
                     describe = "${stream.format.summary ?: storable.mimeType} from ${stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName } ?: "source"}",
                     downloadFormat = stream.format.summary,
-                    write = { sink, onProgress ->
-                        fetchFromSource(stream.url, sink, onProgress)
+                    write = { sink, offset, onProgress ->
+                        fetchFromSource(stream.url, sink, offset, onProgress)
                     },
                 )
             }
@@ -695,8 +846,8 @@ object Downloads {
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
             downloadFormat = youtubeDownloadBadge(stream.downloadExtension, stream.kbps),
-            write = { sink, onProgress ->
-                Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a = false, sink, onProgress)
+            write = { sink, offset, onProgress ->
+                Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a = false, sink, offset, onProgress)
             },
         )
     }
@@ -774,12 +925,13 @@ object Downloads {
     private suspend fun fetchFromSource(
         url: String,
         sink: OutputStream,
+        startOffset: Long,
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         val headers = SourceHeaders.headersFor(url).orEmpty()
         val total = sourceContentLength(url, headers) ?: error("Track unavailable: no length to fetch")
 
-        var written = 0L
+        var written = startOffset
         val buffer = ByteArray(SOURCE_BUFFER_BYTES)
         while (written < total) {
             coroutineContext.ensureActive()
@@ -834,6 +986,12 @@ object Downloads {
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
     private fun clear(videoId: String) {
         _active.update { it - videoId }
+        // A cancel takes the paused bookkeeping with it — a row the user called
+        // off is not resumable either.
+        synchronized(lock) {
+            paused.remove(videoId)
+            resumingParts.remove(videoId)
+        }
     }
 
     private fun fail(videoId: String, reason: String) {
@@ -968,4 +1126,27 @@ internal fun youtubeDownloadBadge(extension: String, kbps: Int): String? {
     if (kbps <= 0) return null
     val codec = if (extension.equals("m4a", ignoreCase = true)) "AAC" else "OPUS"
     return "$codec · $kbps kbps"
+}
+
+/**
+ * The offset a paused download's resume may start at, pure: the part's bytes
+ * are only this rendition's if the format, the rung and the provenance all
+ * match what the fresh plan would write — any drift (a rung changed between
+ * pause and resume, a different source answering) reads as "start over",
+ * because continuing into a different rendition is a corrupt file, not a
+ * faster one. Zero means restart; a positive answer is the part's length.
+ */
+internal fun resumeOffsetIfSameRendition(
+    partExtension: String,
+    partQuality: String,
+    partDescribe: String,
+    partLength: Long,
+    routeExtension: String,
+    routeQuality: String,
+    routeDescribe: String,
+): Long {
+    val same = partExtension == routeExtension &&
+        partQuality == routeQuality &&
+        partDescribe == routeDescribe
+    return if (same && partLength > 0L) partLength else 0L
 }
