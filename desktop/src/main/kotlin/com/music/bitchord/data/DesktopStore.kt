@@ -55,6 +55,16 @@ class FileStore(private val file: File) {
     fun getStringOrNull(key: String): String? =
         if (values.containsKey(key)) values.getProperty(key) else null
 
+    /**
+     * Every key this store holds, as the strings they are — the backup export's
+     * read of the whole file. A copy, not a live view: the caller may hold it
+     * while another thread writes, and the snapshot is the export's honest
+     * answer either way.
+     */
+    @Synchronized
+    fun snapshot(): Map<String, String> =
+        values.stringPropertyNames().associateWith { values.getProperty(it) }
+
     @Synchronized
     fun putString(key: String, value: String) {
         values.setProperty(key, value)

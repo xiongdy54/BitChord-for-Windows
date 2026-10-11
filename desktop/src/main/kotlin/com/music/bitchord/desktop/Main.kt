@@ -5,6 +5,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -36,6 +37,7 @@ import com.music.bitchord.auth.CefRuntime
 import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
@@ -215,6 +217,26 @@ private val probeOutputPreview = System.getProperty("bitchord.probeOutputPreview
  */
 private val probeEqualizerPreview = System.getProperty("bitchord.probeEqualizerPreview") == "true"
 private val probeSourceEditorPreview = System.getProperty("bitchord.probeSourceEditorPreview") == "true"
+
+/**
+ * The language hot-swap's scripted proof: `bitchord.probeLocaleSwitch=zh` (or
+ * `en`) waits five seconds after launch and moves the language flow — in
+ * memory only, never the file the user's choice lives in — so a screenshot
+ * pass can capture the same session speaking two languages, which is the
+ * whole feature. Nothing restarts: that is the point being proven.
+ */
+private val probeLocaleSwitch = System.getProperty("bitchord.probeLocaleSwitch").orEmpty()
+
+/**
+ * The machine's own locale tag, captured before anything (the property
+ * override, the stored setting) had a chance to move the JVM default — "the
+ * system" in the language radio's answer, which a switch away must be able to
+ * come back to.
+ */
+private val systemLocaleTag: String = java.util.Locale.getDefault().toLanguageTag()
+
+/** The screenshot pass's locale override — it outranks the stored setting. */
+private val probeLocale: String? = System.getProperty("bitchord.locale")
 
 
 /**
@@ -441,8 +463,7 @@ fun main() {
     // a Chinese machine. An explicit property — the scripted screenshot pass's
     // override — wins, exactly as the window-geometry probes do; the user's
     // own choice in settings outranks the machine's locale but not the probe.
-    val propertyLocale = System.getProperty("bitchord.locale")
-    (propertyLocale ?: AppSettings.language.value)
+    (probeLocale ?: AppSettings.language.value)
         ?.let { Locale.setDefault(Locale.forLanguageTag(it)) }
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -543,11 +564,19 @@ fun main() {
         library.retryPlaylists()
         library.retryRecents()
     }
+    // The home page's lead shelf is the listener's own account fact — the
+    // "recently played" the shell could never ask for signed out. The hook is
+    // a lambda so the view model never touches the controller.
+    home.signedIn = { accounts.signedIn.value }
     accounts.restoreActiveSession()
 
     // Pays InnerTubeX's cold costs (player config, EJS solve, cipher) while the
     // window is still being opened rather than on the first tap.
     InnerTubeXResolver.init()
+
+    // The update check, once per launch like upstream's — fire and forget,
+    // silent on every failure (no release yet reads as nothing to say).
+    scope.launch { AppUpdateChecker.check() }
 
     // The window's remembered shape, on its own properties file — a second
     // FileStore over settings.properties would clobber whatever AppSettings
@@ -599,6 +628,15 @@ fun main() {
         if (probeDestination == "sleeptimer") shellState.showSleepTimer = true
         if (probeDestination == "signin") shellState.showLogin = true
         if (probeDestination == "downloadsmanager") shellState.showDownloadsManager = true
+        // The hot-swap proof's arm — see [probeLocaleSwitch]. The flow moves
+        // in memory only; the file the user's own choice lives in is untouched.
+        if (probeLocaleSwitch.isNotBlank()) {
+            LaunchedEffect(Unit) {
+                delay(5_000)
+                AppSettings.language.value = probeLocaleSwitch
+                DebugLog.d("BitChord", "probe: language -> $probeLocaleSwitch (hot)")
+            }
+        }
         if (probeDestination == "outputdevices") {
             shellState.showSettings = true
             openAudioOutputOnStart = true
@@ -625,6 +663,7 @@ fun main() {
                     probeDestination == "downloads" -> open(Destination.Downloads)
                     probeDestination == "localmusic" -> open(Destination.LocalMusic)
                     probeDestination == "recent" -> open(Destination.RecentlyAdded)
+                    probeDestination == "history" -> open(Destination.History)
                     probeDestination.startsWith("detail:") -> open(
                         Destination.Detail(
                             kind = if (probeDestination.startsWith("detail:MPREb")) {
@@ -934,7 +973,29 @@ if (shotPath.isNotBlank() && shotMs != null) {
                 )
             }
 
+            // The language, hot (slice 19). The strings resolve from the JVM
+            // default locale, re-read by every `stringResource` call — what a
+            // change needs is (a) the locale set and (b) a rebuilt subtree,
+            // in that order. `remember(localeTag)` does the first exactly
+            // where it sits: inside composition, *before* the keyed children
+            // below compose and read the locale — an effect here would run
+            // after them and the rebuild would read the old language (the
+            // first attempt's bug, visible in its screenshot). `key(localeTag)`
+            // is the rebuild: a different key retires the whole shell's
+            // composition and composes it fresh. Everything that *holds* a
+            // session — shell state, navigation, view models, player — was
+            // built before this point and survives. The probe's override
+            // rides in front; the machine's locale, captured at load, is what
+            // "System" comes back to. Setting a global inside composition is
+            // deliberate impurity, paid for by the ordering it buys.
+            val languageSetting by AppSettings.language.collectAsState()
+            val localeTag = probeLocale ?: (languageSetting ?: systemLocaleTag)
+            remember(localeTag) {
+                Locale.setDefault(Locale.forLanguageTag(localeTag))
+                true
+            }
             BitChordTheme(darkTheme = darkTheme) {
+                key(localeTag) {
                 CompositionLocalProvider(
                     LocalSongActions provides songActions,
                     // The glass relay (slice 17): upstream MainActivity's
@@ -1079,6 +1140,7 @@ if (shotPath.isNotBlank() && shotMs != null) {
                             com.music.bitchord.ui.screens.EqualizerPanel()
                         }
                     }
+                }
                 }
                 }
 

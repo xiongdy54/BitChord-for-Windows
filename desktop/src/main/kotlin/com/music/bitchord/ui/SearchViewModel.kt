@@ -1,10 +1,12 @@
 package com.music.bitchord.ui
 
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.settings.SearchHistory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,10 +23,10 @@ import kotlinx.coroutines.launch
  * searches; the same guard that drops a response the field has moved past; and
  * the same two debounced pipelines rather than a request per keystroke.
  *
- * Two simplifications. History is a session list rather than a database table —
- * the Android side persists it, and storage comes with the settings slice. And
- * with no sign-in there is no per-account cache to keep, so a search is made
- * when it is asked for and the rows stand until the next one.
+ * One simplification. With no sign-in there is no per-account cache to keep,
+ * so a search is made when it is asked for and the rows stand until the next
+ * one. The history — session-only here once, slice 19's gap — is
+ * [SearchHistory]'s persisted list now.
  */
 class SearchViewModel(private val scope: CoroutineScope) {
 
@@ -46,9 +48,6 @@ class SearchViewModel(private val scope: CoroutineScope) {
 
     private val _typeaheadResults = MutableStateFlow<List<SearchResult>>(emptyList())
     val typeaheadResults: StateFlow<List<SearchResult>> = _typeaheadResults.asStateFlow()
-
-    private val _history = MutableStateFlow<List<SearchHistoryEntity>>(emptyList())
-    val history: StateFlow<List<SearchHistoryEntity>> = _history.asStateFlow()
 
     /** Bumped on every new search so the list scrolls back to the top for it. */
     private val _scrollResetTrigger = MutableStateFlow(0)
@@ -119,6 +118,10 @@ class SearchViewModel(private val scope: CoroutineScope) {
         submitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
+        // A committed search is a memory worth keeping — recorded before the
+        // results arrive, so a failed search is still recallable (upstream
+        // records on the submit act too).
+        recordSearch()
         search()
     }
 
@@ -172,18 +175,73 @@ class SearchViewModel(private val scope: CoroutineScope) {
 
     // ── History ─────────────────────────────────────────────────────────────
 
+    /**
+     * The history is [SearchHistory]'s — a persisted list, not a session one.
+     * The state flows through the object's own flow, so an import or another
+     * window-side change shows up here without this class knowing.
+     */
+    val history: StateFlow<List<SearchHistoryEntity>> = SearchHistory.recent
+
     /** Records what was tapped, newest first, one row per entity. */
-    fun record(entity: SearchHistoryEntity) {
-        _history.value = (listOf(entity) + _history.value.filterNot { it.id == entity.id })
-            .take(HISTORY_LIMIT)
-    }
+    fun record(entity: SearchHistoryEntity) = SearchHistory.record(entity)
 
     fun removeHistory(id: String) {
-        _history.value = _history.value.filterNot { it.id == id }
+        SearchHistory.remove(id)
     }
 
     fun clearHistory() {
-        _history.value = emptyList()
+        SearchHistory.clear()
+    }
+
+    /**
+     * Records what a *committed search* was about — upstream's `recordSearch`
+     * (`MainViewModel.kt:1629`), preference chain and all: a track card from
+     * the typeahead beats one from the committed results (it is the same hit,
+     * seen live), and only a search with no track answer at all falls back to
+     * the raw query as a text entity. Tapping a suggestion or a result row
+     * records through [record] instead.
+     */
+    private fun recordSearch() {
+        val query = _query.value.trim()
+        if (query.isEmpty()) return
+        val fromTypeahead = _typeaheadResults.value.firstOrNull {
+            it is SearchResult.TopTrack || it is SearchResult.Track
+        }
+        val fromResults = (_results.value as? UiState.Success)?.data?.firstOrNull {
+            it is SearchResult.TopTrack || it is SearchResult.Track
+        }
+        val row = fromTypeahead ?: fromResults
+        when (row) {
+            is SearchResult.TopTrack -> record(row.asTrackEntity())
+            is SearchResult.Track -> record(row.asTrackEntity())
+            // Fallback: record as a raw-text entity for backwards compatibility,
+            // upstream's own shape verbatim — TRACK type with a `q:`-prefixed
+            // id, the id being what keeps it apart from real track rows.
+            else -> record(
+                SearchHistoryEntity(
+                    id = "q:$query",
+                    title = query,
+                    subtitle = "",
+                    artworkUrl = null,
+                    entityType = EntityType.TRACK,
+                ),
+            )
+        }
+    }
+
+    private fun SearchResult.asTrackEntity(): SearchHistoryEntity {
+        val song = when (this) {
+            is SearchResult.TopTrack -> song
+            is SearchResult.Track -> song
+            is SearchResult.Browse -> error("not a track row")
+        }
+        return SearchHistoryEntity(
+            id = song.videoId,
+            title = song.title,
+            subtitle = listOfNotNull(song.artist).joinToString(" · "),
+            artworkUrl = song.thumbnailUrl,
+            entityType = EntityType.TRACK,
+        )
     }
 
     private companion object {
@@ -192,8 +250,6 @@ class SearchViewModel(private val scope: CoroutineScope) {
 
         /** A full page is behind this one, so it waits longer than the suggestion list. */
         const val TYPEAHEAD_DEBOUNCE_MS = 350L
-
-        const val HISTORY_LIMIT = 20
 
         /**
          * The same identity the repository dedupes a page by (it keeps its own

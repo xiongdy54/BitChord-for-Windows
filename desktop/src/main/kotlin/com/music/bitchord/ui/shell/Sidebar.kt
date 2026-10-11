@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -47,6 +48,7 @@ import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.browse
 import com.music.bitchord.desktop.resources.downloaded_songs
+import com.music.bitchord.desktop.resources.history
 import com.music.bitchord.desktop.resources.library
 import com.music.bitchord.desktop.resources.listen_now
 import com.music.bitchord.desktop.resources.local_music
@@ -125,6 +127,11 @@ fun Sidebar(
             label = stringResource(Res.string.browse),
             selected = current == Destination.Explore,
         ) { onSelect(Destination.Explore) }
+        SidebarRow(
+            icon = Icons.Rounded.History,
+            label = stringResource(Res.string.history),
+            selected = current == Destination.History,
+        ) { onSelect(Destination.History) }
 
         SidebarSectionHeader(stringResource(Res.string.library))
         SidebarRow(
@@ -216,6 +223,7 @@ private fun RailSidebar(
         RailRow(Icons.Rounded.Search, current == Destination.Search, onClick = onSearch)
         RailRow(BitChordIcons.Home, current == Destination.Home) { onSelect(Destination.Home) }
         RailRow(BitChordIcons.Explore, current == Destination.Explore) { onSelect(Destination.Explore) }
+        RailRow(Icons.Rounded.History, current == Destination.History) { onSelect(Destination.History) }
         RailRow(BitChordIcons.Clock, current == Destination.RecentlyAdded) { onSelect(Destination.RecentlyAdded) }
         RailRow(BitChordIcons.MusicNote, current == Destination.LibrarySongs) { onSelect(Destination.LibrarySongs) }
         RailRow(BitChordIcons.Queue, current == Destination.LibraryPlaylists) { onSelect(Destination.LibraryPlaylists) }

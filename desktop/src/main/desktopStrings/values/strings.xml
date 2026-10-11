@@ -69,4 +69,12 @@
     <string name="playback_speed">Playback speed</string>
     <string name="playback_speed_subtitle">How fast the music plays, from half to double.</string>
     <string name="skip_silence_subtitle_desktop">Trims long silences — not yet on this build's decoder; recorded for when it can.</string>
+
+    <!-- Backup & update (slice 19): the subtitles say what this build actually
+         keeps — no listening stats yet, so "listening history" would promise a
+         page the desktop does not have. -->
+    <string name="export_data_subtitle_desktop">Settings and search history, as one JSON file</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="update_none">BitChord is up to date</string>
+    <string name="update_open_release">Open release page</string>
 </resources>

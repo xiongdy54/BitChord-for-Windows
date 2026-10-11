@@ -113,6 +113,57 @@ object AppSettings {
     /** The original keeps these in SharedPreferences (`bitchord_settings`); here it is one file. */
     private val prefs: FileStore by lazy { FileStore(AppFiles.file("settings.properties")) }
 
+    /**
+     * The one store instance behind every key in this file, for the siblings
+     * that share it — [SearchHistory] persists into the same properties file
+     * under the same key name upstream uses, and a second FileStore here would
+     * hold a second in-memory copy that clobbers this object's writes (the
+     * two-FileStore trap Main.kt's window-store note describes). Internal:
+     * same-package trusted siblings, not a public surface.
+     */
+    internal val store: FileStore get() = prefs
+
+    /**
+     * The raw key-value pairs a backup carries — everything persisted here
+     * except credentials ([SECRETS], which describe an identity, not a
+     * configuration) and the keys naming *this device* ([DEVICE_LOCAL], whose
+     * values would point a restored backup at hardware it does not have).
+     * Upstream's own split, restated for the desktop's key set; the values are
+     * all strings here, which is exactly the shape [com.music.bitchord.data.backup.Backup]
+     * types up.
+     */
+    internal fun exportPrefs(): Map<String, String> =
+        store.snapshot().filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+
+    /**
+     * Lands an imported key that has no setting dialog of its own — the WebDAV
+     * identity pair, whose flows and live credential pool need to move with
+     * the file. Anything else is skipped; the keys with setters are the
+     * import's own chain's business.
+     */
+    internal fun acceptImported(key: String, value: String) {
+        when (key) {
+            "webdav_url" -> {
+                webdavUrl.value = value
+                store.putString(key, value)
+                publishWebDavAuth()
+            }
+            "webdav_username" -> {
+                webdavUsername.value = value
+                store.putString(key, value)
+                publishWebDavAuth()
+            }
+        }
+    }
+
+    private val SECRETS = setOf(KEY_PAXSENIX_API_KEY)
+
+    private val DEVICE_LOCAL = setOf(
+        KEY_OUTPUT_DEVICE_ID,
+        KEY_OUTPUT_DEVICE_NAME,
+        KEY_LOCAL_MUSIC_FOLDERS,
+    )
+
     val audioQuality = MutableStateFlow(
         prefs.getString(KEY_AUDIO_QUALITY, AudioQuality.LOSSLESS.name)
             .let { stored -> AudioQuality.entries.firstOrNull { it.name == stored } }

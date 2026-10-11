@@ -55,6 +55,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.desktop.playback.PlayerController
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.history
 import com.music.bitchord.desktop.resources.local_music
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.songs
@@ -66,6 +67,7 @@ import com.music.bitchord.ui.LibraryViewModel
 import com.music.bitchord.ui.SearchViewModel
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.ExploreScreen
+import com.music.bitchord.ui.screens.HistoryPage
 import com.music.bitchord.ui.screens.LibraryPlaylistsPage
 import com.music.bitchord.ui.screens.LibrarySongsPage
 import com.music.bitchord.desktop.playback.LyricsCoordinator
@@ -221,6 +223,7 @@ fun Shell(
     // here, once, rather than in each page that needs one.
     val songsSourceTitle = stringResource(Res.string.songs)
     val recentsSourceTitle = stringResource(Res.string.recently_added)
+    val historySourceTitle = stringResource(Res.string.history)
     val localMusicSourceTitle = stringResource(Res.string.local_music)
 
     Column(
@@ -352,6 +355,19 @@ fun Shell(
                                     index,
                                     PlaybackSourceType.HISTORY,
                                     recentsSourceTitle,
+                                    null,
+                                )
+                            },
+                        )
+
+                        Destination.History -> HistoryPage(
+                            viewModel = library,
+                            onPlayFrom = { songs, index ->
+                                player.playFrom(
+                                    songs,
+                                    index,
+                                    PlaybackSourceType.HISTORY,
+                                    historySourceTitle,
                                     null,
                                 )
                             },

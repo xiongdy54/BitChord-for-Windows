@@ -32,6 +32,15 @@ class LibraryViewModel(private val scope: CoroutineScope) {
     private val _recents = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
     val recents: StateFlow<UiState<List<Song>>> = _recents.asStateFlow()
 
+    /**
+     * The account's full listening history — the History page's feed. Unlike
+     * the pages above it has no loaded latch on purpose: upstream refetches on
+     * every visit (the whole point of a history is that it just changed), and
+     * the page re-asking on its own way in is what makes that true here.
+     */
+    private val _history = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val history: StateFlow<UiState<List<Song>>> = _history.asStateFlow()
+
     private var songsLoaded = false
     private var playlistsLoaded = false
     private var recentsLoaded = false
@@ -91,5 +100,21 @@ class LibraryViewModel(private val scope: CoroutineScope) {
     fun retryRecents() {
         recentsLoaded = false
         ensureRecents()
+    }
+
+    /**
+     * The History page's own load — every entry, no latch. Upstream refetches
+     * on every visit (the whole point of a history is that it just changed),
+     * and the page re-asking on its own way in is what makes that true here;
+     * the error row's retry is this same call.
+     */
+    fun refreshHistory() {
+        scope.launch {
+            YtMusicRepository.history()
+                .onSuccess { songs -> _history.value = UiState.Success(songs) }
+                .onFailure { failure ->
+                    _history.value = UiState.Error(failure.message ?: failure.javaClass.simpleName)
+                }
+        }
     }
 }

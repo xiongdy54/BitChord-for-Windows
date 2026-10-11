@@ -19,12 +19,21 @@ import java.util.Locale
  *
  * Two things are deliberately simpler than upstream. There is one listener and
  * no account switching, so the guard against a superseded load is a plain
- * counter rather than the signed-in identity. And nothing is signed in yet, so
- * the "recently played" shelf — a signed-in endpoint — is never asked for; the
- * page shows the sign-in banner in its place, exactly as the app does when
- * signed out.
+ * counter rather than the signed-in identity. And the "recently played" shelf
+ * is the listener's own account fact: it is asked for only when
+ * [signedIn] — wired from the session controller — says someone is in, and it
+ * publishes ahead of the core feed so YouTube's own stale shelf of the same
+ * name loses the title race (the dedupe's ruling, upstream's replacement
+ * semantics).
  */
 class HomeViewModel(private val scope: CoroutineScope) {
+
+    /**
+     * Whether a listener is signed in — set once by [Main][com.music.bitchord.desktop.Main]
+     * from the session controller's flow. Default false keeps a bare
+     * construction (tests, previews) asking for nothing signed-in.
+     */
+    var signedIn: () -> Boolean = { false }
 
     private val _home = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
     val home: StateFlow<UiState<List<HomeShelf>>> = _home.asStateFlow()
@@ -32,7 +41,10 @@ class HomeViewModel(private val scope: CoroutineScope) {
     private val _loadingMore = MutableStateFlow(false)
     val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
 
-    /** Never true on desktop yet — the shelf it stands for is signed-in only. */
+    /**
+     * True while the signed-in shelf's request is in flight — the skeleton
+     * that owns the page's lead slot while it waits.
+     */
     private val _recentlyPlayedLoading = MutableStateFlow(false)
     val recentlyPlayedLoading: StateFlow<Boolean> = _recentlyPlayedLoading.asStateFlow()
 
@@ -51,6 +63,7 @@ class HomeViewModel(private val scope: CoroutineScope) {
         continuation = null
         seenTitles.clear()
         _loadingMore.value = false
+        fetchRecentlyPlayed(current)
         scope.launch {
             YtMusicRepository.home()
                 .onSuccess { feed ->
@@ -74,6 +87,7 @@ class HomeViewModel(private val scope: CoroutineScope) {
         val current = ++generation
         continuation = null
         seenTitles.clear()
+        fetchRecentlyPlayed(current)
         scope.launch {
             YtMusicRepository.home()
                 .onSuccess { feed ->
@@ -117,15 +131,66 @@ class HomeViewModel(private val scope: CoroutineScope) {
     }
 
     /**
+     * The signed-in lead shelf, fetched ahead of the core feed so it can take
+     * the page's first slot: [publish] with `prepend = true` puts it at the
+     * front, and the title dedupe then drops YouTube's own "Recents" shelf
+     * when the core feed arrives with one — the same replacement upstream's
+     * `publishHomeShelves(prepend = true)` performs, falling out of the dedupe
+     * rather than a special case. Signed out (or an empty history — the
+     * repository answers null) this is one `signedIn` read and no request,
+     * which is the page the app showed before sign-in existed.
+     */
+    private fun fetchRecentlyPlayed(current: Long) {
+        if (!signedIn()) return
+        _recentlyPlayedLoading.value = true
+        scope.launch {
+            YtMusicRepository.homeRecentlyPlayed()
+                .onSuccess { shelf ->
+                    if (current == generation) {
+                        shelf?.let { publish(listOf(it), replace = false, prepend = true) }
+                    }
+                }
+            if (current == generation) _recentlyPlayedLoading.value = false
+        }
+    }
+
+    /**
      * @param replace true when these shelves *are* the page — a first load or a
      *   refresh — rather than more arriving beside what is already there.
+     * @param prepend true when these shelves lead the page rather than trail
+     *   it — the recently-played shelf's own seat.
      */
-    private fun publish(shelves: List<HomeShelf>, replace: Boolean) {
-        val keyed = shelves.filter { seenTitles.add(it.title.lowercase(Locale.ROOT)) }
-        val existing = (_home.value as? UiState.Success)?.data.orEmpty()
-        when {
-            replace || _home.value !is UiState.Success -> _home.value = UiState.Success(keyed)
-            keyed.isNotEmpty() -> _home.value = UiState.Success(existing + keyed)
-        }
+    private fun publish(shelves: List<HomeShelf>, replace: Boolean, prepend: Boolean = false) {
+        val merged = mergeShelves(
+            existing = (_home.value as? UiState.Success)?.data.orEmpty(),
+            incoming = shelves,
+            seenTitles = seenTitles,
+            replace = replace,
+            prepend = prepend,
+        ) ?: return
+        _home.value = UiState.Success(merged)
+    }
+}
+
+/**
+ * [HomeViewModel.publish]'s arithmetic, pure: incoming shelves lose any whose
+ * title the [seenTitles] set has claimed (the dedupe that keeps a slow
+ * supplement from double-parking, and — with the recently-played shelf
+ * publishing first — YouTube's own same-titled shelf from riding in second),
+ * and the survivors land ahead of the page on [prepend] or behind it otherwise.
+ * Null means "nothing changed", which a trailing append with no newcomers is.
+ */
+internal fun mergeShelves(
+    existing: List<HomeShelf>,
+    incoming: List<HomeShelf>,
+    seenTitles: MutableSet<String>,
+    replace: Boolean,
+    prepend: Boolean,
+): List<HomeShelf>? {
+    val keyed = incoming.filter { seenTitles.add(it.title.lowercase(Locale.ROOT)) }
+    return when {
+        replace || existing.isEmpty() -> if (prepend) keyed + existing else keyed
+        keyed.isNotEmpty() -> if (prepend) keyed + existing else existing + keyed
+        else -> null
     }
 }

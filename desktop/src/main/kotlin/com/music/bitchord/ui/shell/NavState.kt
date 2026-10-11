@@ -21,6 +21,9 @@ sealed interface Destination {
     data object Explore : Destination
     data object Search : Destination
     data object RecentlyAdded : Destination
+
+    /** The account's full listening history, YouTube Music's own ordering. */
+    data object History : Destination
     data object LibrarySongs : Destination
     data object LibraryPlaylists : Destination
 

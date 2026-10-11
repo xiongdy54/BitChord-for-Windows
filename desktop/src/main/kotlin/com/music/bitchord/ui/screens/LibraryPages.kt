@@ -254,3 +254,35 @@ fun RecentlyAddedPage(
         }
     }
 }
+
+/**
+ * The account's full listening history — the page you open when the recents
+ * shelf's twenty is not enough. The shape is [RecentlyAddedPage]'s, with the
+ * one deliberate difference slice 19's design names: no loaded latch, so the
+ * feed re-asks on every visit — a history is only ever stale by seconds.
+ */
+@Composable
+fun HistoryPage(
+    viewModel: LibraryViewModel,
+    onPlayFrom: (List<Song>, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val state by viewModel.history.collectAsState()
+    LibraryState(
+        state = state,
+        ensure = viewModel::refreshHistory,
+        retry = viewModel::refreshHistory,
+        emptyMessage = stringResource(Res.string.history_empty),
+    ) { songs ->
+        LazyColumn(state = rememberLazyListState(), modifier = modifier.fillMaxSize()) {
+            itemsIndexed(songs) { index, song ->
+                SongRow(
+                    song = song,
+                    onClick = { onPlayFrom(songs, index) },
+                    modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+                )
+            }
+            item { Spacer(Modifier.height(80.dp)) }
+        }
+    }
+}

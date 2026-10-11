@@ -254,6 +254,7 @@ compose.desktop {
             "bitchord.probeSourceEditorPreview",
             "bitchord.liquidGlass",
             "bitchord.hideVolumeBar",
+            "bitchord.probeLocaleSwitch",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",

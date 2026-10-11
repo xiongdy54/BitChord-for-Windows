@@ -61,4 +61,11 @@
     <string name="playback_speed">播放速度</string>
     <string name="playback_speed_subtitle">音乐播放的快慢，从半速到倍速。</string>
     <string name="skip_silence_subtitle_desktop">跳过长时间的静音——本构建的解码器暂不支持，先记录在案。</string>
+
+    <!-- 备份与更新（切片 19）：副标题如实说明本构建保存的内容——还没有收听统计，
+         "收听记录"会是桌面没有的页面。 -->
+    <string name="export_data_subtitle_desktop">将设置和搜索历史导出为一个 JSON 文件</string>
+    <string name="check_for_updates">检查更新</string>
+    <string name="update_none">BitChord 已是最新版本</string>
+    <string name="update_open_release">打开发布页</string>
 </resources>

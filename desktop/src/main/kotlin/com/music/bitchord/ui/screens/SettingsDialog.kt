@@ -37,6 +37,8 @@ import androidx.compose.ui.window.Dialog
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AccountController
 import com.music.bitchord.auth.WebSessionMode
+import com.music.bitchord.data.AppUpdateChecker
+import com.music.bitchord.data.backup.Backup
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
@@ -47,6 +49,16 @@ import com.music.bitchord.desktop.playback.AudioOutputDevice
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.blur_unfocused_lyrics
 import com.music.bitchord.desktop.resources.blur_unfocused_lyrics_subtitle
+import com.music.bitchord.desktop.resources.check_for_updates
+import com.music.bitchord.desktop.resources.close
+import com.music.bitchord.desktop.resources.export_data
+import com.music.bitchord.desktop.resources.export_data_subtitle_desktop
+import com.music.bitchord.desktop.resources.import_data
+import com.music.bitchord.desktop.resources.import_data_subtitle
+import com.music.bitchord.desktop.resources.update_available
+import com.music.bitchord.desktop.resources.update_available_body
+import com.music.bitchord.desktop.resources.update_none
+import com.music.bitchord.desktop.resources.update_open_release
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
 import com.music.bitchord.desktop.resources.hide_volume_bar
@@ -355,12 +367,10 @@ fun SettingsDialog(
                     label = "中文",
                     selected = language == "zh",
                 ) { AppSettings.setLanguage("zh") }
-                Text(
-                    text = stringResource(Res.string.restart_to_apply),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                // No restart note: slice 19 made the switch hot — the shell
+                // subtree rebuilds on the change and every string re-reads the
+                // locale. (The translucent-window row above keeps its note;
+                // that switch really is next-launch, by the platform's rule.)
 
                 GroupDivider()
 
@@ -636,6 +646,103 @@ fun SettingsDialog(
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
+
+                // The backup pair (slice 19): the settings and the search
+                // history they share a file with, as one JSON the user owns.
+                // The pickers are the platform's own chooser on IO — the
+                // local-music precedent — and the errands themselves are
+                // [com.music.bitchord.data.backup.Backup]'s.
+                val backupMessage = remember { mutableStateOf<String?>(null) }
+                val dialogScope = rememberCoroutineScope()
+                ClickableRow(
+                    title = stringResource(Res.string.export_data),
+                    subtitle = stringResource(Res.string.export_data_subtitle_desktop),
+                ) {
+                    dialogScope.launch {
+                        val chosen = withContext(Dispatchers.IO) {
+                            val chooser = javax.swing.JFileChooser().apply {
+                                dialogType = javax.swing.JFileChooser.SAVE_DIALOG
+                                selectedFile = java.io.File(Backup.suggestedName())
+                                isMultiSelectionEnabled = false
+                            }
+                            if (chooser.showSaveDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                chooser.selectedFile.absolutePath
+                            } else {
+                                null
+                            }
+                        }
+                        chosen?.let { path ->
+                            Backup.exportTo(java.io.File(path))
+                                .onSuccess { count ->
+                                    backupMessage.value = "OK · $count"
+                                }
+                                .onFailure { backupMessage.value = it.message }
+                        }
+                    }
+                }
+                ClickableRow(
+                    title = stringResource(Res.string.import_data),
+                    subtitle = stringResource(Res.string.import_data_subtitle),
+                ) {
+                    dialogScope.launch {
+                        val chosen = withContext(Dispatchers.IO) {
+                            val chooser = javax.swing.JFileChooser().apply {
+                                fileSelectionMode = javax.swing.JFileChooser.FILES_ONLY
+                                isMultiSelectionEnabled = false
+                            }
+                            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                chooser.selectedFile.absolutePath
+                            } else {
+                                null
+                            }
+                        }
+                        chosen?.let { path ->
+                            Backup.importFrom(java.io.File(path))
+                                .onSuccess { backupMessage.value = null }
+                                .onFailure { backupMessage.value = it.message }
+                        }
+                    }
+                }
+                backupMessage.value?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
+
+                // The update row (slice 19): the fork's releases page, asked
+                // on the row's click as well as once per launch — and the
+                // answer, when there is one, is a dialog of its own.
+                val updateAvailable by AppUpdateChecker.available.collectAsState()
+                var showUpdateNone by remember { mutableStateOf(false) }
+                var showUpdateDialog by remember { mutableStateOf(false) }
+                if (updateAvailable != null) showUpdateDialog = true
+                ClickableRow(
+                    title = stringResource(Res.string.check_for_updates),
+                ) {
+                    dialogScope.launch {
+                        AppUpdateChecker.check()
+                        if (AppUpdateChecker.available.value == null) showUpdateNone = true
+                    }
+                }
+                if (showUpdateNone) {
+                    LaunchedEffect(Unit) { kotlinx.coroutines.delay(2500); showUpdateNone = false }
+                    Text(
+                        text = stringResource(Res.string.update_none),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
+                if (showUpdateDialog && updateAvailable != null) {
+                    UpdateAvailableDialog(
+                        info = updateAvailable!!,
+                        onDismiss = { showUpdateDialog = false },
+                    )
+                }
+
                 Text(
                     text = stringResource(Res.string.about_upstream),
                     style = MaterialTheme.typography.bodySmall,
@@ -657,6 +764,71 @@ internal fun formatPlaybackSpeed(speed: Float): String {
     }
     return "$text×"
 }
+
+/**
+ * The update notice, the desktop's shape: what's new, and the release page in
+ * the browser — the download-and-install half of upstream's dialog is the
+ * platform's own act on Android, and the desktop's is the user's browser.
+ */
+@Composable
+private fun UpdateAvailableDialog(
+    info: com.music.bitchord.data.AppUpdateChecker.UpdateInfo,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.widthIn(max = 420.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                Text(
+                    text = stringResource(Res.string.update_available, info.version),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = stringResource(Res.string.update_available_body, info.version),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                // The release notes, as they were written — Markdown rendered
+                // as plain text is the honest cheap form; the page has the
+                // real rendering one click away.
+                info.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                    Text(
+                        text = notes.take(NOTES_PREVIEW_CHARS),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(Res.string.close))
+                    }
+                    TextButton(onClick = {
+                        runCatching {
+                            java.awt.Desktop.getDesktop().browse(java.net.URI(info.releaseUrl))
+                        }
+                        onDismiss()
+                    }) {
+                        Text(stringResource(Res.string.update_open_release))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** How much of a release's notes the dialog shows before the page takes over. */
+private const val NOTES_PREVIEW_CHARS = 600
 
 @Composable
 private fun GroupHeader(title: String) {
