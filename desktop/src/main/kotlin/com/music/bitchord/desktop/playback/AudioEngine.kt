@@ -22,9 +22,9 @@ data class AudioStats(
  * What the slice-1 VLC wrapper already was — five callbacks and seven verbs —
  * said out loud, so that the queue can be tested against a fake engine on a
  * machine with no VLC installed. The output-device pair at the bottom arrived
- * with slice 9 and carries defaults, so the count still holds for an engine
- * that only plays. Every core member is [VlcAudioPlayer]'s own; the interface
- * adds nothing to it.
+ * with slice 9 and the equalizer verb with slice 15; all carry defaults, so
+ * the count still holds for an engine that only plays. Every core member is
+ * [VlcAudioPlayer]'s own; the interface adds nothing to it.
  *
  * Callbacks arrive on the thread the engine chooses. libvlc runs them on vlcj's
  * own event dispatcher, not on the UI thread, so whoever consumes them has to
@@ -131,6 +131,19 @@ interface AudioEngine {
      * what its probe established.
      */
     fun setAudioOutputDevice(deviceId: String?) {}
+
+    /**
+     * Sound with [tuning] from now on — the equaliser settings, already mapped
+     * onto this engine's own band shape ([equalizerTuning] did that). Null, or
+     * a tuning with `enabled == false`, means passthrough: the equalizer comes
+     * off, not down.
+     *
+     * The default exists so an engine with no equalizer of its own (the fake,
+     * a future one) receives the settings and ignores them — the same
+     * slice-9-decision-4 precedent the output-device pair set, where the
+     * interface keeps asking no more of an engine than that it plays.
+     */
+    fun setEqualizer(tuning: EqualizerTuning?) {}
 }
 
 /** One endpoint the operating system's sound settings would list, by its own id. */

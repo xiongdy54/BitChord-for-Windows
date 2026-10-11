@@ -202,6 +202,10 @@ tasks.register<JavaExec>("probe") {
     // metadata and runs the four-provider canvas chain against it, printing
     // the source, the URL shape and the strict-match verdict. See Probe.kt.
     (project.findProperty("probeCanvas") as String?)?.let { jvmArgs("-Dbitchord.probeCanvas=$it") }
+    // The equalizer-mapping probe: -PprobeEqualizer=<preset|band values>
+    // renders the curve model, samples it at libvlc's ten band centres and
+    // prints the mapping table. See Probe.kt.
+    (project.findProperty("probeEqualizer") as String?)?.let { jvmArgs("-Dbitchord.probeEqualizer=$it") }
 }
 
 compose.desktop {
@@ -231,6 +235,8 @@ compose.desktop {
             "bitchord.probeDestination",
             "bitchord.probeLocalScan",
             "bitchord.probeCanvas",
+            "bitchord.probeEqualizer",
+            "bitchord.probeEqualizerPreview",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",

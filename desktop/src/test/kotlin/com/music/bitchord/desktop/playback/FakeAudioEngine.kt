@@ -104,4 +104,15 @@ class FakeAudioEngine : AudioEngine {
         deviceCalls++
         outputDevice = deviceId
     }
+
+    /**
+     * Every equalizer tuning the controller handed over, in order — the
+     * creation-time apply and the handoff's own land here as separate calls,
+     * which is what the equalizer's tests read apart.
+     */
+    val equalizers = mutableListOf<EqualizerTuning?>()
+
+    override fun setEqualizer(tuning: EqualizerTuning?) {
+        equalizers += tuning
+    }
 }

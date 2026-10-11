@@ -57,6 +57,8 @@ import com.music.bitchord.desktop.resources.autoplay
 import com.music.bitchord.desktop.resources.autoplay_subtitle
 import com.music.bitchord.desktop.resources.crossfade
 import com.music.bitchord.desktop.resources.crossfade_subtitle
+import com.music.bitchord.desktop.resources.equalizer
+import com.music.bitchord.desktop.resources.equalizer_subtitle
 import com.music.bitchord.desktop.resources.off
 import com.music.bitchord.desktop.resources.connected
 import com.music.bitchord.desktop.resources.dark_theme
@@ -146,12 +148,15 @@ fun SettingsDialog(
     onAudioOutputDeviceChanged: (AudioOutputDevice?) -> Unit = {},
     /** One-shot from the screenshot probe: arrive with the output picker already open. */
     autoOpenAudioOutput: Boolean = false,
+    /** One-shot from the screenshot probe: arrive with the equalizer already open. */
+    autoOpenEqualizer: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var showLyricsSources by remember { mutableStateOf(false) }
     var showTranslationLanguage by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(autoOpenAudioOutput) }
     var showAccountDialog by remember { mutableStateOf(false) }
+    var showEqualizer by remember { mutableStateOf(autoOpenEqualizer) }
     if (showLyricsSources) {
         LyricsSourcesDialog(onDismiss = { showLyricsSources = false })
     }
@@ -171,6 +176,9 @@ fun SettingsDialog(
             onOpenLogin = onOpenLogin,
             onDismiss = { showAccountDialog = false },
         )
+    }
+    if (showEqualizer) {
+        EqualizerDialog(onDismiss = { showEqualizer = false })
     }
     Dialog(
         onDismissRequest = onDismiss,
@@ -379,6 +387,25 @@ fun SettingsDialog(
                 Text(
                     text = outputDeviceName
                         ?: stringResource(Res.string.system_default),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+
+                // The app's own equaliser — a row onto a child dialog, the
+                // way the output picker and the account sheets open. The
+                // curve itself is the dialog's business; the player's
+                // collector is the one that hears every change.
+                Text(
+                    text = stringResource(Res.string.equalizer),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showEqualizer = true }
+                        .padding(top = 8.dp),
+                )
+                Text(
+                    text = stringResource(Res.string.equalizer_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),

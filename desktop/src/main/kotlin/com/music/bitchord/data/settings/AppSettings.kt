@@ -5,6 +5,8 @@ import com.music.bitchord.data.FileStore
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.PaxSenix
 import com.music.bitchord.data.lyrics.normalizePaxSenixApiKey
+import com.music.bitchord.playback.EqLayout
+import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.RepeatMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.builtins.ListSerializer
@@ -56,6 +58,21 @@ enum class DownloadQuality(
     STANDARD(128, "Standard", false),
     HIGH(256, "High", false),
     LOSSLESS(Int.MAX_VALUE, "Lossless", true),
+}
+
+/**
+ * Which of the equaliser's two tabs is driving the sound.
+ *
+ * One at a time rather than both at once: they are two ways of describing the
+ * same curve, and summing them would mean a tone pad sitting at dead centre
+ * still quietly altering whatever the sliders said.
+ */
+enum class EqualizerMode {
+    /** The tone pad: tilt, contour, and how wide each is. */
+    DYNAMIC,
+
+    /** Seven sliders and a preset list. */
+    MANUAL,
 }
 
 /**
@@ -192,6 +209,107 @@ object AppSettings {
         val clamped = value.coerceIn(0, 12)
         crossfadeSeconds.value = clamped
         prefs.putString(KEY_CROSSFADE_SECONDS, clamped.toString())
+    }
+
+    // ── Equalizer ────────────────────────────────────────────────────────────
+    //
+    // The app's own equaliser, six flows against upstream's seven: `balance`
+    // is deliberately absent — libvlc has no continuous balance to map it onto
+    // (only channel modes), so the desktop ships without it rather than
+    // pretending (design decision 3). Key names are upstream's
+    // (`equalizer_*`), so a settings file means the same thing on both
+    // platforms, and the flows' only consumer besides the dialog is
+    // [com.music.bitchord.desktop.playback.PlayerController]'s collector,
+    // which renders the curve and feeds the engines — the same split as
+    // upstream's `applyEqualizer`.
+
+    /**
+     * The app's own equaliser, master switch.
+     *
+     * Upstream's doc explained how this stacked against the *system* equaliser
+     * row beside it; the desktop has no system-equaliser route (README's
+     * recorded cut), so the switch stands on its own.
+     */
+    val equalizerEnabled = MutableStateFlow(prefs.getString(KEY_EQ_ENABLED, "false") == "true")
+
+    /** Which tab is driving it. */
+    val equalizerMode = MutableStateFlow(
+        prefs.getStringOrNull(KEY_EQ_MODE)
+            ?.let { stored -> EqualizerMode.entries.firstOrNull { it.name == stored } }
+            ?: EqualizerMode.DYNAMIC,
+    )
+
+    /** Tone pad, horizontal: warm at -5, bright at +5. */
+    val equalizerToneX = MutableStateFlow(
+        (prefs.getString(KEY_EQ_TONE_X, "0").toIntOrNull() ?: 0)
+            .coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS),
+    )
+
+    /** Tone pad, vertical: scooped at -5, mid-forward at +5. */
+    val equalizerToneY = MutableStateFlow(
+        (prefs.getString(KEY_EQ_TONE_Y, "0").toIntOrNull() ?: 0)
+            .coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS),
+    )
+
+    /** Tone pad bandwidth: Broad when false, Focused when true. */
+    val equalizerFocused = MutableStateFlow(prefs.getString(KEY_EQ_FOCUSED, "false") == "true")
+
+    /** The manual tab's seven gains, in decibels, low to high. */
+    val equalizerBands = MutableStateFlow(decodeEqualizerBands(prefs.getStringOrNull(KEY_EQ_BANDS)))
+
+    /**
+     * Which preset the bands currently are, or [EqualizerPreset.CUSTOM].
+     *
+     * Derived from [equalizerBands] rather than independent of it — see
+     * [setEqualizerBands] — so a slider dragged back to where a preset left it
+     * makes the row say that preset's name again instead of "Custom" forever.
+     */
+    val equalizerPreset = MutableStateFlow(EqualizerPreset.matching(equalizerBands.value))
+
+    fun setEqualizerEnabled(value: Boolean) {
+        equalizerEnabled.value = value
+        prefs.putString(KEY_EQ_ENABLED, value.toString())
+    }
+
+    fun setEqualizerMode(value: EqualizerMode) {
+        equalizerMode.value = value
+        prefs.putString(KEY_EQ_MODE, value.name)
+    }
+
+    fun setEqualizerTone(x: Int, y: Int) {
+        val steps = EqLayout.TONE_STEPS
+        val clampedX = x.coerceIn(-steps, steps)
+        val clampedY = y.coerceIn(-steps, steps)
+        equalizerToneX.value = clampedX
+        equalizerToneY.value = clampedY
+        prefs.putString(KEY_EQ_TONE_X, clampedX.toString())
+        prefs.putString(KEY_EQ_TONE_Y, clampedY.toString())
+    }
+
+    fun setEqualizerFocused(value: Boolean) {
+        equalizerFocused.value = value
+        prefs.putString(KEY_EQ_FOCUSED, value.toString())
+    }
+
+    /**
+     * Writes the manual tab's seven gains, and renames the preset row to suit.
+     *
+     * Stored as text rather than seven keys of their own so that a backup
+     * carries them — upstream's own reason (`AppSettings.kt:1164`), and it
+     * holds here for the same one: one string is one thing to keep in step
+     * rather than seven.
+     */
+    fun setEqualizerBands(values: List<Float>) {
+        val clamped = clampEqualizerBands(values)
+        equalizerBands.value = clamped
+        equalizerPreset.value = EqualizerPreset.matching(clamped)
+        prefs.putString(KEY_EQ_BANDS, encodeEqualizerBands(clamped))
+    }
+
+    /** Applies a preset's curve. [EqualizerPreset.CUSTOM] carries none, so it does nothing. */
+    fun setEqualizerPreset(preset: EqualizerPreset) {
+        if (preset == EqualizerPreset.CUSTOM) return
+        setEqualizerBands(preset.bands)
     }
 
     // ── Motion artwork ───────────────────────────────────────────────────────
@@ -562,6 +680,14 @@ object AppSettings {
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_AUTOPLAY = "autoplay"
     private const val KEY_CROSSFADE_SECONDS = "crossfade_seconds"
+    private const val KEY_EQ_ENABLED = "equalizer_enabled"
+    private const val KEY_EQ_MODE = "equalizer_mode"
+    private const val KEY_EQ_TONE_X = "equalizer_tone_x"
+    private const val KEY_EQ_TONE_Y = "equalizer_tone_y"
+    private const val KEY_EQ_FOCUSED = "equalizer_focused"
+    // Upstream also persists `equalizer_balance`; the desktop has no balance
+    // control (libvlc has no continuous trim), so the key is not written here.
+    private const val KEY_EQ_BANDS = "equalizer_bands"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_SHOW_NERD_STATS = "show_nerd_stats"
@@ -605,6 +731,32 @@ internal fun decodeFolders(stored: String?): List<String> {
         Json.decodeFromString(ListSerializer(String.serializer()), stored)
     }.getOrDefault(emptyList())
 }
+
+/**
+ * The equalizer's seven gains as one comma string — the encoding upstream's
+ * `equalizer_bands` key uses, kept byte-compatible so a settings file means
+ * the same thing on both platforms.
+ */
+internal fun encodeEqualizerBands(values: List<Float>): String = values.joinToString(",")
+
+/**
+ * The inverse of [encodeEqualizerBands]. Padded rather than rejected: a backup
+ * written by a build with a different number of bands should restore the ones
+ * it does have (upstream's own rule), and anything unparseable reads as flat.
+ */
+internal fun decodeEqualizerBands(stored: String?): List<Float> {
+    val parsed = stored
+        ?.split(",")
+        ?.mapNotNull { it.trim().toFloatOrNull() }
+        .orEmpty()
+    return clampEqualizerBands(parsed)
+}
+
+/** Clamped to the sliders' own travel, padded to [EqLayout.MANUAL_COUNT] with flat. */
+internal fun clampEqualizerBands(values: List<Float>): List<Float> =
+    List(EqLayout.MANUAL_COUNT) {
+        values.getOrElse(it) { 0f }.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
+    }
 
 /**
  * The one credential store behind the WebDAV password. Its own field, rather

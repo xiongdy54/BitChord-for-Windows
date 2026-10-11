@@ -8,7 +8,9 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.desktop.playback.VLC_BAND_CENTERS_HZ
 import com.music.bitchord.desktop.playback.VlcAudioPlayer
+import com.music.bitchord.desktop.playback.equalizerTuning
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.retry
 import com.music.bitchord.desktop.resources.shelf_recents
@@ -17,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import org.jetbrains.compose.resources.getString
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Headless smoke test for the ported data layer: browse the home feed, search
@@ -113,6 +116,48 @@ private suspend fun probe(args: Array<String>) {
             println("(none enumerated)")
         }
         devices.forEach { println("  ${it.name}  [${it.id}]") }
+        vlc.release()
+        return
+    }
+
+    // The equalizer-mapping probe — the slice-15 one. `bitchord.probeEqualizer`
+    // names a preset ("rock") or seven comma band values ("4,2.5,-1,…"): the
+    // curve model renders it, the mapper samples it at libvlc's ten band
+    // centres, and the whole table goes to stdout — the mapping maths is
+    // scriptable where the listening is not. A VLC present on the machine
+    // then receives the tuning for real, proving the native path accepts it.
+    System.getProperty("bitchord.probeEqualizer")?.takeIf { it.isNotBlank() }?.let { spec ->
+        println("── equalizer mapping: $spec ──────────")
+        val preset = com.music.bitchord.playback.EqualizerPreset.entries.firstOrNull {
+            it.name.equals(spec.replace(' ', '_'), ignoreCase = true)
+        }
+        val bands: List<Float> = when {
+            preset != null && preset != com.music.bitchord.playback.EqualizerPreset.CUSTOM ->
+                preset.bands
+            else -> spec.split(",").mapNotNull { it.trim().toFloatOrNull() }
+        }
+        if (bands.size != com.music.bitchord.playback.EqLayout.MANUAL_COUNT) {
+            println("need a preset name or ${com.music.bitchord.playback.EqLayout.MANUAL_COUNT} comma values, got: $bands")
+            return
+        }
+        val curve = com.music.bitchord.playback.manualCurve(bands)
+        println("model bands (Hz/dB):")
+        com.music.bitchord.playback.EqLayout.MANUAL_BANDS_HZ.forEachIndexed { i, hz ->
+            println("  ${label(hz)}: ${formatDb(bands.getOrElse(i) { 0f })}")
+        }
+        println("model preamp: ${formatDb(curve.preampDb)}")
+        val tuning = equalizerTuning(curve, enabled = true)
+        println("vlc bands (libvlc 3.x centres):")
+        VLC_BAND_CENTERS_HZ.forEachIndexed { i, hz ->
+            println("  ${label(hz)}: ${formatDb(tuning.bandAmps.getOrElse(i) { 0f })}")
+        }
+        println("vlc preamp: ${formatDb(tuning.preampDb)}")
+        println("flat check: ${equalizerTuning(com.music.bitchord.playback.EqCurve.FLAT, true)}")
+        val vlc = VlcAudioPlayer()
+        vlc.setEqualizer(tuning)
+        println("applied to a live libvlc player: ok")
+        // Off is a detach, not a flat equalizer — push it and release.
+        vlc.setEqualizer(null)
         vlc.release()
         return
     }
@@ -265,6 +310,18 @@ private fun List<SearchResult>.firstSong(): Song? =
             is SearchResult.Browse -> null
         }
     }
+
+/** "60", "2.5k", "16k" — the equalizer table's frequency column. */
+private fun label(hz: Float): String = when {
+    hz < 1_000f -> "${hz.roundToInt()}Hz"
+    hz % 1_000f == 0f -> "${(hz / 1_000f).roundToInt()}k"
+    else -> String.format(Locale.US, "%.2fk", hz / 1_000f)
+}
+
+/** Signed decibels, one decimal — the table's gain column. */
+private fun formatDb(db: Float): String =
+    String.format(Locale.US, "%+.1f dB", db)
+
 
 private fun SearchResult.describe(): String = when (this) {
     is SearchResult.TopTrack -> "TOP  ${song.title} — ${song.artist} ${song.durationText.orEmpty()} [${song.videoId}]"

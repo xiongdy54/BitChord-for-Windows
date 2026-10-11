@@ -607,6 +607,39 @@ class PlayerControllerTest {
         assertEquals(listOf("https://test/a", "https://test/a"), engine.playedUrls)
     }
 
+    /**
+     * The equaliser's handoff seam: the curve moves with the session, at the
+     * standby's creation and again at the handoff — the two places the
+     * output-device switch applies, with the settings collector keeping both
+     * halves in step the way upstream fed both processors.
+     */
+    @Test
+    fun `the crossfade handoff equalises the incoming engine like the session it becomes`() {
+        AppSettings.setEqualizerEnabled(true)
+        AppSettings.setEqualizerBands(com.music.bitchord.playback.EqualizerPreset.ROCK.bands)
+        try {
+            val case = CrossfadeCase()
+            val engine = case.engine
+            val standby = case.handOffToB()
+            // The session engine was equalised by the collector's first fire —
+            // a curve in the settings means a tuning on the engine, no play
+            // required.
+            assertTrue(engine.equalizers.isNotEmpty(), "the collector should have applied at startup")
+            assertTrue(engine.equalizers.last()!!.enabled)
+            assertEquals(10, engine.equalizers.last()!!.bandAmps.size)
+            // The standby was equalised when it was built, and again when the
+            // handoff made it the session — the same curve both times, which
+            // is what keeps a blend from straddling two equalisers.
+            assertTrue(standby.equalizers.isNotEmpty(), "the standby should have been equalised at creation")
+            val applied = standby.equalizers.last()!!
+            assertTrue(applied.enabled)
+            assertEquals(engine.equalizers.last(), applied)
+        } finally {
+            AppSettings.setEqualizerEnabled(false)
+            AppSettings.setEqualizerBands(com.music.bitchord.playback.EqualizerPreset.FLAT.bands)
+        }
+    }
+
     @Test
     fun `a quality change waits out a blend and lands once it clears`() {
         val case = CrossfadeCase()

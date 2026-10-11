@@ -10,6 +10,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.EqualizerMode
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.MAX_AUTOPLAY_EMPTY_REFRESHES
 import com.music.bitchord.playback.AUTOPLAY_EMPTY_REFRESH_DELAY_MS
@@ -23,6 +24,8 @@ import com.music.bitchord.playback.QueueTimeline
 import com.music.bitchord.playback.RepeatMode
 import com.music.bitchord.playback.autoplayQueueNeedsRefresh
 import com.music.bitchord.playback.loadAutoplayTracks
+import com.music.bitchord.playback.manualCurve
+import com.music.bitchord.playback.toneCurve
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -280,6 +284,10 @@ class PlayerController(
             // A fresh engine knows nothing of the endpoint the listener
             // chose — the one-time apply [init] gave the first engine.
             AppSettings.outputDeviceId.value?.let { created.setAudioOutputDevice(it) }
+            // Nor of the equaliser the session is running under — upstream's
+            // pair of processors are fed the same curve, and this is the
+            // desktop's other half of that.
+            created.setEqualizer(currentEqualizerTuning())
         }
 
     /** Whether a row follows the current one, wrap included — the queue's answer, not a guess. */
@@ -335,6 +343,11 @@ class PlayerController(
         standbyEngineInstance = outgoing
         bindEngine(incoming)
         AppSettings.outputDeviceId.value?.let { incoming.setAudioOutputDevice(it) }
+        // The incoming engine was the standby, equalised as a standby and
+        // possibly not since — the curve moves with the session, here and at
+        // the standby's own creation, so a blend can never straddle two
+        // equalisers (the reason upstream feeds both processors).
+        incoming.setEqualizer(currentEqualizerTuning())
 
         // The needle moves here, not at the outgoing track's end: the queue's
         // whole meaning is "which row is audible", and the incoming row is
@@ -400,6 +413,7 @@ class PlayerController(
         // wrong endpoint.
         AppSettings.outputDeviceId.value?.let { engine.setAudioOutputDevice(it) }
         watchSleepTimer()
+        watchEqualizer()
         crossfade.start()
     }
 
@@ -517,6 +531,83 @@ class PlayerController(
      * so the dialog that asks runs it on [Dispatchers.IO], not the UI thread.
      */
     fun audioOutputDevices(): List<AudioOutputDevice> = engine.audioOutputDevices()
+
+    // ---- equalizer --------------------------------------------------------------------
+
+    /**
+     * Renders the equaliser settings into a curve and hands it to the engines
+     * — upstream's `applyEqualizer` (`PlaybackService.kt:5688`), desktop form.
+     *
+     * Both engines, and not just the audible one, for the reason upstream fed
+     * both processors: the idle one is what the next crossfade starts a song
+     * on, and a blend whose two halves were equalised differently would sweep
+     * the curve in over the fade. The standby may not exist yet — it is built
+     * lazily on the first arm — and when it is, [standbyEngine] applies the
+     * current curve to it, which is how the pair stays in lockstep without
+     * this function ever building an engine just to equalise it.
+     *
+     * The curve is built here rather than in the engine because working out
+     * the make-up attenuation walks the whole response ([EqCurve]), and the
+     * audio thread is the one place that must not do that. The mapping onto
+     * libvlc's bands ([equalizerTuning]) is the same story: sampled once per
+     * settings change, off the engine's clock.
+     */
+    private fun applyCurrentEqualizer() {
+        val tuning = currentEqualizerTuning()
+        engine.setEqualizer(tuning)
+        standbyEngineInstance?.setEqualizer(tuning)
+    }
+
+    /**
+     * What the settings say right now, as a curve, mapped onto libvlc's band
+     * shape. Mode picks the curve exactly as upstream's does: the tone pad's
+     * tilt/contour/bandwidth in DYNAMIC, the seven sliders in MANUAL — one at
+     * a time, never summed (the reason [EqualizerMode] exists).
+     */
+    private fun currentEqualizerTuning(): EqualizerTuning {
+        val enabled = AppSettings.equalizerEnabled.value
+        val curve = when (AppSettings.equalizerMode.value) {
+            EqualizerMode.DYNAMIC -> toneCurve(
+                x = AppSettings.equalizerToneX.value,
+                y = AppSettings.equalizerToneY.value,
+                focused = AppSettings.equalizerFocused.value,
+            )
+            EqualizerMode.MANUAL -> manualCurve(AppSettings.equalizerBands.value)
+        }
+        return equalizerTuning(curve, enabled)
+    }
+
+    /**
+     * The settings watcher — `PlaybackService.kt:5661`'s collector. The
+     * combined flow fires once on collect with the values already stored, so
+     * a session resumed under a saved curve is equalised without a further
+     * act, and every drag in the dialog lands here mid-song.
+     *
+     * Not on [queueDispatcher] on purpose: nothing here is a queue edit and
+     * nothing reads the queue — the engine verbs are thread-safe one-liners
+     * the way [setAudioOutputDevice]'s KDoc already argues, and the only
+     * state two threads could disagree about is which tuning is last, which
+     * every racer computes from the same settings and every writer lands on.
+     */
+    private fun watchEqualizer() {
+        scope.launch {
+            // Explicit <Any, _>: these flows have mixed element types, and
+            // letting the reified vararg combine() infer T lands on an
+            // intersection type. Nothing is read out of the array — the
+            // equaliser reads the settings it wants directly — because six
+            // sources of one curve is six chances to destructure them in the
+            // wrong order. Upstream's list had a seventh member, balance,
+            // which the desktop does not carry (design decision 3).
+            combine<Any, Unit>(
+                AppSettings.equalizerEnabled,
+                AppSettings.equalizerMode,
+                AppSettings.equalizerToneX,
+                AppSettings.equalizerToneY,
+                AppSettings.equalizerFocused,
+                AppSettings.equalizerBands,
+            ) { }.collect { applyCurrentEqualizer() }
+        }
+    }
 
     // ---- autoplay -------------------------------------------------------------------
 

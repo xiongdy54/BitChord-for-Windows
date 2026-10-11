@@ -206,6 +206,14 @@ private val probeSleepPreview = System.getProperty("bitchord.probeSleepPreview")
  */
 private val probeOutputPreview = System.getProperty("bitchord.probeOutputPreview") == "true"
 
+/**
+ * The equalizer's panel, rendered inline for the same reason the output
+ * picker's is — the dialog-within-a-dialog's native window sits where the
+ * capture cannot see it, so the scripted pass shoots this panel instead,
+ * controls and states exactly the real one's.
+ */
+private val probeEqualizerPreview = System.getProperty("bitchord.probeEqualizerPreview") == "true"
+
 
 /**
  * Window geometry and locale, so the acceptance screenshots can be taken at other
@@ -540,6 +548,7 @@ fun main() {
         // pass cannot click, so the dialog gets told to open its own child on
         // start (see probeDestination == "outputdevices").
         var openAudioOutputOnStart by remember { mutableStateOf(false) }
+        var openEqualizerOnStart by remember { mutableStateOf(false) }
         if (probeDownload) {
             var downloadProbeFired by remember { mutableStateOf(false) }
             val snapshot by player.state.collectAsState()
@@ -574,6 +583,10 @@ fun main() {
         if (probeDestination == "outputdevices") {
             shellState.showSettings = true
             openAudioOutputOnStart = true
+        }
+        if (probeDestination == "equalizer") {
+            shellState.showSettings = true
+            openEqualizerOnStart = true
         }
         val nav = remember {
             NavState().apply {
@@ -948,6 +961,7 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     autoOpenPlayer = probeOpenPlayer,
                     // The output picker's scripted open — see probeDestination.
                     autoOpenAudioOutput = openAudioOutputOnStart,
+                    autoOpenEqualizer = openEqualizerOnStart,
                 )
                 // The menu panel's styling probe — see [menuPreview]. Rendered
                 // in place rather than through the popup, whose native window
@@ -1008,6 +1022,23 @@ if (shotPath.isNotBlank() && shotMs != null) {
                                     player.setAudioOutputDevice(device?.id, device?.name)
                                 },
                             )
+                        }
+                    }
+                }
+                // The equalizer's styling probe — see [probeEqualizerPreview]:
+                // the same inline-panel trick as the output picker above, and
+                // the settings dialog itself writes the flows it reads, so the
+                // three states (dynamic pad / manual faders / preset list)
+                // shoot from the same panel with the settings file deciding.
+                if (probeEqualizerPreview) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 6.dp,
+                            modifier = Modifier.widthIn(max = 460.dp),
+                        ) {
+                            com.music.bitchord.ui.screens.EqualizerPanel()
                         }
                     }
                 }

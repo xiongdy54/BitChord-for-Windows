@@ -101,6 +101,80 @@ class VlcAudioPlayer : AudioEngine {
 
     val lengthMs: Long get() = player.status().length()
 
+    /**
+     * The equaliser, held as one cached vlcj [Equalizer] for this player's
+     * lifetime. libvlc's equalizer applies *per media player*, and — the
+     * undocumented part — there is no read-back to ask a player what it is
+     * running (`libvlc_media_player_get_equalizer` does not exist in 3.x), so
+     * whether an equalizer survives a media open cannot be observed from the
+     * API. vlcj's own `setEqualizer` re-creates the native instance on every
+     * call, and nothing in libvlc 3.x's `media_player.c` re-seats the
+     * equalizer when an input thread tears down, but the guarantee is not
+     * written down anywhere official.
+     *
+     * So the reapply is defensive by design: [play] and [prepare] push the
+     * current tuning again after every media open, the same
+     * belt-and-braces the output-device switch's live-stream probe gets for
+     * free. Cost is one idempotent native call per track — nothing against a
+     * silence where the curve should be.
+     */
+    private var equalizerCache: uk.co.caprica.vlcj.player.base.Equalizer? = null
+
+    /**
+     * The last tuning handed to [setEqualizer], so the defensive reapply in
+     * [play]/[prepare] has something to push and a change can be recognised.
+     */
+    @Volatile
+    private var currentTuning: EqualizerTuning? = null
+
+    /**
+     * Map the settings onto libvlc's own ten-band equalizer. [tuning] null or
+     * disabled detaches the equalizer outright (`setEqualizer(null)` lands as
+     * `libvlc_media_player_set_equalizer(player, NULL)` in vlcj 4.12.1 —
+     * verified in its bytecode, so passthrough is a real detach and not ten
+     * flat filters standing in for one) — the shape of upstream's processor
+     * being bypassed rather than fed a flat curve.
+     *
+     * One cached [Equalizer] object carries the values: its setters validate
+     * against libvlc's ±20 dB and throw outside it, which the mapper's clamp
+     * already prevented and [runCatching] backstops anyway — an equalizer
+     * refusal is a settings hiccup, never a player crash.
+     */
+    override fun setEqualizer(tuning: EqualizerTuning?) {
+        currentTuning = tuning
+        runCatching {
+            if (tuning == null || !tuning.enabled) {
+                equalizerCache = null
+                player.audio().setEqualizer(null)
+                return
+            }
+            val equalizer = equalizerCache ?: factory.equalizer().newEqualizer()
+                .also { equalizerCache = it }
+            equalizer.setPreamp(tuning.preampDb)
+            tuning.bandAmps.forEachIndexed { band, amp ->
+                // libvlc's band count is fixed; a shorter table simply leaves
+                // its tail at whatever it was, and a longer one cannot happen
+                // from the mapper.
+                if (band < equalizer.bandCount()) equalizer.setAmp(band, amp)
+            }
+            // Explicit rather than relying on vlcj's change listener: the
+            // call is idempotent and proves the values landed.
+            player.audio().setEqualizer(equalizer)
+        }.onFailure {
+            DebugLog.w("audio", "setEqualizer failed: ${it.message}")
+        }
+    }
+
+    /**
+     * The defensive reapply — [currentTuning] pushed again, because libvlc's
+     * persistence of an equalizer across media opens is undocumented (see the
+     * cache above). Off or never-set pushes a detach, which keeps "the
+     * equalizer came off" true across media too.
+     */
+    private fun reapplyEqualizer() {
+        setEqualizer(currentTuning)
+    }
+
     override fun play(url: String, headers: Map<String, String>, startAtMs: Long) {
         val options = buildList {
             addHeaders(headers)
@@ -111,6 +185,7 @@ class VlcAudioPlayer : AudioEngine {
         }
         statsReported = false
         player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
+        reapplyEqualizer()
     }
 
     /**
@@ -133,6 +208,7 @@ class VlcAudioPlayer : AudioEngine {
         }
         statsReported = false
         player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
+        reapplyEqualizer()
         player.audio().setVolume(0)
     }
 
