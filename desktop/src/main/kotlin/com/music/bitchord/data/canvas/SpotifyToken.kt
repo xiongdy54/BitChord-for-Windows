@@ -1,35 +1,100 @@
 package com.music.bitchord.data.canvas
 
-// Desktop stand-in for the Android app's SpotifyToken (app
-// data/canvas/SpotifyToken.kt), which mints an access token from the
-// listener's own `sp_dc` session cookie through an offscreen WebView harvest.
+import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.Http
+import com.music.bitchord.data.settings.AppSettings
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import okhttp3.Request
 
 /**
- * The listener-side credential [SpotifyCanvas] needs, or the absence of one.
+ * The bearer token behind Spotify's own web player, minted from the
+ * listener's session cookie ([AppSettings.spotifySpdcToken]) rather than an
+ * app credential — there is no public API for a track's Canvas, so this walks
+ * the same door the web player itself uses to fetch one.
  *
- * Upstream answers [accessToken] out of a session cookie the app harvests in
- * an offscreen WebView (Settings > Spotify Canvas setup); the desktop port's
- * equivalent runs through the embedded browser (JCEF) and is its own follow-up
- * slice. Until it exists there is no credential here, so both reads answer
- * null — which is exactly the shape upstream already handles: with no token
- * [SpotifyCanvas] logs one line and returns without a request, leaving the
- * other three providers to answer. Nothing else in the chain changes.
- *
- * Kept as an object with the upstream names so the harvest slice can fill
- * these two functions in without touching [SpotifyCanvas] at all.
+ * Desktop form (slice 21): the sp_dc cookie is a setting the user holds, and
+ * the token endpoint is asked directly with it. Upstream stopped trusting
+ * this door — its harvest loads the whole web player in an offscreen WebView
+ * and reads the token the page mints for itself — so this mint is the
+ * best-effort half: when the endpoint answers, Canvas works through the REST
+ * fallback (bearer is all it needs; the canvaz-cache GraphQL path wants a
+ * client token this build does not mint and [clientToken] answers null); when
+ * it is gated or the cookie is stale, one log line and null, which is the
+ * shape [SpotifyCanvas] already treats as "ask the next provider". The JCEF
+ * harvest upstream's path implies is its own slice if this door closes.
  */
 object SpotifyToken {
 
-    /**
-     * A bearer token minted from the listener's `sp_dc` cookie, valid about an
-     * hour — null with no cookie set, which is the permanent answer on this
-     * build until the JCEF harvest lands.
-     */
-    fun accessToken(): String? = null
+    private const val TAG = "SpotifyToken"
+
+    /** The web player's own token door, asked with the session cookie. */
+    internal var tokenEndpoint: String =
+        "https://open.spotify.com/api/token?reason=transport&productType=web_player"
+
+    /** Tokens live about an hour; this build re-mints shortly before the hour is out. */
+    private const val EXPIRY_MARGIN_MS = 30_000L
+
+    /** The endpoint's own figure when it declines to state one. */
+    private const val DEFAULT_LIFETIME_MS = 3_600_000L
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    @Volatile private var cachedAccessToken: String? = null
+    @Volatile private var accessTokenExpiresAtMs = 0L
 
     /**
-     * The per-install client token Spotify's own endpoints ask for alongside
-     * the bearer — null while [accessToken] is, for the same reason.
+     * The current bearer, or null when there is no cookie to mint one from or
+     * the mint failed. Cached until shortly before it expires so a skip
+     * through a queue doesn't pay for this per track.
+     */
+    fun accessToken(): String? {
+        val cookie = AppSettings.spotifySpdcToken.value.trim()
+        if (cookie.isBlank()) return null
+        val now = System.currentTimeMillis()
+        cachedAccessToken?.let { if (now < accessTokenExpiresAtMs - EXPIRY_MARGIN_MS) return it }
+        return synchronized(this) {
+            val stillNow = System.currentTimeMillis()
+            cachedAccessToken?.let { if (stillNow < accessTokenExpiresAtMs - EXPIRY_MARGIN_MS) return it }
+            mint(cookie)?.also { harvested ->
+                cachedAccessToken = harvested.token
+                accessTokenExpiresAtMs = harvested.expiresAt
+            }?.token
+        }
+    }
+
+    /**
+     * The per-install client token Spotify's canvaz-cache endpoint asks for
+     * alongside the bearer. This build mints no client token — the endpoint
+     * that produces one is part of the web-player harvest upstream runs — so
+     * the answer is always null and [SpotifyCanvas] takes its REST fallback,
+     * which treats the header as optional.
      */
     fun clientToken(): String? = null
+
+    private fun mint(cookie: String): HarvestedToken? = runCatching {
+        val request = Request.Builder()
+            .url(tokenEndpoint)
+            .header("Cookie", "sp_dc=$cookie")
+            .build()
+        val body = Http.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Log.w(TAG, "token mint answered HTTP ${response.code}")
+                return null
+            }
+            response.body?.string()
+        } ?: return null
+        val obj = json.parseToJsonElement(body) as? JsonObject ?: return null
+        val token = obj["accessToken"]?.jsonPrimitive?.contentOrNull ?: return null
+        val expiresAt = obj["accessTokenExpirationTimestampMs"]?.jsonPrimitive?.longOrNull
+            ?: (System.currentTimeMillis() + DEFAULT_LIFETIME_MS)
+        Log.d(TAG, "minted a Spotify bearer, ${expiresAt - System.currentTimeMillis()}ms of life")
+        HarvestedToken(token, expiresAt)
+    }.getOrNull()
+
+    private data class HarvestedToken(val token: String, val expiresAt: Long)
 }

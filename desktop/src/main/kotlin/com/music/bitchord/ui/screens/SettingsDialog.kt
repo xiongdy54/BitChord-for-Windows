@@ -100,6 +100,9 @@ import com.music.bitchord.desktop.resources.connected
 import com.music.bitchord.desktop.resources.download_location
 import com.music.bitchord.desktop.resources.download_location_reset
 import com.music.bitchord.desktop.resources.saved_to_bitchord_folder
+import com.music.bitchord.desktop.resources.save
+import com.music.bitchord.desktop.resources.spotify_canvas_auto_hide
+import com.music.bitchord.desktop.resources.spotify_canvas_auto_hide_subtitle
 import com.music.bitchord.desktop.resources.dark_theme
 import com.music.bitchord.desktop.resources.library_sign_in_description
 import com.music.bitchord.desktop.resources.listen_as
@@ -410,6 +413,35 @@ fun SettingsDialog(
                         subtitle = stringResource(Res.string.prioritize_spotify_canvas_subtitle),
                         checked = prioritizeSpotifyCanvas,
                     ) { AppSettings.setPrioritizeSpotifyCanvas(it) }
+                    // The Spotify half's credential and its behaviour switch
+                    // (slice 21): the cookie is the listener's own session —
+                    // typed once, minted against, never exported — and the
+                    // auto-hide is the deck's five-second stand-down while a
+                    // Canvas plays.
+                    if (prioritizeSpotifyCanvas) {
+                        var spdc by remember { mutableStateOf(AppSettings.spotifySpdcToken.value) }
+                        PillTextField(
+                            value = spdc,
+                            onValueChange = { spdc = it },
+                            placeholder = "sp_dc",
+                            isPassword = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                        )
+                        TextButton(
+                            onClick = { AppSettings.setSpotifySpdcToken(spdc) },
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Text(stringResource(Res.string.save))
+                        }
+                    }
+                    val spotifyCanvasAutoHide by AppSettings.spotifyCanvasAutoHide.collectAsState()
+                    SwitchRow(
+                        title = stringResource(Res.string.spotify_canvas_auto_hide),
+                        subtitle = stringResource(Res.string.spotify_canvas_auto_hide_subtitle),
+                        checked = spotifyCanvasAutoHide,
+                    ) { AppSettings.setSpotifyCanvasAutoHide(it) }
                 }
 
                 // How long one track blends into the next; 0 is off, which is

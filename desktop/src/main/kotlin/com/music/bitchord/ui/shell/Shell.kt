@@ -549,6 +549,11 @@ fun Shell(
             PlayerContextMenuArea(
                 song = song,
                 onOpenSleepTimer = { state.showSleepTimer = true },
+                // The version row acts on the playing row; a row with no other
+                // self (a local file, a WebDAV item) resolves to nothing and
+                // the swap reports "no distinct version" — the guard, not a
+                // special case here.
+                onToggleAudioVersion = { player.toggleAudioVersion() },
             ) {
                 PlayerPage(
                     player = player,

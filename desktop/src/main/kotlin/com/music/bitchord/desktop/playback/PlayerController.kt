@@ -1700,6 +1700,105 @@ class PlayerController(
         }
     }
 
+    /**
+     * The audio/video version toggle — upstream `MainActivity`'s
+     * `switchToMusicOnly`/`switchToVideo` pair, desktop-formed.
+     *
+     * A video row converts to the catalogue song behind it; a song row
+     * converts to the video. The resolve is a network walk, so the whole act
+     * runs on the queue thread with the same guards the quality swap wears:
+     * the row must still be the one under the needle, no second swap may be
+     * in flight, and a blend owns both engines until it clears. The resolve
+     * answering the same videoId (no distinct version to be had) or failing
+     * changes nothing — a missed conversion is quieter than an interrupted
+     * song. The landing replays the stream at the position the listener was
+     * at, and the queue row becomes the converted track
+     * (`isVideoOrigin` carried, upstream's marker for "this row came from a
+     * video" that lets the header keep saying so).
+     */
+    var isSwitchingAudioVersion = false
+        private set
+
+    /**
+     * Where the other version of a track comes from — the toggle's network
+     * half. Production asks the repository (`resolveAudio`/`resolveVideo` by
+     * the row's own orientation); a test injects a table, the same role
+     * [resolveUrl] plays for the ordinary start.
+     */
+    var resolveAlternateVersion: suspend (Song) -> Song? = { song ->
+        if (song.isVideo) YtMusicRepository.resolveAudio(song) else YtMusicRepository.resolveVideo(song)
+    }
+
+    fun toggleAudioVersion() {
+        onQueue {
+            if (isSwitchingAudioVersion) return@onQueue
+            val song = queue.songAt(queue.currentIndex) ?: return@onQueue
+            if (qualitySwapJob?.isActive == true) return@onQueue
+            isSwitchingAudioVersion = true
+            try {
+                val alternate = try {
+                    withContext(resolveDispatcher) { resolveAlternateVersion(song) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    TrackLog.w(TAG, "version resolve failed for ${song.videoId}: ${error.message}")
+                    null
+                }
+                // The needle may have moved during the walk; a conversion
+                // nobody is waiting for changes nothing.
+                val current = queue.songAt(queue.currentIndex)
+                if (alternate == null || current?.videoId != song.videoId) return@onQueue
+                if (alternate.videoId == song.videoId) {
+                    TrackLog.d(TAG, "no distinct ${if (song.isVideo) "audio" else "video"} version for ${song.videoId}")
+                    return@onQueue
+                }
+                val target = alternate.copy(
+                    isVideoOrigin = true,
+                    queueTier = song.queueTier,
+                )
+                // A blend owns both engines; the landing replays the current
+                // stream, which would tear it. Same wait the quality swap
+                // keeps, same shelving past the timeout.
+                var waited = 0L
+                while (crossfade.isTransitioning() && waited < BLEND_WAIT_TIMEOUT_MS) {
+                    delay(BLEND_WAIT_POLL_MS)
+                    waited += BLEND_WAIT_POLL_MS
+                }
+                if (crossfade.isTransitioning()) {
+                    TrackLog.d(TAG, "version swap for ${song.videoId} shelved: a blend would not clear")
+                    return@onQueue
+                }
+                if (queue.songAt(queue.currentIndex)?.videoId != song.videoId) return@onQueue
+                val url = try {
+                    withContext(resolveDispatcher) { resolveUrl(target.videoId) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    TrackLog.w(TAG, "version stream resolve failed for ${target.videoId}: ${error.message}")
+                    null
+                } ?: return@onQueue
+                if (queue.songAt(queue.currentIndex)?.videoId != song.videoId) return@onQueue
+                // The engine must be live to be worth cutting: a paused track
+                // simply becomes the other version on its next play.
+                if (!engine.isPlaying) {
+                    queue.replaceRange(queue.currentIndex, queue.currentIndex + 1, listOf(target))
+                    playingUrl = null
+                    publish()
+                    return@onQueue
+                }
+                val positionMs = engine.timeMs
+                queue.replaceRange(queue.currentIndex, queue.currentIndex + 1, listOf(target))
+                playingUrl = url
+                engine.play(url, mediaHeaders(url), startAtMs = positionMs)
+                engine.setVolume(_volume.value)
+                applyCurrentEqualizer()
+                TrackLog.d(TAG, "version swap landed: ${song.videoId} -> ${target.videoId} at ${positionMs}ms")
+            } finally {
+                isSwitchingAudioVersion = false
+            }
+        }
+    }
+
     fun setVolume(percent: Int) {
         val clamped = percent.coerceIn(0, 100)
         _volume.value = clamped

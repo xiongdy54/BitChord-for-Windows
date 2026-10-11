@@ -8,6 +8,8 @@ import androidx.compose.runtime.getValue
 import com.music.bitchord.desktop.playback.SleepTimer
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.after_this_song
+import com.music.bitchord.desktop.resources.convert_to_audio
+import com.music.bitchord.desktop.resources.convert_to_video
 import com.music.bitchord.desktop.resources.sleep_timer
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ui.components.LocalSongActions
@@ -45,6 +47,7 @@ import org.jetbrains.compose.resources.stringResource
 fun PlayerContextMenuArea(
     song: Song?,
     onOpenSleepTimer: () -> Unit,
+    onToggleAudioVersion: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val actions = LocalSongActions.current
@@ -70,10 +73,24 @@ fun PlayerContextMenuArea(
         }
         else -> stringResource(Res.string.sleep_timer)
     }
+    // The version row (slice 21): the playing row's other self, worded by its
+    // own orientation — a video row offers the catalogue song, a song row the
+    // video. Null (local files, WebDAV rows — nothing YouTube has a second
+    // version of) and the row simply isn't offered.
+    val versionRow = song?.let {
+        if (onToggleAudioVersion == null) {
+            null
+        } else if (it.isVideo) {
+            ContextMenuItem(stringResource(Res.string.convert_to_audio)) { onToggleAudioVersion() }
+        } else {
+            ContextMenuItem(stringResource(Res.string.convert_to_video)) { onToggleAudioVersion() }
+        }
+    }
     ContextMenuArea(
         items = {
             buildList {
                 add(ContextMenuItem(sleepTimerRow) { onOpenSleepTimer() })
+                if (versionRow != null) add(versionRow)
                 if (song != null) addAll(songMenuItems(song, labels, actions))
             }
         },

@@ -743,6 +743,52 @@ class PlayerControllerTest {
         }
     }
 
+    // ── The audio/video version toggle (slice 21) ────────────────────────────
+
+    @Test
+    fun `a video row converts to the catalogue song and keeps its place`() {
+        val (player, engine) = controller()
+        val videoRow = song("a").copy(isVideo = true)
+        player.resolveAlternateVersion = { Song("a-audio", "T", "A", null) }
+        player.playFrom(listOf(videoRow, song("b")), index = 0,
+            source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
+        assertEquals("https://test/a", engine.playedUrls.last())
+        player.toggleAudioVersion()
+        // The row became the song, marked as having come from a video.
+        assertEquals("a-audio", player.state.value.song?.videoId)
+        assertTrue(player.state.value.song!!.isVideoOrigin)
+        // The stream moved to the converted track at the position the
+        // listener was at — the engine never left "playing".
+        assertEquals("https://test/a-audio", engine.playedUrls.last())
+        assertTrue(player.state.value.isPlaying)
+    }
+
+    @Test
+    fun `a paused row converts without touching the engine`() {
+        val (player, engine) = controller()
+        player.resolveAlternateVersion = { Song("a-video", "T", "A", null).copy(isVideo = true) }
+        player.playFrom(listOf(song("a")), index = 0,
+            source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
+        engine.pause()
+        val playsBefore = engine.playedUrls.size
+        player.toggleAudioVersion()
+        assertEquals("a-video", player.state.value.song?.videoId)
+        assertEquals(playsBefore, engine.playedUrls.size, "a paused row converts on its next play, not now")
+    }
+
+    @Test
+    fun `a resolve that answers the same row converts nothing`() {
+        val (player, engine) = controller()
+        val row = song("a")
+        player.resolveAlternateVersion = { row }
+        player.playFrom(listOf(row), index = 0,
+            source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null)
+        val urlBefore = engine.playedUrls.last()
+        player.toggleAudioVersion()
+        assertEquals("a", player.state.value.song?.videoId)
+        assertEquals(urlBefore, engine.playedUrls.last())
+    }
+
     @Test
     fun `a quality change waits out a blend and lands once it clears`() {
         val case = CrossfadeCase()

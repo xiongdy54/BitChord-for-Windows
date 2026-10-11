@@ -156,7 +156,7 @@ object AppSettings {
         }
     }
 
-    private val SECRETS = setOf(KEY_PAXSENIX_API_KEY)
+    private val SECRETS = setOf(KEY_PAXSENIX_API_KEY, KEY_SPOTIFY_SPDC_TOKEN)
 
     private val DEVICE_LOCAL = setOf(
         KEY_OUTPUT_DEVICE_ID,
@@ -542,6 +542,33 @@ object AppSettings {
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
         prioritizeSpotifyCanvas.value = value
         prefs.putString(KEY_PRIORITIZE_SPOTIFY_CANVAS, value.toString())
+    }
+
+    /**
+     * The listener's own Spotify session cookie — the credential
+     * [com.music.bitchord.data.canvas.SpotifyToken] mints a Canvas bearer
+     * from. Upstream's key name, so a settings file means the same thing on
+     * both platforms; it rides [SECRETS] (a session cookie is an identity,
+     * not a configuration) and never reaches a backup.
+     */
+    val spotifySpdcToken = MutableStateFlow(prefs.getStringOrNull(KEY_SPOTIFY_SPDC_TOKEN).orEmpty())
+
+    fun setSpotifySpdcToken(value: String) {
+        val trimmed = value.trim()
+        spotifySpdcToken.value = trimmed
+        prefs.putString(KEY_SPOTIFY_SPDC_TOKEN, trimmed)
+    }
+
+    /**
+     * Whether the player's controls stand down on their own while a Canvas is
+     * playing — upstream's switch, default on, five seconds of idle to a
+     * slide-away and any pointer move or click to come back.
+     */
+    val spotifyCanvasAutoHide = MutableStateFlow(prefs.getString(KEY_SPOTIFY_CANVAS_AUTO_HIDE, "true") != "false")
+
+    fun setSpotifyCanvasAutoHide(value: Boolean) {
+        spotifyCanvasAutoHide.value = value
+        prefs.putString(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value.toString())
     }
 
     /**
@@ -936,6 +963,8 @@ object AppSettings {
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
+    private const val KEY_SPOTIFY_SPDC_TOKEN = "spotify_spdc_token"
+    private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"
     private const val KEY_LOCAL_MUSIC_FOLDERS = "local_music_folders"

@@ -37,6 +37,7 @@ import com.music.bitchord.desktop.resources.*
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -109,6 +110,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -199,6 +201,10 @@ private val ART_TITLE_GAP = 20.dp
  * Only the toggle, which travels end to end, ever spends all of it.
  */
 private const val QUEUE_TRAVEL_MS = 420
+
+/** The Canvas stand-down's idle span, and the deck's slide — upstream's own figures (app :414-416). */
+private const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
+private const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
 /**
  * How far up the sleeve has to have been dragged for a release to carry on
  * opening the queue rather than falling back, as a share of the sleeve's travel.
@@ -780,6 +786,16 @@ fun NowPlayingScreen(
     // which is the Android default the same read fell back to.
     var queueOpen by remember { mutableStateOf(false) }
     val queueSlide = remember { mutableFloatStateOf(0f) }
+    // The lower deck's own stand-down, slice 21: the queue's scroll slides the
+    // control block away and hands the player its space back, exactly what
+    // upstream's `queueControlsOpen` did — the deck itself is the component
+    // below, and these two are the state it reads.
+    var queueControlsOpen by remember { mutableStateOf(true) }
+    // The Canvas's half of the same behaviour: while a clip is actually being
+    // presented and playing, five idle seconds stand the deck down, and any
+    // pointer move or click on the player wakes it again — the mouse dialect
+    // of upstream's "tap anywhere".
+    var canvasControlsOpen by remember { mutableStateOf(true) }
     // Expensive, song-scoped preparation is deliberately staggered. The small
     // backdrop decode runs after the track hand-off has settled; lyrics and
     // queue are then composed offscreen on separate beats rather than all three
@@ -1069,6 +1085,36 @@ fun NowPlayingScreen(
     // and `canvasFirstPortrait` is the whole of what survives of it.
     val heroClip = canvas?.takeIf { heroMode && !collapsePastHalf }
     val canvasFirstPortrait = heroClip != null && canvasAspect > 0f && canvasAspect < 1f
+
+    // The Canvas stand-down's countdown (slice 21) — app :1105-1125's shape,
+    // with "presentation" being this platform's own fact: a clip actively
+    // rendering in the artwork's seat while the track plays. Every condition
+    // that means "the listener is busy" suspends the countdown; pausing,
+    // scrubbing, opening a panel or turning the setting off all read as busy
+    // here, which is what makes the deck come back the moment any of them
+    // changes rather than waiting out a timer.
+    val canvasAutoHide by AppSettings.spotifyCanvasAutoHide.collectAsState()
+    val canvasPresenting = heroClip != null && canvasRendered && isPlaying
+    LaunchedEffect(
+        canvasPresenting,
+        canvasControlsOpen,
+        canvasAutoHide,
+        isPlaying,
+        scrub.scrubbing,
+        lyricsOpen,
+        queueOpen,
+    ) {
+        if (!canvasPresenting || !canvasControlsOpen || !canvasAutoHide ||
+            !isPlaying || scrub.scrubbing || lyricsOpen || queueOpen
+        ) {
+            return@LaunchedEffect
+        }
+        delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
+        canvasControlsOpen = false
+    }
+    // The deck's one animation value, owning both the block's pixels and the
+    // space it occupies — upstream's `playerDeckReveal` verbatim.
+    val playerDeckReveal = remember { Animatable(1f) }
     // app NowPlayingScreen.kt:1003 — the collapse that pauses the decode for
     // its whole length rather than only once the still frame has taken over.
     val collapseStarted by remember { derivedStateOf { p() > 0f } }
@@ -1753,6 +1799,20 @@ fun NowPlayingScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                // The Canvas stand-down's wake: any pointer move or press on
+                // the player brings the control deck back. Writing the boolean
+                // on every move costs nothing the recomposition skip doesn't
+                // already swallow — the deck reads state, not events.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type == PointerEventType.Move || event.type == PointerEventType.Press) {
+                                canvasControlsOpen = true
+                            }
+                        }
+                    }
+                }
                 .then(skipSwipeGesture),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -2457,25 +2517,14 @@ fun NowPlayingScreen(
                             onClear = onClearQueue,
                             onScrollingChange = { queueScrolling = it },
                             onDragActiveChange = onQueueDragActiveChange,
-                            // Upstream let a queue scroll slide the whole lower
-                            // half-player — scrubber, transport, volume bar, toggle
-                            // row — out of the way. That was live behaviour, not
-                            // decoration: app `:2811-2813` wrote `queueControlsOpen`
-                            // from the queue's own scroll, app `:2825-2827` gated
-                            // `SlidingPlayerDeck` on it, and app `:452-499` collapsed
-                            // the block's measured height as it slid, so the panel
-                            // took the space back. **The deck is not ported, and so
-                            // that behaviour is lost here: scrolling the queue leaves
-                            // the controls where they are.** Deleting it is still the
-                            // right call for a desktop overlay — the deck is the app's
-                            // bottom-reveal machinery, and decision 4 replaces what it
-                            // revealed with Task 11's overlay and Esc — but it is a
-                            // known deviation and is carried to Task 13, not a no-op.
-                            // [InlineQueue]'s side of the plumbing
-                            // (`collapsePlayerOnScroll`, `onRevealPlayer`,
-                            // `onHidePlayer`) is still there at its defaults with
-                            // nothing behind it, which is the other half of what Task
-                            // 13 decides.
+                            // Slice 21 puts the deck behind these: scrolling
+                            // the queue slides the control block away, and
+                            // scrolling back to the top slides it home —
+                            // the live behaviour the note below used to
+                            // record as lost.
+                            collapsePlayerOnScroll = true,
+                            onRevealPlayer = { queueControlsOpen = true },
+                            onHidePlayer = { queueControlsOpen = false },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -2488,6 +2537,19 @@ fun NowPlayingScreen(
             // which is what keeps this row of controls in the same place on
             // every screen instead of being shoved off the bottom of a tall one.
             //
+            // The deck (slice 21): the block sits inside [SlidingPlayerDeck],
+            // which owns both its pixels and its claimed space — a queue scroll
+            // slides it away and the weighted artwork block above takes the
+            // room back; a scroll home, or any pointer move while a Canvas is
+            // presenting, slides it back. The two conditions are the queue's
+            // own scroll state and the Canvas stand-down's countdown; upstream
+            // gated the same deck on exactly this pair plus a phone-only
+            // presentation state this build does not have.
+            SlidingPlayerDeck(
+                visible = (!queueOpen || queueControlsOpen) &&
+                    (!canvasPresenting || canvasControlsOpen),
+                reveal = playerDeckReveal,
+            ) {
             // The glass seat (slice 17): when liquid glass is on, this cluster
             // sits on a real glass surface — the recorded player content
             // blurred, saturated and refracted behind the controls — the
@@ -2637,6 +2699,7 @@ fun NowPlayingScreen(
 
             playerActions()
             Spacer(Modifier.height(18.dp))
+            }
             }
             }
         }
@@ -2791,6 +2854,71 @@ private class PlayerArtwork(val url: String?) {
     fun retry() {
         failed = false
         attempt++
+    }
+}
+
+/**
+ * One lower-deck component, with one animation value owning both its pixels
+ * and the space it occupies.
+ *
+ * A slide-only AnimatedVisibility kept the full height until its last frame;
+ * combining slide and size transitions fixed that but let two transition
+ * layers overlap when the presentation mode changed while returning to main.
+ * This layout reports a fraction of the deck's real height instead. Since the
+ * weighted player/panel above it consumes the remainder, the deck's top and
+ * everything drawn from it move together. The subtree is removed only after
+ * the exit reaches zero, retaining neither an invisible player nor a duplicate.
+ *
+ * Ported verbatim from app `NowPlayingScreen.kt:452-499` — the component the
+ * slice-2 record carried to "Task 13", arrived with slice 21.
+ */
+@Composable
+private fun SlidingPlayerDeck(
+    visible: Boolean,
+    reveal: Animatable<Float, AnimationVector1D>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    var mounted by remember { mutableStateOf(visible) }
+
+    LaunchedEffect(visible) {
+        if (visible) {
+            mounted = true
+            reveal.animateTo(
+                1f,
+                tween(
+                    SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        } else {
+            reveal.animateTo(
+                0f,
+                tween(
+                    SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+            mounted = false
+        }
+    }
+
+    if (mounted) {
+        Box(
+            modifier = modifier.layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                val animatedHeight = (placeable.height * reveal.value)
+                    .roundToInt()
+                    .coerceIn(constraints.minHeight, constraints.maxHeight)
+                layout(placeable.width, animatedHeight) {
+                    // No second translation: the weighted sibling above moves
+                    // this component's origin as its reported height changes.
+                    placeable.placeRelative(0, 0)
+                }
+            },
+        ) {
+            content()
+        }
     }
 }
 

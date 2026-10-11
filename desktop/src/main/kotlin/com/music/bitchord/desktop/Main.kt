@@ -65,6 +65,7 @@ import com.music.bitchord.ui.player.formatSleepCountdown
 import com.music.bitchord.ui.player.sleepTimerRemaining
 import com.music.bitchord.desktop.resources.Res
 import com.music.bitchord.desktop.resources.after_this_song
+import com.music.bitchord.desktop.resources.convert_to_video
 import com.music.bitchord.desktop.resources.sleep_timer
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.ContextMenuItem
@@ -1082,6 +1083,10 @@ if (shotPath.isNotBlank() && shotMs != null) {
                         emptyList()
                     }
                     val demoItems = sleepRow + listOf(
+                        // The version row (slice 21), as the player's own menu
+                        // words it for a non-video row — the probe's track is
+                        // a plain song, so the video is what it offers.
+                        ContextMenuItem(stringResource(Res.string.convert_to_video)) {},
                         ContextMenuItem(labels.playNext) {},
                         ContextMenuItem(labels.addToQueue) {},
                         ContextMenuItem(labels.like) {},
