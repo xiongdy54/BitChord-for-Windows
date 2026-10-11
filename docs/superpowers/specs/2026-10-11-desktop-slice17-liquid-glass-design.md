@@ -53,3 +53,18 @@
 ## 6. 本切片不做
 
 `GlassNavBar` 折叠条全家（上游 1267 行的 iOS-26 导航条——桌面无浮动 tab 条可挂）；`lightweightLiquidGlass` 与 DetailScreen 玻璃 chip；InnerShadow/Ambient 高光/CombinedBackdrop 等无消费者的效果族；MeshGradient/ArtworkMeshBackdrop 的 palette 管线重写（桌面已用自写量化器落地，另属切片 1 遗产）；`high_performance_mode` 刷新率族。
+
+## 7. 实施记录（2026-10-11 回填）
+
+### 与设计的三处偏离
+
+1. **坐标系教训**：桌面 Compose 的 `GraphicsLayer.record` 以 `IntSize` 为尺寸参数（与安卓按 Density 解读不同），采样块的仿射次序最终落成 `withTransform { scale(0.33, pivot=Zero); translate(delta) }` ——先缩放后平移，采样数学在代码注释里写死（backdrop 像素 `-delta` 映到采样原点）。
+2. **`clipOutline` 不存在于 Compose 公共 API**（上游 backdrop 库自带了一份 internal 扩展），桌面用 `clipPath(Path().apply { addOutline(outline) })` 等价实现。
+3. **`reduceDynamicBlur` 顺势转为持久键**：它在桌面数据层存在已久、无 UI 也无持久化（切片 16 盘点里"有键无 UI"的四个之一）；本片给了它设置行与落盘，成为玻璃的实底回退门控——上游同键语义。
+
+### 验证结果
+
+- **单元测试全绿**（全套含存量）：新增 `GlassTest`——两个 SkSL 着色器在本机 Skia 编译不抛（即 `isGlassSupported` 的启动门控为真）、饱和 ColorMatrix 行和为 1（灰不动）且红/蓝系数跨 1 分居（色度被拉开）、`glassFilter` 以绘制路径同款调用构建不抛。
+- **视觉判读**（`.shots/slice17/`）：竖版播放器（探针强制 980×1450）玻璃**开启/关闭两态**对照——开启态底部控制簇坐在一块圆角玻璃面上：半透明、主题 tint、透视到模糊的封面内容（右下透出封面红色），控件照常可读；关闭态与此前切片的渲染逐像素一致（反向验证通过）。横版（宽窗）布局玻璃位未接（设计第 5 条的范围即竖版），横版玻璃随 LandscapePlayer 布局另片。
+- **门控行为**：`bitchord.liquidGlass` 探针覆盖（内存 only、不落盘——theme 探针的同一纪律）；reduce-blur 开启时玻璃 modifier 直接画 surface 实底 + 发丝边。
+
