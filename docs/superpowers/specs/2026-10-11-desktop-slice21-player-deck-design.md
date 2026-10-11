@@ -53,3 +53,17 @@
 ## 6. 本切片不做
 
 OriginalVersion 钉集(决策 6);离屏 CEF 收割(决策 4);smart alignment;横版布局的甲板(竖版先行,横版 pane 结构不同)。
+
+## 7. 实施记录(2026-10-11 回填)
+
+**交付**:决策 1–5 全部落地。`SlidingPlayerDeck` 逐字移植(app :452-499)+ 上游两常量(IDLE 5s / ANIMATION 420ms);竖版底部控制块(玻璃位在内)包进甲板,`InlineQueue` 三参接通(`collapsePlayerOnScroll=true` → `queueControlsOpen`),切片 2 记录的"行为丢失"注记退役;Canvas 门:`spotifyCanvasAutoHide`(上游键,默认 true)+ `spotifySpdcToken`(上游键,入 SECRETS)、`SpotifyToken` 直连端点铸 bearer(sp_dc cookie,缓存至过期前 30s,`tokenEndpoint` internal 可指),`clientToken()` 如实恒 null(GraphQL 路径退场、REST 回退接管——它本就把 Client-Token 当可选项);倒计时条件表照上游(演出中/开着/开着 autoHide/播放中/不在刮擦/歌词表关/队列关),桌面"演出中" = `heroClip != null && canvasRendered && isPlaying`;玩家根加 `pointerInput` 监听 Move/Press 唤回(`canvasControlsOpen = true`);设置对话框 Canvas 簇:sp_dc 隐私字段(PillTextField isPassword)+ Save + auto-hide 行。音视频切换:`PlayerController.toggleAudioVersion()`(`resolveAlternateVersion` 测试缝,生产走 `resolveAudio/resolveVideo`)——守卫链(在途切换/在途质量换流/仍当前行/distinct/blend 等让/超时搁置)照质量换流纪律;播放中走试听后的保位落流(engine.play startAtMs=timeMs + applyCurrentEqualizer),暂停行走"下回播放生效"的换行(上游无此分支——Media3 的 swapToVersion 对暂停行也直接换;桌面引擎没有 open-and-hold 的版本落点,保位重放会在恢复时从断点放新版,与"转换"的语义一致,记录为桌面形状);`PlayerContextMenuArea` 版本行(按 `isVideo` 取向,convert_to_audio/video 上游字符串);菜单预览探针同步加演示行。
+
+**与设计的偏离**:
+
+1. **暂停行的转换语义**:设计未区分;实施定为"换行不换流"(下一回播放即新版),因为桌面引擎没有上游 `swapToVersion` 的暂停落点——保位重放一个暂停的流会立刻出声,违背"暂停"二字。单测钉死("a paused row converts without touching the engine")。
+2. **菜单预览探针的演示行**:菜单截图走的是 Main.kt 自建演示项(真实弹窗 PrintWindow 不可见),版本行进演示列表才可截——真实菜单的构建器(`PlayerContextMenuArea`)与演示行同文案。
+3. **倒计时条件少了 volume.dragging**:桌面音量条是 ThinSlider 滑杆,无上游的 drag 状态可读;刮擦(scrub.scrubbing)在场,音量拖动时 Move 事件本身会唤回(pointerInput 先于滑杆消费),行为等价。
+
+**验证**:62 类 603 测试全绿(新增 3:视频行转换保位换流且 isVideoOrigin 随行、暂停行只换行不动引擎、resolve 回同行的 no-op)。**行为断言(截图,`.shots/slice21/`)**:播放器右键菜单——"转换为视频"列于睡眠定时器之下、行菜单之上(真实流播放中,136kbps 徽章在列)。**人手验证待做**:队列上滑滚动的甲板滑走/回顶唤回两态(需要鼠标);Canvas 播放中的五秒收甲板与指针唤醒(需要有 Canvas 的曲目与 sp_dc);sp_dc 有值时 Spotify Canvas 实际出片(端点可用性)。
+
+**已知瑕疵**:甲板两态与 Canvas 门的视觉证据依赖人手交互,探针无鼠标;`clientToken()` 恒 null 使 canvaz-cache GraphQL 路径退场,Canvas 依赖 REST 回退(该路径的可用性随 Spotify 而定,失败静默落回其它画布源);横版播放器未接甲板(pane 结构不同,竖版先行)。
