@@ -53,3 +53,17 @@
 ## 6. 本切片不做
 
 单曲菜单的暂停/恢复;速度限制;通知;下载完成后自动导入系统媒体库(桌面无此概念);Canvas/SlidingPlayerDeck/OriginalVersion(切片 21)。
+
+## 7. 实施记录(2026-10-11 回填)
+
+**交付**:决策 1–5 全部落地。`Downloads`:`requested`/`markRequested`(逐发布累积,永不清剪);`DownloadState.Paused(fraction)` + `PausedTrack`(song/from)+ `PartIdentity`(part 名/扩展名/档位/来源描述)+ `liveParts`/`resumingParts` 簿记;`pause()`(先登记后取消——transfer 的取消路径据此分辨"保字节"与"放弃";queued 行直接摘出)、`resume()`(重新入队 + 种下续传意图 + `ensureDraining`);`clear()` 连带清 paused 簿记;`run()` 档位读一次下传 `prepare(song, quality)`/`transfer(song, plan, quality)`(守卫与路由必须同档);`transfer()` 的 `resumeOffset` 守卫抽成纯函数 `resumeOffsetIfSameRendition`(扩展名+档位+来源描述三比对)、`DownloadStore.begin(keepPart)` 不删 part、`openStream(append)` 用 `FileOutputStream(part, append)`、`partLength()`;`Route.write` 加 offset 参数,`Downloader.fetch(startOffset)` 与 `fetchFromSource(startOffset)` 从偏移续 Range;暂停取消不 abort part。`DownloadSession.Paused`:`waiting` 排除 paused、新增 `paused` 计数、`busy` 不含、`fraction` 按部分进度计。`DownloadStore.folder()` 动态读 `AppSettings.downloadFolder`(键 `download_folder`,桌面自拟,入 DEVICE_LOCAL;坏路径回退默认目录);`FileStore.snapshot()` 不变。UI:DetailHeader 第三药丸(`collectionDownloadLabel`/`releaseDownloadState` 纯推导 + 资源映射,Shell 的 `onDownloadAll` = markRequested + 逐曲 enqueue(from=browseId));管理面板行双动作(运行/排队 → 暂停+取消,暂停 → 恢复+取消,失败 → 重试)+ "已暂停"状态行;设置对话框下载音质组加"下载位置"行(现行路径 + 选择器 + 重置)。desktopStrings en/zh 各四键(download_paused/resume/download_location/download_location_reset)+ 两枚药丸态键(download_all_moving/download_all_done)。
+
+**与设计的偏离**:
+
+1. **守卫字段从两个加到三个**(`describe` 来源比对):同扩展同档位但来源不同(源路由顶替 YouTube)的续传会拼坏文件——设计 §2 决策 2 说"扩展名与档位名都匹配时续传",实施时意识到这不够,Route 的 describe(kbps+mime 或来源摘要)入守卫,纯函数单测钉死该例。
+2. **药丸状态推导未用 `requested`**:三流签名里 requested 可有可无(在途与否由 `active` 回答,已落盘由 `saved` 回答),记为简化;`requested` 的真实消费方是未来的逐发布问句(上游 BrowseActionsSheet 的 value 推导),标记照常入账。
+3. **运行/排队行从单动作变双动作**(暂停+取消):设计说"运行/排队 → 暂停",实施时保留取消——上游行上有取消,一次升级不该把出路收走。
+
+**验证**:62 类 600 测试全绿(新增 5:续传守卫两表(匹配续传/四路漂移重跑)、releaseDownloadState 三态表、markRequested 累积、Paused 在 Session 计数里的位置)。**行为断言(实机,真实批次)**:`probePlayVideoId` 真轨解析(InnerTubeX WEB_REMIX@179kbps)+ 入队 → 管理面板截图:批次条 + 运行行"正在开始" + 行尾**暂停/取消双动作** + 工具栏下载指示器;专辑页截图:头部三药丸(播放/随机播放/全部下载)。**人手验证待做**:点暂停后 .part 在盘、恢复后日志 `resuming N B`、切目录后新文件落新目录——三件都需要人手点探针没有的鼠标。
+
+**已知瑕疵**:解析的 10s 冷启动让 6s 窗口的截图全扑空(两次重跑才抓到 14s 窗口);暂停行的恢复按钮没有截图证据(无鼠标,单测与代码审读代证);`resume()` 对queued 暂停行无 part 可续(设计预期内:入队即暂停的行从零开始)。
