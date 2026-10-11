@@ -58,3 +58,17 @@
 ## 6. 本切片不做
 
 播放器菜单的速度行与响度徽章(决策 8);SMTC 时间线速率(决策 7 的已知瑕疵);跳过静音的真实现(决策 4,引擎重造另片);OriginalVersion/音视频切换、SlidingPlayerDeck、Canvas 登录(切片 21);搜索历史持久化、History 页、备份与更新检查、语言热切换(切片 19);下载合集批量/暂停恢复/目录选择(切片 20)。
+
+## 7. 实施记录(2026-10-11 回填)
+
+**交付**:决策 1–6 全部落地。`AppSettings` 七流——`playbackSpeed`(持久化 `playback_speed`,钳制抽成纯函数 `clampPlaybackSpeed`:0.05 步取整 + 0.5–2.0 钳)、`loudnessNormalization`(默认 true,上游同)、`skipSilence`、`hideVolumeBar`、`reduceAnimation`/`swipeToPlayNext`/`lyricsBlur` 补持久化,键名与上游逐字对齐;`EqualizerMapper.withLoudnessGain` 纯函数(关+零增益恒等返回同一实例、关+非零平带附着、开+非零求和钳 ±20);`AudioEngine.setSpeed/setSkipSilence` 默认 no-op;`VlcAudioPlayer.setRate` + `currentRate` + play/prepare 双 reapply(与 reapplyEqualizer 并排);`PlayerController.watchPlaybackDials` 三个 watcher(速度双引擎、响度重算调谐、静音双引擎)+ 响度三应用点(resolve 成功后 applyCurrentEqualizer、crossfade resolve lambda 给 standby 施加 **incoming** 调谐并记录 `armedIncomingVideoId`、交接用它)+ `standbyEngine()` 创建时同步速率与静音开关;SettingsDialog 六行;NowPlayingScreen 竖版 VolumeRow 的等高垫片分支(VOLUME_ROW_HEIGHT 回归有主)+ 横版 volume 槽 null 分支;desktopStrings en/zh 各三键;探针 `bitchord.hideVolumeBar`(内存种子,liquidGlass 同纪律)。
+
+**与设计的偏离**:
+
+1. **standby 创建时补速率/静音同步**(设计决策 1 的洞):watcher 只听"变化",arm 时才建的 standby 会以正常速度开整个 blend——`standbyEngine()` 创建块里补 `setSpeed(AppSettings.playbackSpeed.value)` + `setSkipSilence(...)`,单测钉死("a standby built after the dial moved must not open its blend at normal speed")。
+2. **`baseEqualizerTuning` 拆分**:响度折叠进调谐后,"设置们的曲线"(无响度)与"当前轨道的调谐"(折叠后)是两个名字,watchEqualizer 的六流 combine 语义未动。
+3. **测试夹逼出预期错误**:响度测试首跑种了 -6 dB(过轻)期待 +6 preamp,被上游 +3 dB 窗口钳到 3.0——实现是对的,预期改种过响轨(+6 dB → -6 preamp)并补钳制用例(-10 dB → +3 天花板)。
+
+**验证**:60 类 589 测试全绿(新增 13:`withLoudnessGain` 五行计数表、`clampPlaybackSpeed` 钳制表、键名兼容表、控制器四例(速度双引擎/静音接缝/响度落 preamp/响度关=恒等)、读数格式两例)。**行为断言(实机,真实流)**:`probePlayVideoId=dQw4w9WgXcQ` 真实解析成功(InnerTubeX WEB_REMIX@136kbps)后日志依次出现 `loudness correction 3.0 dB → preamp`(该轨 loudnessDb ≤ -3,校正钳在 +3 天花板——端到端证据)与 `speed → 1.0×`。**视觉判读**(`.shots/slice18/`):设置对话框 zh-dark 全组一图(播放组五新行 + 外观组减少动画 + 歌词组 blur 行全部在场,滑杆/开关渲染正常);播放器竖版音量条显示/隐藏两态对照——隐藏态音量行消失而**上下控件 y 位置与显示态逐像素一致**(等高垫片成立)。**人手验证待做**:速度拨到 1.5× 的听感、响度开/关的 A/B、横版窗口的音量槽缺席观感。
+
+**已知瑕疵**:run 任务截图后以非零码退出(工作区未提交的 CEF 关停路径改动所致,与本片无关);SMTC 时间线速率恒 1.0;跳过静音为记录在案的 no-op(决策 4)。
