@@ -115,4 +115,18 @@ class FakeAudioEngine : AudioEngine {
     override fun setEqualizer(tuning: EqualizerTuning?) {
         equalizers += tuning
     }
+
+    /** Every playback rate the controller asked for, in order — slice 18's dial. */
+    val speeds = mutableListOf<Float>()
+
+    override fun setSpeed(rate: Float) {
+        speeds += rate
+    }
+
+    /** Every skip-silence ask, in order — the switch reaches the engine seam even where it cannot act. */
+    val skipSilences = mutableListOf<Boolean>()
+
+    override fun setSkipSilence(enabled: Boolean) {
+        skipSilences += enabled
+    }
 }

@@ -8,6 +8,7 @@ import com.music.bitchord.playback.toneCurve
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -151,5 +152,54 @@ class EqualizerMapperTest {
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
         assertTrue(a.toString().contains("enabled=true"))
+    }
+
+    // ── Loudness normalization's gain (slice 18) ─────────────────────────────
+
+    /** Zero gain is the identity, on and off — nothing starts equalizing because a dial moved. */
+    @Test
+    fun `a zero loudness gain leaves the tuning exactly as it was`() {
+        val off = EqualizerTuning.OFF
+        assertSame(off, withLoudnessGain(off, 0f))
+        val on = equalizerTuning(manualCurve(EqualizerPreset.ROCK.bands), enabled = true)
+        assertSame(on, withLoudnessGain(on, 0f))
+    }
+
+    /** The one case the attachment exists for: no equalizer, a real correction. */
+    @Test
+    fun `a gain on a detached tuning attaches a flat equalizer with the preamp alone`() {
+        val dressed = withLoudnessGain(EqualizerTuning.OFF, -12f)
+        assertTrue(dressed.enabled, "the gain needs the equalizer attached to exist")
+        assertTrue(dressed.bandAmps.all { it == 0f }, "flat: the gain is the only change")
+        assertEquals(-12f, dressed.preampDb)
+    }
+
+    /** An enabled tuning takes the gain added to its own preamp, bands untouched. */
+    @Test
+    fun `a gain on an enabled tuning sums into the preamp`() {
+        val base = equalizerTuning(manualCurve(EqualizerPreset.ROCK.bands), enabled = true)
+        val dressed = withLoudnessGain(base, 2.5f)
+        assertEquals(base.preampDb + 2.5f, dressed.preampDb)
+        assertTrue(dressed.bandAmps.contentEquals(base.bandAmps))
+        assertTrue(dressed.enabled)
+    }
+
+    /** libvlc's ±20 dB ceiling survives the sum: the clamp is a corner, not a shape. */
+    @Test
+    fun `the summed preamp is clamped to libvlc's ceiling`() {
+        val base = equalizerTuning(manualCurve(EqualizerPreset.ROCK.bands), enabled = true)
+        val dressed = withLoudnessGain(base, -20f)
+        assertEquals(-VLC_BAND_LIMIT_DB, dressed.preampDb)
+        // A hand-built hot curve gets pulled back down from the other end too.
+        val hot = EqualizerTuning(enabled = true, preampDb = 19f, bandAmps = FloatArray(VLC_BAND_COUNT))
+        assertEquals(VLC_BAND_LIMIT_DB, withLoudnessGain(hot, 3f).preampDb)
+    }
+
+    /** The boost window's top: a quiet track corrected by +3 dB rides through under the ceiling. */
+    @Test
+    fun `a boost within the window rides through`() {
+        val dressed = withLoudnessGain(EqualizerTuning.OFF, 3f)
+        assertEquals(3f, dressed.preampDb)
+        assertTrue(dressed.bandAmps.all { it == 0f })
     }
 }

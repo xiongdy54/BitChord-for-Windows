@@ -296,6 +296,16 @@ object StreamResolver {
     fun loudnessDbFor(videoId: String): Double? = loudness[videoId]
 
     /**
+     * Plants a loudness figure without a network walk — the loudness tests'
+     * seam, the same role [PlayerController]'s `resolveUrl` seam plays for the
+     * queue pump. A `null` figure un-records the track, so a case that plants
+     * one can leave the map exactly as it found it.
+     */
+    internal fun seedLoudness(videoId: String, loudnessDb: Double?) {
+        if (loudnessDb == null) loudness.remove(videoId) else loudness[videoId] = loudnessDb
+    }
+
+    /**
      * A track this app cannot play, for a reason that will read the same in ten
      * seconds — an age gate no session gets past, a takedown, a region block.
      *

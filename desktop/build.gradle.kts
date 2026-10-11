@@ -253,6 +253,7 @@ compose.desktop {
             "bitchord.probeEqualizerPreview",
             "bitchord.probeSourceEditorPreview",
             "bitchord.liquidGlass",
+            "bitchord.hideVolumeBar",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",

@@ -465,6 +465,12 @@ fun main() {
     System.getProperty("bitchord.liquidGlass")?.let { seeded ->
         AppSettings.liquidGlass.value = seeded == "true"
     }
+    // The volume-bar probe's read-only override, same discipline: a screenshot
+    // pass shows the player with and without its volume row and must not leave
+    // the choice behind on the user's settings file.
+    System.getProperty("bitchord.hideVolumeBar")?.let { seeded ->
+        AppSettings.hideVolumeBar.value = seeded == "true"
+    }
     val player = PlayerController(scope)
     val lyrics = LyricsCoordinator(scope)
     // The quality swap's scripted half: wait for a track to actually sound,

@@ -144,6 +144,29 @@ interface AudioEngine {
      * interface keeps asking no more of an engine than that it plays.
      */
     fun setEqualizer(tuning: EqualizerTuning?) {}
+
+    /**
+     * Play at [rate] from now on — 1.0 is normal speed, the app's own range is
+     * 0.5–2.0 ([com.music.bitchord.data.settings.AppSettings.playbackSpeed]).
+     * Applies to the media playing and to every media opened after it: the
+     * engine keeps the rate across media opens the way it keeps its equalizer,
+     * for the same undocumented-persistence reason.
+     *
+     * The default is the same courtesy the equalizer's default is: an engine
+     * with no tempo of its own receives the setting and ignores it.
+     */
+    fun setSpeed(rate: Float) {}
+
+    /**
+     * Skip past stretches of silence in the media. The desktop's libvlc 3.x
+     * ships no silence-skip filter, so [VlcAudioPlayer]'s implementation says
+     * so and does nothing — the seam is here, the setting persists, and an
+     * engine that *can* act (a future direct-rendering one that sees the PCM)
+     * overrides it. Upstream's own switch only works under some outputs too
+     * ("unavailable on 32-bit float output"); this is the same switch, carried
+     * to a platform whose decoder cannot yet.
+     */
+    fun setSkipSilence(enabled: Boolean) {}
 }
 
 /** One endpoint the operating system's sound settings would list, by its own id. */

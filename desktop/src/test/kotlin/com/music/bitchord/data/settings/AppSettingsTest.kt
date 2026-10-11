@@ -105,4 +105,41 @@ class AppSettingsTest {
             FileStore(file).getString("language", "").takeIf { it.isNotBlank() },
         )
     }
+
+    // ── The playback dials (slice 18) ────────────────────────────────────────
+
+    /** The clamp is the slider's own travel; the rounding is the 0.05-step drag landing exact. */
+    @Test
+    fun `the playback speed clamps to the app's range and snaps to the slider's precision`() {
+        assertEquals(1.0f, clampPlaybackSpeed(1.0f))
+        assertEquals(0.5f, clampPlaybackSpeed(0.1f), "half speed is the floor, not the input")
+        assertEquals(2.0f, clampPlaybackSpeed(5.0f), "double is the ceiling, not the input")
+        assertEquals(1.25f, clampPlaybackSpeed(1.2499f), "a near-miss drag lands on the step")
+    }
+
+    /**
+     * The slice-18 keys are the ones the Android app persists under, so a
+     * settings file means the same thing on both platforms — read back through
+     * the same expressions the flows' initialisers use.
+     */
+    @Test
+    fun `the slice-18 keys are the ones the Android app persists under`() {
+        val file = tempFile()
+        val store = FileStore(file)
+        store.putString("playback_speed", "1.25")
+        store.putString("loudness_normalization", "false")
+        store.putString("skip_silence", "true")
+        store.putString("hide_volume_bar", "true")
+        store.putString("reduce_animation", "true")
+        store.putString("swipe_to_play_next", "true")
+        store.putString("lyrics_blur", "false")
+        val reread = FileStore(file)
+        assertEquals(1.25f, clampPlaybackSpeed(reread.getStringOrNull("playback_speed")?.toFloatOrNull() ?: 1.0f))
+        assertEquals(false, reread.getString("loudness_normalization", "true") != "false")
+        assertEquals(true, reread.getString("skip_silence", "false") == "true")
+        assertEquals(true, reread.getString("hide_volume_bar", "false") == "true")
+        assertEquals(true, reread.getString("reduce_animation", "false") == "true")
+        assertEquals(true, reread.getString("swipe_to_play_next", "false") == "true")
+        assertEquals(false, reread.getString("lyrics_blur", "true") != "false")
+    }
 }

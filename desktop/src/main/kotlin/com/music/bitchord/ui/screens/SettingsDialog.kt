@@ -45,8 +45,23 @@ import com.music.bitchord.data.settings.ThemeSetting
 import com.music.bitchord.data.webdav.WebDavRepository
 import com.music.bitchord.desktop.playback.AudioOutputDevice
 import com.music.bitchord.desktop.resources.Res
+import com.music.bitchord.desktop.resources.blur_unfocused_lyrics
+import com.music.bitchord.desktop.resources.blur_unfocused_lyrics_subtitle
 import com.music.bitchord.desktop.resources.about
 import com.music.bitchord.desktop.resources.about_upstream
+import com.music.bitchord.desktop.resources.hide_volume_bar
+import com.music.bitchord.desktop.resources.hide_volume_bar_subtitle
+import com.music.bitchord.desktop.resources.loudness_normalization
+import com.music.bitchord.desktop.resources.loudness_normalization_subtitle
+import com.music.bitchord.desktop.resources.play_next_on_swipe
+import com.music.bitchord.desktop.resources.playback_speed
+import com.music.bitchord.desktop.resources.playback_speed_subtitle
+import com.music.bitchord.desktop.resources.reduce_animation
+import com.music.bitchord.desktop.resources.reduce_animation_subtitle
+import com.music.bitchord.desktop.resources.skip_silence
+import com.music.bitchord.desktop.resources.skip_silence_subtitle_desktop
+import com.music.bitchord.desktop.resources.swipe_adds_to_queue
+import com.music.bitchord.desktop.resources.swipe_plays_next
 import com.music.bitchord.desktop.resources.account
 import com.music.bitchord.desktop.resources.animated_cover_art
 import com.music.bitchord.desktop.resources.animated_cover_art_subtitle
@@ -313,6 +328,16 @@ fun SettingsDialog(
                     subtitle = stringResource(Res.string.reduce_dynamic_blur_subtitle_desktop),
                     checked = reduceDynamicBlur,
                 ) { AppSettings.setReduceDynamicBlur(it) }
+                // Cuts, not crossfades: the palette, mesh and lyric motions
+                // read this one flow, and its consumers have been in place
+                // since the slices that built them — the row only makes the
+                // choice reachable and worth remembering.
+                val reduceAnimation by AppSettings.reduceAnimation.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.reduce_animation),
+                    subtitle = stringResource(Res.string.reduce_animation_subtitle),
+                    checked = reduceAnimation,
+                ) { AppSettings.setReduceAnimation(it) }
 
                 GroupDivider()
 
@@ -405,6 +430,69 @@ fun SettingsDialog(
                     modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
                 )
 
+                // The playback dials (slice 18). The speed slider is the
+                // desktop's own wording — upstream carries the setting but no
+                // surface for it — and the three switches are upstream's rows
+                // with upstream's strings. The player's collector hears every
+                // change; these rows only write the flows.
+                val playbackSpeed by AppSettings.playbackSpeed.collectAsState()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(Res.string.playback_speed),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = formatPlaybackSpeed(playbackSpeed),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = stringResource(Res.string.playback_speed_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                ThinSlider(
+                    value = (playbackSpeed - 0.5f) / 1.5f,
+                    onValueChange = { AppSettings.setPlaybackSpeed(0.5f + it * 1.5f) },
+                    modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
+                )
+
+                val skipSilence by AppSettings.skipSilence.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.skip_silence),
+                    subtitle = stringResource(Res.string.skip_silence_subtitle_desktop),
+                    checked = skipSilence,
+                ) { AppSettings.setSkipSilence(it) }
+                val loudnessNormalization by AppSettings.loudnessNormalization.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.loudness_normalization),
+                    subtitle = stringResource(Res.string.loudness_normalization_subtitle),
+                    checked = loudnessNormalization,
+                ) { AppSettings.setLoudnessNormalization(it) }
+                val hideVolumeBar by AppSettings.hideVolumeBar.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.hide_volume_bar),
+                    subtitle = stringResource(Res.string.hide_volume_bar_subtitle),
+                    checked = hideVolumeBar,
+                ) { AppSettings.setHideVolumeBar(it) }
+                val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.play_next_on_swipe),
+                    subtitle = if (swipeToPlayNext) {
+                        stringResource(Res.string.swipe_plays_next)
+                    } else {
+                        stringResource(Res.string.swipe_adds_to_queue)
+                    },
+                    checked = swipeToPlayNext,
+                ) { AppSettings.setSwipeToPlayNext(it) }
+
                 GroupDivider()
 
                 val showNerdStats by AppSettings.showNerdStats.collectAsState()
@@ -492,6 +580,12 @@ fun SettingsDialog(
                     subtitle = stringResource(Res.string.synced_lyrics_subtitle),
                     checked = syncedLyrics,
                 ) { AppSettings.setSyncedLyrics(it) }
+                val lyricsBlur by AppSettings.lyricsBlur.collectAsState()
+                SwitchRow(
+                    title = stringResource(Res.string.blur_unfocused_lyrics),
+                    subtitle = stringResource(Res.string.blur_unfocused_lyrics_subtitle),
+                    checked = lyricsBlur,
+                ) { AppSettings.setLyricsBlur(it) }
                 Text(
                     text = stringResource(Res.string.lyrics_sources),
                     style = MaterialTheme.typography.bodyLarge,
@@ -551,6 +645,17 @@ fun SettingsDialog(
             }
         }
     }
+}
+
+/** The speed readout: one decimal, trailing zeros trimmed — `1×`, `1.25×`, `1.5×`, `2×`. */
+internal fun formatPlaybackSpeed(speed: Float): String {
+    val rounded = (speed * 100).roundToInt().toFloat().div(100)
+    val text = if (rounded % 1f == 0f) {
+        rounded.toInt().toString()
+    } else {
+        rounded.toString().trimEnd('0')
+    }
+    return "$text×"
 }
 
 @Composable

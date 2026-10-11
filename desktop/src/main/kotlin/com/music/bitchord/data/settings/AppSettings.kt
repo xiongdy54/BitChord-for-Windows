@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlin.math.roundToInt
 
 /** How a shelf or library page lays its items out. */
 enum class LibraryViewType {
@@ -202,11 +203,16 @@ object AppSettings {
     }
 
     /**
-     * Turns the artwork-tint crossfades into cuts. Read by
-     * [com.music.bitchord.ui.theme.rememberArtworkPalette]; the Android setting
-     * that drives it lives in the settings sheet, which is a later slice.
+     * Turns the artwork-tint crossfades into cuts, stills the mesh gradient and
+     * the lyric motion. Read by [com.music.bitchord.ui.theme.rememberArtworkPalette],
+     * [com.music.bitchord.ui.player.MeshGradient] and the lyric renderers.
      */
-    val reduceAnimation = MutableStateFlow(false)
+    val reduceAnimation = MutableStateFlow(prefs.getString(KEY_REDUCE_ANIMATION, "false") == "true")
+
+    fun setReduceAnimation(value: Boolean) {
+        reduceAnimation.value = value
+        prefs.putString(KEY_REDUCE_ANIMATION, value.toString())
+    }
 
     /** Trades the live backdrop blur for a cheaper static one. Settings sheet, later slice. */
     val reduceDynamicBlur = MutableStateFlow(prefs.getString(KEY_REDUCE_DYNAMIC_BLUR, "false") == "true")
@@ -216,8 +222,16 @@ object AppSettings {
         prefs.putString(KEY_REDUCE_DYNAMIC_BLUR, value.toString())
     }
 
-    /** Swipe a queue row sideways to jump to it. Off by default upstream too. */
-    val swipeToPlayNext = MutableStateFlow(false)
+    /**
+     * Whether swiping a queue row sideways queues it or plays it next — the
+     * gesture the [com.music.bitchord.ui.components.SongRow] rows carry.
+     */
+    val swipeToPlayNext = MutableStateFlow(prefs.getString(KEY_SWIPE_TO_PLAY_NEXT, "false") == "true")
+
+    fun setSwipeToPlayNext(value: Boolean) {
+        swipeToPlayNext.value = value
+        prefs.putString(KEY_SWIPE_TO_PLAY_NEXT, value.toString())
+    }
 
     /**
      * Put this track's quality ceiling and the resolver's recorded figures on the
@@ -267,6 +281,67 @@ object AppSettings {
         val clamped = value.coerceIn(0, 12)
         crossfadeSeconds.value = clamped
         prefs.putString(KEY_CROSSFADE_SECONDS, clamped.toString())
+    }
+
+    // ── Playback dials (slice 18) ────────────────────────────────────────────
+    //
+    // Three knobs upstream carries as settings and one switch the desktop's
+    // player screen has been waiting for. Key names are upstream's, so a
+    // settings file means the same thing on both platforms.
+
+    /**
+     * How fast the music plays, 0.5–2.0× — upstream's own [1.0f] default and
+     * range, stored here as a string because [FileStore] has no float channel.
+     * The engine's [com.music.bitchord.desktop.playback.PlayerController]
+     * collector is the one that hears every change and reaches both engines.
+     */
+    val playbackSpeed = MutableStateFlow(
+        clampPlaybackSpeed(prefs.getStringOrNull(KEY_PLAYBACK_SPEED)?.toFloatOrNull() ?: 1.0f),
+    )
+
+    fun setPlaybackSpeed(value: Float) {
+        val clamped = clampPlaybackSpeed(value)
+        playbackSpeed.value = clamped
+        prefs.putString(KEY_PLAYBACK_SPEED, clamped.toString())
+    }
+
+    /**
+     * Levels every YouTube-served track to the same loudness, using the figure
+     * the stream resolver already parsed — upstream's switch, default on
+     * upstream and here. Tracks with no figure (downloads, local files,
+     * configured sources) play at their own gain; see
+     * [com.music.bitchord.desktop.playback.PlayerController]'s loudness notes.
+     */
+    val loudnessNormalization = MutableStateFlow(prefs.getString(KEY_LOUDNESS_NORMALIZATION, "true") != "false")
+
+    fun setLoudnessNormalization(value: Boolean) {
+        loudnessNormalization.value = value
+        prefs.putString(KEY_LOUDNESS_NORMALIZATION, value.toString())
+    }
+
+    /**
+     * Skip past stretches of silence. The desktop's decoder (libvlc) offers no
+     * silence-skip filter, so this rides to an engine seam that currently says
+     * so and does nothing — the switch persists, the row says what it does, and
+     * the day an engine can act, the seam is one override away.
+     */
+    val skipSilence = MutableStateFlow(prefs.getString(KEY_SKIP_SILENCE, "false") == "true")
+
+    fun setSkipSilence(value: Boolean) {
+        skipSilence.value = value
+        prefs.putString(KEY_SKIP_SILENCE, value.toString())
+    }
+
+    /**
+     * Whether the player screen carries the volume slider at all. Upstream's
+     * own switch (`hide_volume_bar`), gating the player's volume row — the
+     * toolbar's volume control is chrome, and chrome keeps its slider.
+     */
+    val hideVolumeBar = MutableStateFlow(prefs.getString(KEY_HIDE_VOLUME_BAR, "false") == "true")
+
+    fun setHideVolumeBar(value: Boolean) {
+        hideVolumeBar.value = value
+        prefs.putString(KEY_HIDE_VOLUME_BAR, value.toString())
     }
 
     // ── Equalizer ────────────────────────────────────────────────────────────
@@ -526,15 +601,15 @@ object AppSettings {
     val lyricsOffsetMs = MutableStateFlow(prefs.getString(KEY_LYRICS_OFFSET_MS, "0").toIntOrNull() ?: 0)
 
     /**
-     * Blurs unfocused lyric lines, keeping the active line sharp. Upstream
-     * persists this; the desktop takes the same default and defers the storage
-     * key until the settings row that flips it exists — a key nothing writes
-     * yet is not a saving.
+     * Blurs unfocused lyric lines, keeping the active line sharp. Read by the
+     * lyric renderers ([com.music.bitchord.ui.player.PlayerLyrics]) alongside
+     * [reduceDynamicBlur], which wins when both would apply.
      */
-    val lyricsBlur = MutableStateFlow(true)
+    val lyricsBlur = MutableStateFlow(prefs.getString(KEY_LYRICS_BLUR, "true") != "false")
 
     fun setLyricsBlur(value: Boolean) {
         lyricsBlur.value = value
+        prefs.putString(KEY_LYRICS_BLUR, value.toString())
     }
 
     /**
@@ -787,6 +862,13 @@ object AppSettings {
     private const val UPGRADE_LENGTH_SLACK_MAX = 10
     private const val KEY_OUTPUT_DEVICE_ID = "output_device_id"
     private const val KEY_OUTPUT_DEVICE_NAME = "output_device_name"
+    private const val KEY_PLAYBACK_SPEED = "playback_speed"
+    private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
+    private const val KEY_SKIP_SILENCE = "skip_silence"
+    private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
+    private const val KEY_REDUCE_ANIMATION = "reduce_animation"
+    private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
+    private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"
     private const val KEY_LOCAL_MUSIC_FOLDERS = "local_music_folders"
@@ -803,6 +885,14 @@ internal fun encodeFolders(folders: List<String>): String {
     if (folders.isEmpty()) return ""
     return Json.encodeToString(ListSerializer(String.serializer()), folders)
 }
+
+/**
+ * The playback speed the app will actually run at: rounded to the slider's own
+ * precision (two decimals — a 0.05-step drag lands exact) and clamped to the
+ * app's 0.5–2.0× range, which is where the engine's tempo stays musical.
+ */
+internal fun clampPlaybackSpeed(value: Float): Float =
+    (value * 100).roundToInt().toFloat().div(100).coerceIn(0.5f, 2.0f)
 
 /** The inverse of [encodeFolders]; anything unparseable reads as "none chosen". */
 internal fun decodeFolders(stored: String?): List<String> {

@@ -459,9 +459,9 @@ fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
 // volume is on `PlayerController` (`volume: StateFlow<Int>` in percent,
 // `setVolume(percent: Int)`), so Task 11's adapter hands it down the same way it hands
 // down every other callback here, and maps the scales at that seam. Both layouts
-// render the bar. `AppSettings.hideVolumeBar` is not ported — no settings sheet this
-// slice — so upstream's hide branch and the `VOLUME_ROW_HEIGHT` spacer that stood in
-// for it are gone, which leaves that Task 7 constant with no caller; see the portrait
+// render the bar. `AppSettings.hideVolumeBar` arrived with slice 18 — both layouts'
+// volume slot reads it, the same switch upstream's Settings row drives — which put
+// the hide branch and the `VOLUME_ROW_HEIGHT` spacer back to work at the portrait
 // call site. What upstream's `release()` still does, and why desktop needs none of
 // it, is at [onVolumeChange].
 // -------------------------------------------------------------------------------------
@@ -853,6 +853,9 @@ fun NowPlayingScreen(
     )
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsState()
     val lyricsOffsetMs by AppSettings.lyricsOffsetMs.collectAsState()
+    // The player screen's own volume-bar switch (slice 18) — both layouts'
+    // volume slot read it, the toolbar's control being chrome and exempt.
+    val hideVolumeBar by AppSettings.hideVolumeBar.collectAsState()
     // A lambda, not a value: read by the lyric strip and panel in scopes of
     // their own, so a tick recomposes them and not the player around them.
     val lyricsPosition: () -> Long = { adjustedLyricsPosition(position.positionMs, lyricsOffsetMs) }
@@ -1460,15 +1463,19 @@ fun NowPlayingScreen(
                         // The bar, where upstream renders it (app :1552-1562) — the
                         // column's last item, so its arrival pushes nothing else
                         // around. Upstream nulls this slot when Settings hides the
-                        // bar; desktop has no such setting and no sheet to hold it,
-                        // so the row is always handed over. See [onVolumeChange] for
-                        // why finishing is empty here.
-                        volume = {
-                            VolumeRow(
-                                value = { volume },
-                                onValueChange = onVolumeChange,
-                                onValueChangeFinished = { },
-                            )
+                        // bar; the same switch reached desktop in slice 18, and the
+                        // null is the same shape it always was. See [onVolumeChange]
+                        // for why finishing is empty here.
+                        volume = if (hideVolumeBar) {
+                            null
+                        } else {
+                            {
+                                VolumeRow(
+                                    value = { volume },
+                                    onValueChange = onVolumeChange,
+                                    onValueChangeFinished = { },
+                                )
+                            }
                         },
                     )
                 },
@@ -2606,20 +2613,23 @@ fun NowPlayingScreen(
             // `VOLUME_ROW_HEIGHT` spacer in the hidden half). The two branches are
             // the same height by construction — 32dp is ThinSlider's touch target,
             // 10dp of track under 22dp of padding — so the bar filling the slot
-            // moves nothing below it. That switch rides `AppSettings.hideVolumeBar`,
-            // a display preference with no settings sheet here and no field on
-            // desktop's `AppSettings`, so there is no branch to keep: the bar is
-            // simply always present. [VOLUME_ROW_HEIGHT] is left without a caller by
-            // that — its only use upstream was this slot's empty state — and it is a
-            // Task 7 surface, so it stays. See the task-10 report.
+            // moves nothing below it. The switch upstream rides is
+            // `AppSettings.hideVolumeBar`, on the desktop since slice 18 (settings
+            // row in the playback group): hidden, the slot holds the same-height
+            // spacer upstream's own hide branch held, and the layout below the
+            // slot does not move.
             Spacer(Modifier.height(12.dp + controlSpread / 2))
 
-            VolumeRow(
-                value = { volume },
-                onValueChange = onVolumeChange,
-                // Nothing to commit on release: see [onVolumeChange].
-                onValueChangeFinished = { },
-            )
+            if (hideVolumeBar) {
+                Spacer(Modifier.height(VOLUME_ROW_HEIGHT))
+            } else {
+                VolumeRow(
+                    value = { volume },
+                    onValueChange = onVolumeChange,
+                    // Nothing to commit on release: see [onVolumeChange].
+                    onValueChangeFinished = { },
+                )
+            }
 
             // The volume slider already has 13dp below its drawn track.
             // Balance that invisible inset with the caption gap below the icons.

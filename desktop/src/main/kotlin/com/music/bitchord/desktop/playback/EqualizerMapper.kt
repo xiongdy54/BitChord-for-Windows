@@ -111,3 +111,45 @@ fun equalizerTuning(
  * `-0.0 + 0.0` is `+0.0`.
  */
 private fun Float.normalizeZero(): Float = this + 0f
+
+/**
+ * Loudness normalization's gain, folded into a tuning (slice 18).
+ *
+ * The figure the stream resolver parsed ([com.music.bitchord.data.innertube.StreamResolver.loudnessDbFor])
+ * is a "this track is N dB too loud" fact; the gain that fixes it is the negation,
+ * clamped to upstream's own [-15, +3] dB window at the call site. The only gain
+ * stage libvlc offers a media player that speaks decibels is its equalizer's
+ * preamp — the volume percent the fader drives is a different domain and the
+ * crossfade's own territory — so the gain rides there:
+ *
+ *  - A tuning that is **on** takes the gain added to its own preamp (the curve's
+ *    make-up attenuation plus this correction), the sum clamped to libvlc's
+ *    ±20 dB. The clamp is a corner, not a shape: an EQ attenuation of -12 under
+ *    a -15 dB correction wants -27 and gets -20 — quieter than intended by
+ *    exactly the clamp, in the one case where two attenuations stack.
+ *  - A tuning that is **off** with a zero gain is returned untouched — the
+ *    passthrough stays the passthrough, and nothing starts equalizing because a
+ *    dial moved that had no answer for this track.
+ *  - A tuning that is **off** with a real gain attaches a *flat* equalizer
+ *    carrying only the preamp. Slice 15's probe established that a flat curve
+ *    and a detached equalizer are bit-identical at zero preamp, so the attached
+ *    flat stage is the gain and nothing else — the same "the processor is fed
+ *    because the app owes the audio a change" reading upstream's chain has
+ *    whenever any stage is active.
+ */
+fun withLoudnessGain(tuning: EqualizerTuning, gainDb: Float): EqualizerTuning {
+    if (gainDb == 0f) return tuning
+    return if (!tuning.enabled) {
+        EqualizerTuning(
+            enabled = true,
+            preampDb = gainDb.coerceIn(-VLC_BAND_LIMIT_DB, VLC_BAND_LIMIT_DB).normalizeZero(),
+            bandAmps = FloatArray(tuning.bandAmps.size),
+        )
+    } else {
+        EqualizerTuning(
+            enabled = true,
+            preampDb = (tuning.preampDb + gainDb).coerceIn(-VLC_BAND_LIMIT_DB, VLC_BAND_LIMIT_DB).normalizeZero(),
+            bandAmps = tuning.bandAmps,
+        )
+    }
+}

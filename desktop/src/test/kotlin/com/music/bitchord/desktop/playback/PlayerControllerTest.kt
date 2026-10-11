@@ -640,6 +640,109 @@ class PlayerControllerTest {
         }
     }
 
+    // ── The playback dials (slice 18) ────────────────────────────────────────
+
+    /**
+     * The speed dial reaches the engines the moment it moves and every engine
+     * created after it: the session through the watcher, the standby at its
+     * creation — the one act that keeps a blend from straddling two rates.
+     */
+    @Test
+    fun `the speed dial reaches both engines`() {
+        val case = CrossfadeCase()
+        val engine = case.engine
+        assertTrue(
+            engine.speeds.contains(1.0f),
+            "the watcher's first fire should have applied the stored speed",
+        )
+        AppSettings.setPlaybackSpeed(1.5f)
+        try {
+            assertEquals(1.5f, engine.speeds.last())
+            val standby = case.handOffToB()
+            assertEquals(
+                1.5f,
+                standby.speeds.last(),
+                "a standby built after the dial moved must not open its blend at normal speed",
+            )
+        } finally {
+            AppSettings.setPlaybackSpeed(1.0f)
+        }
+    }
+
+    /** The switch reaches the engine seam even where this build's engine cannot act on it. */
+    @Test
+    fun `the skip-silence switch reaches the engine seam`() {
+        val (_, engine) = controller()
+        AppSettings.setSkipSilence(true)
+        try {
+            assertTrue(engine.skipSilences.last())
+        } finally {
+            AppSettings.setSkipSilence(false)
+        }
+    }
+
+    /**
+     * The loudness correction is the figure the resolver recorded, negated,
+     * riding the preamp — with the equaliser off, a flat equalizer that carries
+     * the gain and nothing else.
+     */
+    @Test
+    fun `a track's loudness figure lands as the engine's preamp`() {
+        val (player, engine) = controller()
+        try {
+            AppSettings.setLoudnessNormalization(true)
+            // A track 6 dB too loud asks for -6 dB, well inside the window.
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", 6.0)
+            player.playFrom(
+                listOf(song("a")), index = 0,
+                source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null,
+            )
+            val applied = engine.equalizers.last()!!
+            assertTrue(applied.enabled, "the gain needs the equalizer attached to exist")
+            assertEquals(-6f, applied.preampDb)
+            assertTrue(applied.bandAmps.all { it == 0f }, "flat: the gain is the only change")
+        } finally {
+            AppSettings.setLoudnessNormalization(true)
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", null)
+        }
+    }
+
+    /** The boost window's top: a too-quiet track is corrected only to +3 dB, upstream's own ceiling. */
+    @Test
+    fun `the loudness correction never boosts past the window's ceiling`() {
+        val (player, engine) = controller()
+        try {
+            AppSettings.setLoudnessNormalization(true)
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", -10.0)
+            player.playFrom(
+                listOf(song("a")), index = 0,
+                source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null,
+            )
+            assertEquals(3f, engine.equalizers.last()!!.preampDb)
+        } finally {
+            AppSettings.setLoudnessNormalization(true)
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", null)
+        }
+    }
+
+    /** Switched off, the correction is nothing: the tuning stays what the equaliser settings made it. */
+    @Test
+    fun `loudness off leaves the tuning as the equalizer settings made it`() {
+        val (player, engine) = controller()
+        try {
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", -6.0)
+            AppSettings.setLoudnessNormalization(false)
+            player.playFrom(
+                listOf(song("a")), index = 0,
+                source = PlaybackSourceType.SEARCH, sourceTitle = "S", sourceId = null,
+            )
+            assertEquals(EqualizerTuning.OFF, engine.equalizers.last())
+        } finally {
+            AppSettings.setLoudnessNormalization(true)
+            com.music.bitchord.data.innertube.StreamResolver.seedLoudness("a", null)
+        }
+    }
+
     @Test
     fun `a quality change waits out a blend and lands once it clears`() {
         val case = CrossfadeCase()

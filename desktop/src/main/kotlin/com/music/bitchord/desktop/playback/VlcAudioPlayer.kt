@@ -175,6 +175,56 @@ class VlcAudioPlayer : AudioEngine {
         setEqualizer(currentTuning)
     }
 
+    /**
+     * The playback rate, held beside the equalizer's tuning for the same
+     * reason that one is: libvlc's persistence of per-media-player state
+     * across an input teardown is undocumented, so [play] and [prepare] push
+     * it again after every media open — one idempotent native call, the
+     * equalizer reapply's exact shape. 1.0 never reaches the native call at
+     * all: the player's own default is normal speed, so the "rate was never
+     * touched" path costs nothing.
+     */
+    @Volatile
+    private var currentRate: Float = 1.0f
+
+    override fun setSpeed(rate: Float) {
+        val clamped = rate.coerceIn(0.25f, 4.0f)
+        currentRate = clamped
+        if (clamped == 1.0f) return
+        runCatching {
+            player.controls().setRate(clamped)
+        }.onFailure {
+            DebugLog.w("audio", "setRate($clamped) failed: ${it.message}")
+        }
+    }
+
+    private fun reapplySpeed() {
+        if (currentRate == 1.0f) return
+        setSpeed(currentRate)
+    }
+
+    /**
+     * Skip silence: libvlc 3.x has no silence-skip filter, and tapping the PCM
+     * to skip it ourselves means replacing the render path (direct audio
+     * callbacks, our own mixer) — a different engine, not a switch on this one.
+     * The setting arrives here, is recorded once per flip so the log tells the
+     * truth about what happened to it, and playback continues at its own pace.
+     */
+    private var skipSilenceLogged = false
+
+    override fun setSkipSilence(enabled: Boolean) {
+        if (!enabled) {
+            skipSilenceLogged = false
+            return
+        }
+        if (skipSilenceLogged) return
+        skipSilenceLogged = true
+        DebugLog.w(
+            "audio",
+            "skip silence requested: libvlc has no silence filter; playing at normal pace",
+        )
+    }
+
     override fun play(url: String, headers: Map<String, String>, startAtMs: Long) {
         val options = buildList {
             addHeaders(headers)
@@ -186,6 +236,7 @@ class VlcAudioPlayer : AudioEngine {
         statsReported = false
         player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
         reapplyEqualizer()
+        reapplySpeed()
     }
 
     /**
@@ -209,6 +260,7 @@ class VlcAudioPlayer : AudioEngine {
         statsReported = false
         player.media().play(withBasicAuth(url, headers), *options.toTypedArray())
         reapplyEqualizer()
+        reapplySpeed()
         player.audio().setVolume(0)
     }
 

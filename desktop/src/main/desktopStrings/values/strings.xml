@@ -61,4 +61,12 @@
     <string name="local_music_delete_confirm">Delete %1$d selected file(s) from disk?</string>
     <string name="liquid_glass_subtitle_desktop">Real refracting glass on the player's controls. Uses more GPU.</string>
     <string name="reduce_dynamic_blur_subtitle_desktop">Swaps frosted glass for solid fills across the app.</string>
+
+    <!-- Playback dials (slice 18): the speed row is the desktop's own wording —
+         upstream carries the setting with no surface for it — and the skip-silence
+         subtitle says what this build's decoder actually does, where upstream's
+         own subtitle already admits it does nothing on float output. -->
+    <string name="playback_speed">Playback speed</string>
+    <string name="playback_speed_subtitle">How fast the music plays, from half to double.</string>
+    <string name="skip_silence_subtitle_desktop">Trims long silences — not yet on this build's decoder; recorded for when it can.</string>
 </resources>

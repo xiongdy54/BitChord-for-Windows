@@ -372,7 +372,17 @@ class PlayerController(
             // The same hop [resolveAndPlay] makes: the resolve is a blocking
             // walk, and the machine's ticker runs on the scope.
             withContext(resolveDispatcher) { resolveUrl(videoId) }
-                .also { armedIncomingUrl = it }
+                .also {
+                    armedIncomingUrl = it
+                    armedIncomingVideoId = videoId
+                    // The track the standby is about to hold gets its own
+                    // loudness correction, not the outgoing track's: the
+                    // resolve just above filed this track's figure, and the
+                    // arm's prepare will re-seat the tuning after the media
+                    // opens. A standby created later re-applies the current
+                    // tuning — which by then names this same track.
+                    standbyEngineInstance?.setEqualizer(currentEqualizerTuning(videoId))
+                }
         },
         headersFor = ::mediaHeaders,
         versionSwapActive = { qualitySwapJob?.isActive == true },
@@ -403,6 +413,15 @@ class PlayerController(
      */
     private var armedIncomingUrl: String? = null
 
+    /**
+     * The track the current arm is dressing the standby for — recorded beside
+     * [armedIncomingUrl] because the loudness correction is per-track and the
+     * handoff's equaliser apply must name the *incoming* row: the queue's
+     * needle does not move until the handoff itself moves it, so "the current
+     * row" at that instant is still the track being left.
+     */
+    private var armedIncomingVideoId: String? = null
+
     private fun standbyEngine(): AudioEngine =
         standbyEngineInstance ?: crossfadeStandbyEngine().also { created ->
             standbyEngineInstance = created
@@ -413,6 +432,12 @@ class PlayerController(
             // pair of processors are fed the same curve, and this is the
             // desktop's other half of that.
             created.setEqualizer(currentEqualizerTuning())
+            // Nor of the dials: the watcher only hears *changes*, and a
+            // standby built after the last change would otherwise open its
+            // first blend at normal speed while the session ran at whatever
+            // the dial said.
+            created.setSpeed(AppSettings.playbackSpeed.value)
+            created.setSkipSilence(AppSettings.skipSilence.value)
         }
 
     /** Whether a row follows the current one, wrap included — the queue's answer, not a guess. */
@@ -471,8 +496,11 @@ class PlayerController(
         // The incoming engine was the standby, equalised as a standby and
         // possibly not since — the curve moves with the session, here and at
         // the standby's own creation, so a blend can never straddle two
-        // equalisers (the reason upstream feeds both processors).
-        incoming.setEqualizer(currentEqualizerTuning())
+        // equalisers (the reason upstream feeds both processors). The track
+        // it is dressed for is the one the arm recorded, not the queue's
+        // current row: the needle below has not moved yet, and the loudness
+        // correction is per-track.
+        incoming.setEqualizer(currentEqualizerTuning(armedIncomingVideoId))
 
         // The needle moves here, not at the outgoing track's end: the queue's
         // whole meaning is "which row is audible", and the incoming row is
@@ -539,6 +567,7 @@ class PlayerController(
         AppSettings.outputDeviceId.value?.let { engine.setAudioOutputDevice(it) }
         watchSleepTimer()
         watchEqualizer()
+        watchPlaybackDials()
         crossfade.start()
     }
 
@@ -677,29 +706,16 @@ class PlayerController(
      * libvlc's bands ([equalizerTuning]) is the same story: sampled once per
      * settings change, off the engine's clock.
      */
+    /**
+     * What the settings say right now, as a curve, mapped onto libvlc's band
+     * shape — plus the current track's loudness correction, which is the part
+     * that makes this a per-track application and not a pure settings render
+     * (see [currentEqualizerTuning]).
+     */
     private fun applyCurrentEqualizer() {
         val tuning = currentEqualizerTuning()
         engine.setEqualizer(tuning)
         standbyEngineInstance?.setEqualizer(tuning)
-    }
-
-    /**
-     * What the settings say right now, as a curve, mapped onto libvlc's band
-     * shape. Mode picks the curve exactly as upstream's does: the tone pad's
-     * tilt/contour/bandwidth in DYNAMIC, the seven sliders in MANUAL — one at
-     * a time, never summed (the reason [EqualizerMode] exists).
-     */
-    private fun currentEqualizerTuning(): EqualizerTuning {
-        val enabled = AppSettings.equalizerEnabled.value
-        val curve = when (AppSettings.equalizerMode.value) {
-            EqualizerMode.DYNAMIC -> toneCurve(
-                x = AppSettings.equalizerToneX.value,
-                y = AppSettings.equalizerToneY.value,
-                focused = AppSettings.equalizerFocused.value,
-            )
-            EqualizerMode.MANUAL -> manualCurve(AppSettings.equalizerBands.value)
-        }
-        return equalizerTuning(curve, enabled)
     }
 
     /**
@@ -732,6 +748,95 @@ class PlayerController(
                 AppSettings.equalizerBands,
             ) { }.collect { applyCurrentEqualizer() }
         }
+    }
+
+    // ---- playback dials (slice 18) -----------------------------------------------------
+
+    /**
+     * The two playback dials that reach the engines from settings rather than
+     * from a transport act.
+     *
+     * **Speed** applies to both engines — the same both-engines rule the
+     * equaliser's KDoc argues for, since the idle one is what the next
+     * crossfade starts a song on and a blend whose halves ran at different
+     * rates would desync mid-fade. The engines re-seat the rate themselves at
+     * every media open, so track changes need no help here.
+     *
+     * **Loudness** is a per-track correction, so it does not get its own apply:
+     * flipping the switch re-runs [applyCurrentEqualizer], which folds the
+     * current track's figure into the preamp, and every track change reapplies
+     * the tuning on its own way through [resolveAndPlay].
+     *
+     * Same thread discipline as [watchEqualizer]: nothing here is a queue edit
+     * and the engine verbs are thread-safe one-liners.
+     */
+    private fun watchPlaybackDials() {
+        scope.launch {
+            AppSettings.playbackSpeed.collect { rate ->
+                engine.setSpeed(rate)
+                standbyEngineInstance?.setSpeed(rate)
+                TrackLog.d(TAG, "speed → ${rate}×")
+            }
+        }
+        scope.launch {
+            AppSettings.loudnessNormalization.collect { applyCurrentEqualizer() }
+        }
+        // The seam for upstream's skip-silence switch: the engines record what
+        // they can and cannot do about it. Nothing to re-apply per track.
+        scope.launch {
+            AppSettings.skipSilence.collect { enabled ->
+                engine.setSkipSilence(enabled)
+                standbyEngineInstance?.setSkipSilence(enabled)
+            }
+        }
+    }
+
+    /**
+     * The loudness correction the current track is owed, in decibels — the
+     * negation of the figure the resolver recorded for it, clamped to upstream's
+     * own [-15, +3] dB window ([MIN_LOUDNESS_GAIN_DB]/[MAX_LOUDNESS_GAIN_DB]).
+     * Zero when the switch is off or the track has no figure — downloads,
+     * local files and configured sources answer null and play at their own
+     * gain.
+     */
+    private fun loudnessGainDb(videoId: String?): Float {
+        if (!AppSettings.loudnessNormalization.value) return 0f
+        val loudnessDb = videoId?.let { StreamResolver.loudnessDbFor(it) } ?: return 0f
+        return (-loudnessDb).toFloat().coerceIn(MIN_LOUDNESS_GAIN_DB, MAX_LOUDNESS_GAIN_DB)
+    }
+
+    /**
+     * The tuning for [videoId]'s track: the settings' curve, with the track's
+     * loudness correction folded into the preamp. Null [videoId] (or no
+     * recorded figure) leaves the curve exactly as the equaliser settings
+     * describe it.
+     *
+     * [videoId] is passed by every caller that knows which track it is dressing
+     * — the queue's current row is read only where "the current row" is
+     * genuinely the question, and the read is a snapshot the crossfade's own
+     * [peekNextVideoId] already makes from its ticker thread.
+     */
+    private fun currentEqualizerTuning(videoId: String? = queue.songAt(queue.currentIndex)?.videoId): EqualizerTuning {
+        val gain = loudnessGainDb(videoId)
+        // One line per landing, not per tick — the apply points are per-track,
+        // and a silent correction is exactly the kind of thing a user report
+        // will one day ask whether it happened at all.
+        if (gain != 0f) TrackLog.d(TAG, "loudness correction ${gain} dB → preamp ($videoId)")
+        return withLoudnessGain(baseEqualizerTuning(), gain)
+    }
+
+    /** The settings' curve alone — what [currentEqualizerTuning] dressed with loudness. */
+    private fun baseEqualizerTuning(): EqualizerTuning {
+        val enabled = AppSettings.equalizerEnabled.value
+        val curve = when (AppSettings.equalizerMode.value) {
+            EqualizerMode.DYNAMIC -> toneCurve(
+                x = AppSettings.equalizerToneX.value,
+                y = AppSettings.equalizerToneY.value,
+                focused = AppSettings.equalizerFocused.value,
+            )
+            EqualizerMode.MANUAL -> manualCurve(AppSettings.equalizerBands.value)
+        }
+        return equalizerTuning(curve, enabled)
     }
 
     // ---- autoplay -------------------------------------------------------------------
@@ -1547,6 +1652,13 @@ class PlayerController(
                         engine.play(url, mediaHeaders(url))
                         engine.setVolume(_volume.value)
                         playingUrl = url
+                        // The resolve just filed this track's loudness figure
+                        // (when it has one); the engine's own open re-seated
+                        // the tuning it already held, which described the
+                        // *previous* track — this is the per-track correction
+                        // landing, the loudness half of the equaliser's
+                        // belt-and-braces reapply.
+                        applyCurrentEqualizer()
                         prefetchNext()
                         maybeTopUpAutoplay()
                     }
@@ -1638,5 +1750,14 @@ class PlayerController(
          */
         const val BLEND_WAIT_POLL_MS = 250L
         const val BLEND_WAIT_TIMEOUT_MS = 20_000L
+
+        /**
+         * The loudness correction's window, in decibels — upstream's
+         * `MIN_LOUDNESS_GAIN_MB = -1500` and `MAX_LOUDNESS_GAIN_MB = 300`
+         * (millibels), i.e. never boost past +3 dB and never duck past -15:
+         * the point is levelling, not a limiter.
+         */
+        const val MIN_LOUDNESS_GAIN_DB = -15f
+        const val MAX_LOUDNESS_GAIN_DB = 3f
     }
 }
