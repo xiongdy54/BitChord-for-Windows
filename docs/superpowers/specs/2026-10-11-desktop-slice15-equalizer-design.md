@@ -2,7 +2,7 @@
 
 日期:2026-10-11
 分支:`desktop-slice2-now-playing`
-状态:设计定稿(实施记录见 §7,实施后回填)
+状态:已完成(实施记录见 §7)
 
 ## 1. 背景
 
@@ -60,6 +60,17 @@ vlcj 契合度(javap 已核实):`MediaPlayerFactory.equalizer()` 给 `bands()`(l
 
 balance(决策 3);SVF DSP 与滑移;Automix 族;`system_equalizer*`/bitstream 行;Goal 序列至此收讫(登录 UI、本地音乐扫描全家含 WebDAV、下载管理面板、运动封面、交叉淡入淡出均已在前片完成)。
 
-## 7. 实施记录(实施后回填)
+## 7. 实施记录(2026-10-11 回填)
 
-(待回填:交付、偏离、验证、已知瑕疵)
+**交付**:决策 1–8 落地。`playback/EqualizerCurve.kt`(220 行逐字,仅两段描述未移植 DSP 的 KDoc 按 mapper substrate 改述)+ `EqualizerPreset.kt`(16 预设 + CUSTOM + `matching()` 逐字);`desktop/playback/EqualizerMapper.kt`(`EqualizerTuning` + `equalizerTuning()`:上游曲线在 libvlc 10 固定频点解析求和、±20dB 夹紧、**IEEE `-0.0` 归一**——移植的 `-peak` preamp 对平坦曲线产出负零,引擎边界统一正零,使"FLAT 映射为零"在位模式层成立);`AudioEngine.setEqualizer(EqualizerTuning?)` 默认空实现;`VlcAudioPlayer` 缓存一个 vlcj Equalizer、null/关即真摘除(`libvlc_media_player_set_equalizer(player, NULL)` 已核实是真旁路而非十条平坦滤波)、每次 `play()/prepare()` 后防御性重投(persistence 不可观测——libvlc 3.x 无 get-equalizer API,防御重投是 KDoc 写明的答案);PlayerController 三处补投(待机引擎创建、crossfade handoff、`watchEqualizer()` 收集器 combine 六流仿上游 `applyEqualizer`),试听引擎不喂;AppSettings 六 flow(上游键名,`EqualizerMode` 枚举,clamp setter,派生 `equalizerPreset`,bands 单键逗号串,LyricsSettings 编码先例);`EqualizerDialog.kt`(965 行:TonePad/BandFader/snapGain 手势数学逐字,460dp Dialog,预设行内展开,alpha 0.38 禁用置灰 220ms tween,Broad/Focused 选择行);设置行(`equalizer`+`equalizer_subtitle` 上游键);`probeEqualizer`(打印 7 槽→10 带映射表并对真实 libvlc 应用)+ `probeEqualizerPreview`(内联面板——嵌套对话框 PrintWindow 不可及,输出设备面板的先例)。
+
+**与设计的偏离**:
+
+1. **Mapper 落位 `desktop/playback/`**(设计 §3 允许二选一):`EqualizerTuning` 是 `AudioEngine.setEqualizer` 的形状,与它装扮的引擎同住。
+2. **`-0.0` 归一超出设计清单**:位模式层的"FLAT 即零"要求它;非数值问题而是符号位问题。
+3. **`probeEqualizerPreview` 增设**:截图管线不可及嵌套对话框(既有判例),预览内联渲染同一组合函数。
+4. 上游字符串 `equalizer_subtitle` 的中文译文写的是系统均衡器文案("你设备的系统面板"),桌面设置行会带出该措辞——app/ 不动,译文措辞的修整属上游事,记录在案。
+
+**验证**:56 类 535 测试全绿(新增 33:EqualizerCurveTest 14——端点/tone 极端/preamp ≤ 0/预设 `matching()` 往返;EqualizerMapperTest 10——FLAT 全零位模式/tone 极端形状/手动已知表/夹紧/preamp 直通;EqualizerSettingsTest 8——键持久化/编码/无 balance 键)。实机探针:`probeEqualizer=rock` 打印 7 槽→10 带映射表(preamp −4.4dB 直通,FLAT 全零)并成功应用于真实 libvlc 播放器。截图 `.shots/slice15/equalizer-panel-zh-dark.png`(禁用置灰态:开关/分段/TonePad/提示/Broad 行)。**人手验证待做**:听感(EQ 中曲变更、handoff 持久、关即摘)、Manual 态七滑条与预设展开截图、crossfade handoff 后 EQ 仍在的耳朵确认。
+
+**已知瑕疵**:均衡器听感与跨曲持久属人手域(设计 §5.4 本就计划);`equalizer_subtitle` 中文措辞牵上游;libvlc persistence 无读回 API,防御重投是设计决定而非缺陷,已 KDoc 记录。
