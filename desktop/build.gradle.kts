@@ -74,6 +74,20 @@ dependencies {
     // ones that explain a refused stream — go nowhere.
     implementation("org.slf4j:slf4j-simple:2.0.17")
 
+    // ---- Module sources ----
+    // Held at the upstream app's version; the same VM runs QuickJsExecutor's
+    // module sources. The -jvm artifact bundles the Windows QuickJS native
+    // (jni/windows_x64/libquickjs.dll), as the -android one bundles the .so.
+    implementation("io.github.dokar3:quickjs-kt-jvm:1.0.14")
+    // QuickJsExecutor's fetch bridge and header parsing speak org.json, as the
+    // app does; the JVM artifact of the same library keeps the port verbatim.
+    implementation("org.json:json:20240303")
+    // The sources family speaks OkHttp throughout (Http.client, AddonClient's
+    // 429 backoff, QuickJsExecutor's __spine.fetch). ktor-client-okhttp already
+    // put this on the classpath; declared so the code's primary dependency is
+    // not transitive.
+    implementation("com.squareup.okhttp3:okhttp:5.3.2")
+
     testImplementation(kotlin("test"))
     // The AutoPlay top-up's empty-answer retry sleeps on purpose; virtual time
     // keeps that honest without making the suite wait for the wall clock.
@@ -237,6 +251,7 @@ compose.desktop {
             "bitchord.probeCanvas",
             "bitchord.probeEqualizer",
             "bitchord.probeEqualizerPreview",
+            "bitchord.probeSourceEditorPreview",
             "bitchord.localFolders",
             "bitchord.shot",
             "bitchord.shotMs",

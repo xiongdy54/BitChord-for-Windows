@@ -74,6 +74,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import com.music.bitchord.ui.screens.OutputDevicePanel
+import com.music.bitchord.ui.screens.SourceEditorPanel
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.LocalContextMenuRepresentation
 import com.music.bitchord.ui.shell.Destination
@@ -213,6 +214,7 @@ private val probeOutputPreview = System.getProperty("bitchord.probeOutputPreview
  * controls and states exactly the real one's.
  */
 private val probeEqualizerPreview = System.getProperty("bitchord.probeEqualizerPreview") == "true"
+private val probeSourceEditorPreview = System.getProperty("bitchord.probeSourceEditorPreview") == "true"
 
 
 /**
@@ -454,6 +456,9 @@ fun main() {
     // Same as the Android service does on create: the object may already hold a value, so
     // assign both true and false rather than only turning it on.
     QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
+    // Upstream BitChordApplication.onCreate: seed the built-in kinds and load
+    // the stored list before anything can ask for a source.
+    com.music.bitchord.data.sources.SourceRegistry.init()
     val player = PlayerController(scope)
     val lyrics = LyricsCoordinator(scope)
     // The quality swap's scripted half: wait for a track to actually sound,
@@ -549,6 +554,8 @@ fun main() {
         // start (see probeDestination == "outputdevices").
         var openAudioOutputOnStart by remember { mutableStateOf(false) }
         var openEqualizerOnStart by remember { mutableStateOf(false) }
+        var openSourceEditorOnStart by remember { mutableStateOf(false) }
+        var scrollSettingsToEndOnStart by remember { mutableStateOf(false) }
         if (probeDownload) {
             var downloadProbeFired by remember { mutableStateOf(false) }
             val snapshot by player.state.collectAsState()
@@ -583,6 +590,14 @@ fun main() {
         if (probeDestination == "outputdevices") {
             shellState.showSettings = true
             openAudioOutputOnStart = true
+        }
+        if (probeDestination == "sources") {
+            shellState.showSettings = true
+            scrollSettingsToEndOnStart = true
+        }
+        if (probeDestination == "sourceeditor") {
+            shellState.showSettings = true
+            openSourceEditorOnStart = true
         }
         if (probeDestination == "equalizer") {
             shellState.showSettings = true
@@ -962,6 +977,8 @@ if (shotPath.isNotBlank() && shotMs != null) {
                     // The output picker's scripted open — see probeDestination.
                     autoOpenAudioOutput = openAudioOutputOnStart,
                     autoOpenEqualizer = openEqualizerOnStart,
+                    autoOpenSourceEditor = openSourceEditorOnStart,
+                    scrollSettingsToEnd = scrollSettingsToEndOnStart,
                 )
                 // The menu panel's styling probe — see [menuPreview]. Rendered
                 // in place rather than through the popup, whose native window
@@ -1008,6 +1025,11 @@ if (shotPath.isNotBlank() && shotMs != null) {
                 // A dialog inside the settings dialog is a window inside a
                 // window, and the capture sees neither; the panel renders here
                 // in its own surface, rows and enumeration the real one's.
+                if (probeSourceEditorPreview) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        SourceEditorPanel(existing = null, onDismiss = {})
+                    }
+                }
                 if (probeOutputPreview) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Surface(

@@ -39,6 +39,25 @@ enum class AudioQuality(
     MEDIUM(Int.MAX_VALUE, "Medium"),
     HIGH(Int.MAX_VALUE, "High"),
     LOSSLESS(Int.MAX_VALUE, "Lossless"),
+    ;
+
+    /**
+     * Whether sources of [kind] are asked at all under this ceiling — the gate
+     * behind [com.music.bitchord.data.sources.SourceRegistry.activeForPlayback].
+     *
+     * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
+     * caps, and it is the only source that can answer at all when the ones
+     * above it are skipped.
+     */
+    fun permits(kind: com.music.bitchord.data.sources.SourceKind): Boolean = when (this) {
+        LOSSLESS -> true
+        // No lossless answer is wanted here, and a source that can serve one is
+        // the slow half of the list: an addon fronting several catalogues walks
+        // all of them before it answers, which is seconds spent to land on a
+        // transcode JioSaavn already has at 320.
+        HIGH -> !kind.canServeLossless
+        MEDIUM, LOW -> kind == com.music.bitchord.data.sources.SourceKind.YOUTUBE
+    }
 }
 
 /**
@@ -105,6 +124,40 @@ object AppSettings {
     fun setAudioQuality(value: AudioQuality) {
         audioQuality.value = value
         prefs.putString(KEY_AUDIO_QUALITY, value.name)
+    }
+
+    /**
+     * Whether immersive (Dolby Atmos / E-AC-3 JOC) renditions are preferred
+     * when a source offers one — read by the source walks and the module and
+     * addon tiers. Desktop [com.music.bitchord.data.sources.DeviceCodecs]
+     * answers true unconditionally (libvlc ships its own decoders), so this
+     * switch alone decides.
+     */
+    val dolbyAtmos = MutableStateFlow(
+        prefs.getString(KEY_DOLBY_ATMOS, "true") != "false",
+    )
+
+    fun setDolbyAtmos(value: Boolean) {
+        dolbyAtmos.value = value
+        prefs.putString(KEY_DOLBY_ATMOS, value.toString())
+    }
+
+    /**
+     * How far a candidate's runtime may sit from the wanted recording's and
+     * still be matched — the sources' own matching tolerance, in seconds.
+     * Upstream hides it behind the Sources page; consumed by the quality
+     * upgrade's duration checks.
+     */
+    val upgradeLengthSlackSeconds = MutableStateFlow(
+        prefs.getString(KEY_UPGRADE_LENGTH_SLACK, UPGRADE_LENGTH_SLACK_DEFAULT.toString())
+            ?.toIntOrNull()
+            ?.coerceIn(UPGRADE_LENGTH_SLACK_MIN, UPGRADE_LENGTH_SLACK_MAX)
+            ?: UPGRADE_LENGTH_SLACK_DEFAULT,
+    )
+
+    fun setUpgradeLengthSlackSeconds(value: Int) {
+        upgradeLengthSlackSeconds.value = value.coerceIn(UPGRADE_LENGTH_SLACK_MIN, UPGRADE_LENGTH_SLACK_MAX)
+        prefs.putString(KEY_UPGRADE_LENGTH_SLACK, upgradeLengthSlackSeconds.value.toString())
     }
 
     /**
@@ -705,6 +758,11 @@ object AppSettings {
     private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
     private const val KEY_AUDIO_QUALITY = "audio_quality"
     private const val KEY_DOWNLOAD_QUALITY = "download_quality"
+    private const val KEY_DOLBY_ATMOS = "dolby_atmos"
+    private const val KEY_UPGRADE_LENGTH_SLACK = "upgrade_length_slack_seconds"
+    private const val UPGRADE_LENGTH_SLACK_DEFAULT = 3
+    private const val UPGRADE_LENGTH_SLACK_MIN = 0
+    private const val UPGRADE_LENGTH_SLACK_MAX = 10
     private const val KEY_OUTPUT_DEVICE_ID = "output_device_id"
     private const val KEY_OUTPUT_DEVICE_NAME = "output_device_name"
     private const val KEY_WEBDAV_URL = "webdav_url"

@@ -8,9 +8,11 @@
 //   - No DownloadService: the drain is [drainQueue] below, the service's
 //     worker loop verbatim over an internal scope — four workers, the same
 //     idle grace, started by the first enqueue exactly as the service was.
-//   - No configured-source route: the desktop has no SourceResolver layer, so
-//     [routeFor] is YouTube's branch only, and with it go the packaged
-//     (OfflineDASH/HLS) routes and the `exportDownloads` special cases.
+//   - A configured-source route now runs ahead of YouTube's on the Lossless
+//     and High rungs (`fromSources`, ported verbatim from the app side); the
+//     packaged (OfflineDASH/HLS) routes stay behind — the desktop fetches a
+//     source's progressive file directly and lets libvlc sniff containers at
+//     play time. The `exportDownloads` special cases remain unported.
 //   - No collections: a batch download's grouping record had no surface to
 //     serve this slice (release pages' own download button is not ported), so
 //     `SavedCollection`/`DownloadTarget` and their persist key stay on the app
@@ -25,10 +27,16 @@ package com.music.bitchord.download
 import com.music.bitchord.data.AppFiles
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.FileStore
+import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.SourceHeaders
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -38,6 +46,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +54,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -87,6 +97,17 @@ object Downloads {
     private const val TAG = "BitChord"
     private const val KEY_SAVED = "downloaded_tracks"
     private const val KEY_SAVED_METADATA = "downloaded_tracks_metadata"
+
+    /**
+     * How long the source lookup may hold a download up before it goes to
+     * YouTube regardless — upstream's figure, sized to clear a module's full
+     * patient search window twice over (the KDoc on [fromSources] carries the
+     * arithmetic).
+     */
+    private const val SOURCE_LOOKUP_MS = 60_000L
+
+    /** Read-ahead for a source's progressive file; [Downloader] sizes its own the same way. */
+    private const val SOURCE_BUFFER_BYTES = 64 * 1024
 
     private val prefs: FileStore by lazy { FileStore(AppFiles.file("downloads.properties")) }
     private val json = Json { ignoreUnknownKeys = true }
@@ -644,8 +665,9 @@ object Downloads {
     )
 
     /**
-     * Where this download's bytes are coming from: YouTube, resolved under the
-     * ceiling the setting pinned for this track.
+     * Where this download's bytes are coming from: a configured source first
+     * (upstream's `fromSources`, on the Lossless and High rungs only), then
+     * YouTube, resolved under the ceiling the setting pinned for this track.
      *
      * @param quality read once by the caller and passed down, so that a setting
      *   changed while this track is in the queue applies to the next one rather
@@ -653,6 +675,20 @@ object Downloads {
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
     private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
+        if (quality != DownloadQuality.STANDARD) {
+            fromSources(track, quality)?.let { (stream, storable) ->
+                SourceHeaders.remember(stream.url, stream.headers)
+                return Route(
+                    extension = storable.extension,
+                    mimeType = storable.mimeType,
+                    describe = "${stream.format.summary ?: storable.mimeType} from ${stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName } ?: "source"}",
+                    downloadFormat = stream.format.summary,
+                    write = { sink, onProgress ->
+                        fetchFromSource(stream.url, sink, onProgress)
+                    },
+                )
+            }
+        }
         val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps)
         return Route(
             extension = stream.downloadExtension,
@@ -663,6 +699,136 @@ object Downloads {
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a = false, sink, onProgress)
             },
         )
+    }
+
+    /**
+     * The stream to keep for [track] from a configured source, with how to file
+     * it — or null, which is not a failure, just YouTube's turn.
+     *
+     * Ported from upstream's `fromSources` (app `Downloads.kt:1163`), whose
+     * KDoc carries the full reasoning; the short form: usually bit-exact, not
+     * always, and only YouTube's turn when nothing enabled beats its AAC.
+     *
+     * Bounded by [SOURCE_LOOKUP_MS] because a module search waits on every
+     * backend it has, once per query the matcher offers — for a track no
+     * module holds, that is the queue stopped for the better part of a minute
+     * on the way to a download that was always going to be YouTube's. Sixty
+     * seconds rather than the playback race's twenty: nothing here is staring
+     * at a paused player, and the answer becomes a permanent file.
+     */
+    private suspend fun fromSources(
+        track: Song,
+        quality: DownloadQuality,
+    ): Pair<SourceStream, DownloadStore.Storable>? {
+        // Wrapped so the two ways this can come back empty stay apart in the
+        // log. `withTimeoutOrNull` collapses them into one null, and the
+        // difference is the whole diagnosis: "no enabled source holds this
+        // recording" is a fact about the track, and "the clock ran out" is a
+        // fact about [SOURCE_LOOKUP_MS] — which is what silently sent a whole
+        // Lossless queue to YouTube's AAC while the log said nothing at all.
+        var timedOut = true
+        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS) {
+            try {
+                SourceResolver.forDownload(
+                    TrackMatcher.targetOf(track),
+                    SourceResolver.requestForDownload(quality),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "source lookup failed for ${track.videoId}: ${e.message}")
+                null
+            }.also { timedOut = false }
+        }
+        if (stream == null) {
+            if (timedOut) {
+                Log.w(
+                    TAG,
+                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS}ms; " +
+                        "downloading it from YouTube instead of ${quality.label}",
+                )
+            }
+            return null
+        }
+
+        val storable = DownloadStore.storable(stream.format.codec)
+        if (storable == null) {
+            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
+            return null
+        }
+        return stream to storable
+    }
+
+    /**
+     * A source's own file, fetched progressively.
+     *
+     * Upstream routes packaged DASH/HLS through OfflineDash/OfflineHls and
+     * leaves progressive files to [Downloader]; the desktop has no packaging
+     * layer and libvlc's sibling problem does not exist for a file being
+     * written, so this is one ranged loop over the shared client — the same
+     * chunk discipline [Downloader.fetch] keeps, minus the googlevideo
+     * re-resolve seam a source URL has no use for. A mid-download refusal
+     * fails the track: the source's signed URLs are not re-mintable here, and
+     * the queue's retry will run the whole lookup again.
+     */
+    private suspend fun fetchFromSource(
+        url: String,
+        sink: OutputStream,
+        onProgress: (written: Long, total: Long) -> Unit,
+    ): Long = withContext(Dispatchers.IO) {
+        val headers = SourceHeaders.headersFor(url).orEmpty()
+        val total = sourceContentLength(url, headers) ?: error("Track unavailable: no length to fetch")
+
+        var written = 0L
+        val buffer = ByteArray(SOURCE_BUFFER_BYTES)
+        while (written < total) {
+            coroutineContext.ensureActive()
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .header("Range", "bytes=$written-")
+                .apply { headers.forEach { (k, v) -> header(k, v) } }
+                .build()
+            val response = try {
+                Http.client.newCall(request).execute()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "source range at $written failed: ${e.message}")
+                throw e
+            }
+            response.use {
+                // A server that answers a range with a whole 200 would restart
+                // the file; that is corruption, not progress.
+                if (written > 0 && it.code == 200) error("The source does not support resume — try again")
+                if (it.code !in 200..299) error("Download failed (HTTP ${it.code})")
+                val body = it.body ?: error("Download failed: empty response")
+                val input = body.byteStream()
+                while (true) {
+                    coroutineContext.ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    sink.write(buffer, 0, read)
+                    written += read
+                    onProgress(written, total)
+                }
+            }
+            if (written < total) error("Download failed — connection closed at $written of $total")
+        }
+        written
+    }
+
+    private fun sourceContentLength(url: String, headers: Map<String, String>): Long? {
+        val request = okhttp3.Request.Builder()
+            .url(url)
+            .head()
+            .apply { headers.forEach { (k, v) -> header(k, v) } }
+            .build()
+        return runCatching {
+            Http.client.newCall(request).execute().use { response ->
+                val length = response.header("content-length")?.toLongOrNull()
+                if (response.isSuccessful && length != null && length > 0) length else null
+            }
+        }.getOrNull()
     }
 
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */

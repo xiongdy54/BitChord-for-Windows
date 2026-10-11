@@ -11,6 +11,11 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.EqualizerMode
+import com.music.bitchord.data.sources.SourceHeaders
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.MAX_AUTOPLAY_EMPTY_REFRESHES
 import com.music.bitchord.playback.AUTOPLAY_EMPTY_REFRESH_DELAY_MS
@@ -43,6 +48,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
@@ -112,26 +118,145 @@ class PlayerController(
     /**
      * Test seam. Production asks, in order:
      *
-     *  1. **A WebDAV id** (`webdav:<fileUrl>`) — the file URL itself; the
+     *  1. **A source key** (`src:{configId}::{trackId}`) — the pinned source
+     *     walk ([SourceResolver.resolve]; upstream's `bitchord://source` URI
+     *     resolved at open time — the desktop carries the key in the id
+     *     itself). A stream that serves carries its headers into
+     *     [mediaHeaders] through [SourceHeaders].
+     *  2. **A WebDAV id** (`webdav:<fileUrl>`) — the file URL itself; the
      *     credential rides along as a header through [mediaHeaders], not
      *     through the shared client's interceptor, because libvlc fetches
      *     media with its own stack.
-     *  2. **A local file path** — the local scan's id convention is that the
+     *  3. **A local file path** — the local scan's id convention is that the
      *     id *is* the absolute path (upstream's `videoId = the URI string`),
      *     so an id that names an existing file plays straight off disk.
-     *  3. **A YouTube id** — the download record first ([Downloads.verifiedSavedUri];
+     *  4. **A YouTube id** — the download record first ([Downloads.verifiedSavedUri];
      *     this *is* upstream's localUri-first rule for rows the record backs),
-     *     then the stream resolver.
+     *     then the race: a source ranked above YouTube against the stream
+     *     resolver, first playable answer wins (upstream's
+     *     `resolveWithModulePriority`), and only a YouTube walk with no
+     *     competitor left standing.
      *
      * The seam stays a function of the id alone — the prefetch resolves ids
      * for rows that are not the current one, so it cannot consult "the row
-     * under the needle".
+     * under the needle". The queue rows it may consult are keyed by that same
+     * id, which keeps the promise: an id names a row, wherever the request
+     * came from.
      */
     var resolveUrl: suspend (String) -> String = { videoId ->
+        resolveForPlayback(videoId)
+    }
+
+    /**
+     * The production body of [resolveUrl] — the ladder, with the source
+     * family on top of it.
+     */
+    private suspend fun resolveForPlayback(videoId: String): String {
+        SourceRegistry.parseTrackKey(videoId)?.let { (configId, trackId) ->
+            val target = queue.snapshot().firstOrNull { it.videoId == videoId }
+                ?.let(TrackMatcher::targetOf)
+                ?: TrackMatcher.Target("", "", null, null, null, false)
+            val stream = SourceResolver.resolve(configId, trackId, target)
+                ?: throw IllegalStateException("No enabled source could serve '$videoId'")
+            rememberSourceStream(videoId, stream)
+            return stream.url
+        }
+
         com.music.bitchord.data.webdav.WebDavConfig.fileUrlOf(videoId)
-            ?: resolveLocalFile(videoId)
-            ?: Downloads.verifiedSavedUri(videoId)
-            ?: StreamResolver.resolve(videoId)
+            ?.let { return it }
+        resolveLocalFile(videoId)?.let { return it }
+        Downloads.verifiedSavedUri(videoId)?.let { return it }
+
+        // Upstream PlaybackService.kt:4468 `resolveWithModulePriority`: the
+        // module lookup and YouTube's own walk run at once, and the first
+        // playable answer starts the track. SUBSTITUTE_TIMEOUT_MS does not
+        // apply here — both legs are already bounded resolves, and a leg that
+        // loses is cancelled rather than waited for.
+        if (SourceResolver.canSubstituteForYouTube()) {
+            val row = queue.snapshot().firstOrNull { it.videoId == videoId }
+            if (row != null && !row.isVideo) {
+                raceSourceAgainstYouTube(row)?.let { return it }
+            }
+        }
+
+        return StreamResolver.resolve(videoId)
+    }
+
+    /**
+     * Races [SourceResolver.substituteForYouTube] against YouTube's own walk —
+     * upstream's two-leg `select`, with the source leg first so a tie breaks
+     * in rank's favour.
+     *
+     * A leg answering "nothing" is not the race being lost: it is that leg
+     * saying it cannot serve this track, and the other leg then decides on
+     * its own.
+     */
+    private suspend fun raceSourceAgainstYouTube(row: Song): String? = coroutineScope {
+        val target = TrackMatcher.targetOf(row)
+        val sourceLeg = async {
+            try {
+                SourceResolver.substituteForYouTube(target)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "source substitution failed for '${row.title}': ${e.message}")
+                null
+            }
+        }
+        val youtubeLeg = async {
+            try {
+                withContext(resolveDispatcher) { StreamResolver.resolve(row.videoId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "YouTube resolve failed for '${row.title}': ${e.message}")
+                null
+            }
+        }
+
+        val winner = select<Pair<String, String>?> {
+            sourceLeg.onAwait { stream -> stream?.let { rememberSourceStream(row.videoId, it) }?.url?.let { "source" to it } }
+            youtubeLeg.onAwait { url -> url?.let { "youtube" to it } }
+        } ?: run {
+            // The first answer was "nothing". The other leg has the floor.
+            if (sourceLeg.isCompleted) {
+                youtubeLeg.await()?.let { "youtube" to it }
+            } else {
+                sourceLeg.await()
+                    ?.let { rememberSourceStream(row.videoId, it) }
+                    ?.url
+                    ?.let { "source" to it }
+            }
+        }
+
+        when (winner?.first) {
+            "source" -> {
+                youtubeLeg.cancel()
+                TrackLog.d(TAG, "substituted source stream for '${row.title}' over YouTube's own resolve")
+            }
+            "youtube" -> {
+                if (!sourceLeg.isCompleted) {
+                    sourceLeg.cancel()
+                    TrackLog.d(TAG, "YouTube won the resolve race for '${row.title}'; source leg stood down")
+                }
+            }
+        }
+        winner?.second ?: throw IllegalStateException("No stream for '${row.title}' — sources and YouTube both answered nothing")
+    }
+
+    /**
+     * Puts a serving source's stream where the playback path can reach both
+     * halves of it: the fetch headers into [SourceHeaders] (consumed by
+     * [mediaHeaders]), and the rendition facts into [NerdStats] so the
+     * badges name the source that won.
+     */
+    private fun rememberSourceStream(videoId: String, stream: SourceStream): SourceStream {
+        SourceHeaders.remember(stream.url, stream.headers)
+        val name = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+        if (name != null) {
+            NerdStats.onStreamPicked(videoId, stream.format.kbps ?: 0, source = name, mimeType = stream.format.codec)
+        }
+        return stream
     }
 
     /**
@@ -889,14 +1014,17 @@ class PlayerController(
     }
 
     /**
-     * The headers a media fetch for [url] must carry — none for a local file,
-     * the WebDAV credential for the configured server's own URLs (the same
-     * decision the shared client's interceptor makes, restated here because
-     * libvlc never passes through that client), and the resolver's
+     * The headers a media fetch for [url] must carry — what the serving
+     * source demanded first ([SourceHeaders], the desktop stand-in for
+     * upstream's headers riding the DataSpec itself), then none for a local
+     * file, the WebDAV credential for the configured server's own URLs (the
+     * same decision the shared client's interceptor makes, restated here
+     * because libvlc never passes through that client), and the resolver's
      * googlevideo set for everything else remote.
      */
     private fun mediaHeaders(url: String): Map<String, String> {
         if (!url.startsWith("http")) return emptyMap()
+        SourceHeaders.headersFor(url)?.let { return it }
         val host = runCatching { java.net.URI(url).host }.getOrNull()
         if (host != null && com.music.bitchord.data.webdav.WebDavAuth.shouldAuthorize(host)) {
             return com.music.bitchord.data.webdav.WebDavAuth.authHeader

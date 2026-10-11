@@ -150,6 +150,10 @@ fun SettingsDialog(
     autoOpenAudioOutput: Boolean = false,
     /** One-shot from the screenshot probe: arrive with the equalizer already open. */
     autoOpenEqualizer: Boolean = false,
+    /** One-shot from the screenshot probe: arrive with the source editor already open. */
+    autoOpenSourceEditor: Boolean = false,
+    /** One-shot from the screenshot probe: arrive scrolled to the bottom groups. */
+    scrollToEnd: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var showLyricsSources by remember { mutableStateOf(false) }
@@ -157,8 +161,13 @@ fun SettingsDialog(
     var showAudioOutput by remember { mutableStateOf(autoOpenAudioOutput) }
     var showAccountDialog by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(autoOpenEqualizer) }
+    var showSourceEditor by remember { mutableStateOf(autoOpenSourceEditor) }
+    var editingSource by remember { mutableStateOf<com.music.bitchord.data.sources.SourceConfig?>(null) }
     if (showLyricsSources) {
         LyricsSourcesDialog(onDismiss = { showLyricsSources = false })
+    }
+    if (showSourceEditor) {
+        SourceEditorDialog(existing = editingSource, onDismiss = { showSourceEditor = false })
     }
     if (showTranslationLanguage) {
         TranslationLanguageDialog(onDismiss = { showTranslationLanguage = false })
@@ -183,6 +192,13 @@ fun SettingsDialog(
     Dialog(
         onDismissRequest = onDismiss,
     ) {
+        val scrollState = rememberScrollState()
+        if (scrollToEnd) {
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(500)
+                scrollState.scrollTo(scrollState.maxValue)
+            }
+        }
         Surface(
             modifier = modifier.widthIn(max = 420.dp),
             shape = RoundedCornerShape(16.dp),
@@ -191,7 +207,7 @@ fun SettingsDialog(
         ) {
             Column(
                 Modifier
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .padding(horizontal = 20.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -477,6 +493,19 @@ fun SettingsDialog(
                 LocalMusicSettingsGroup()
                 GroupDivider()
                 WebDavSettingsGroup()
+
+                GroupDivider()
+
+                // The audio sources family (slice 16) — upstream's Sources
+                // screen folded into the dialog: the ordered list, the health
+                // probes, the editor's test-then-save, and the matching
+                // tolerance slider.
+                SourcesSettingsGroup(
+                    onEditSource = { config ->
+                        editingSource = config
+                        showSourceEditor = true
+                    },
+                )
 
                 GroupDivider()
 

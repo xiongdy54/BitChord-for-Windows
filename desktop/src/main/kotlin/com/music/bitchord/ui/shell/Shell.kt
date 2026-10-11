@@ -170,6 +170,10 @@ fun Shell(
     autoOpenAudioOutput: Boolean = false,
     /** The screenshot pass's way into the equalizer, which lives inside settings too. */
     autoOpenEqualizer: Boolean = false,
+    /** The screenshot pass's way into the source editor, which lives inside settings too. */
+    autoOpenSourceEditor: Boolean = false,
+    /** The screenshot pass's way to the bottom groups of the settings dialog. */
+    scrollSettingsToEnd: Boolean = false,
 ) {
     // One snapshot for the whole chrome. The playhead is not in it, so a tick
     // still recomposes the scrubber alone; the toolbar shows no position.
@@ -438,6 +442,8 @@ fun Shell(
             // which wants the settings dialog up with its child open.
             autoOpenAudioOutput = autoOpenAudioOutput,
             autoOpenEqualizer = autoOpenEqualizer,
+            autoOpenSourceEditor = autoOpenSourceEditor,
+            scrollToEnd = scrollSettingsToEnd,
         )
     }
 
