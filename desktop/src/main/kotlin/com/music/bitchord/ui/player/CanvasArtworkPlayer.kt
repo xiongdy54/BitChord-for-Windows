@@ -563,7 +563,7 @@ private class CanvasVideoSurface(
             // output at all — the desktop spelling of upstream's disabled
             // audio track and zero volume. Its own factory, so none of this
             // can leak into the audio engine's player.
-            val ownFactory = uk.co.caprica.vlcj.factory.MediaPlayerFactory(
+            val ownFactory = com.music.bitchord.desktop.playback.LibVlc.newFactory(
                 "--quiet", "--no-video-title-show", "--no-audio",
             )
             val ownComponent = CallbackMediaPlayerComponent(

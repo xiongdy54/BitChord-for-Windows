@@ -130,6 +130,30 @@ object StreamResolver {
                 )
             }
 
+            // The failsafe goes out as whoever is signed in, not as an
+            // anonymous stranger. YouTube's IP-reputation gate answers anonymous
+            // player requests with LOGIN_REQUIRED — "Sign in to confirm that
+            // you're not a bot" — and on a flagged network that is every
+            // extraction, three attempts each. The app holds a Google session
+            // precisely so its requests can carry it; Innertube's own player
+            // calls already do. NewPipe's consent header, when it sets one,
+            // survives: both cookies ride along.
+            val cookie = Innertube.cookie
+            // NewPipe's Request.url() is a plain string; the host is read off
+            // it directly.
+            val host = request.url().substringAfter("://", "").substringBefore('/').substringBefore(':')
+            if (cookie != null && host.isNotEmpty() &&
+                (host == "youtube.com" || host.endsWith(".youtube.com") ||
+                    host == "google.com" || host.endsWith(".google.com") ||
+                    host.endsWith(".googleapis.com"))
+            ) {
+                val existing = builder.build().header("Cookie").orEmpty()
+                val merged = listOf(existing, cookie)
+                    .filter { it.isNotBlank() }
+                    .joinToString("; ")
+                builder.header("Cookie", merged)
+            }
+
             // Every byte NewPipe fetches passes through here, and until this
             // line none of it was visible: an extraction that took thirty
             // seconds reported thirty seconds, with nothing to say whether that
@@ -493,6 +517,12 @@ object StreamResolver {
      *
      * A client whose URL fails the probe is skipped and InnerTubeX asked again, up
      * to [INNERTUBEX_ATTEMPTS] times, since its catalog has further clients behind it.
+     * Past the catalog, one last ask goes out pinned to WEB_REMIX with a PoToken
+     * minted before the request — the library's own override shape, and the
+     * strongest identity the app holds. On a network Google has flagged, every
+     * ordinary client's playability comes back "Sign in to confirm you're not a
+     * bot"; the signed-in music web client carrying a fresh BotGuard token is
+     * what those walls exist to let through.
      */
     private suspend fun innerTubeXStream(
         videoId: String,
@@ -507,8 +537,8 @@ object StreamResolver {
                 throw e
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
-                return null
-            } ?: return null
+                return extractWithWebRemixOverride(videoId, maxKbps, skip, requireM4a)
+            } ?: return extractWithWebRemixOverride(videoId, maxKbps, skip, requireM4a)
             val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
@@ -517,6 +547,38 @@ object StreamResolver {
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} minted an unusable URL for $videoId: $verdict")
             skip += found.profileId
         }
+        return extractWithWebRemixOverride(videoId, maxKbps, skip, requireM4a)
+    }
+
+    /**
+     * The bot-wall ask: WEB_REMIX alone, PoToken first. Kept behind the ordinary
+     * ladder so a healthy network never pays for it — there the first pass
+     * already lands on WEB_REMIX by score, without the override.
+     */
+    private suspend fun extractWithWebRemixOverride(
+        videoId: String,
+        maxKbps: Int,
+        skip: Set<String>,
+        requireM4a: Boolean,
+    ): Stream? {
+        TrackLog.w(TAG, "InnerTubeX catalog exhausted for $videoId; asking WEB_REMIX with a minted PoToken")
+        val found = try {
+            InnerTubeXResolver.extract(
+                videoId, maxKbps, skip, requireM4a,
+                playbackClientOverride = "WEB_REMIX",
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "InnerTubeX WEB_REMIX override failed for $videoId: ${e.message}")
+            return null
+        } ?: return null
+        val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url) }
+        if (verdict == Probe.OK) {
+            TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
+            return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
+        }
+        TrackLog.w(TAG, "InnerTubeX ${found.profileId} minted an unusable URL for $videoId: $verdict")
         return null
     }
 

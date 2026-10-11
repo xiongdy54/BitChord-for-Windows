@@ -204,11 +204,9 @@ fun YtMusicLoginWindow(
         // Clearing the local jar is enough to show a fresh Google login.
         // Never visit accounts.google.com/Logout here: that invalidates a
         // previously saved account on Google's server, so adding account B
-        // silently breaks account A.
-        withContext(Dispatchers.IO) {
-            if (mode == WebSessionMode.SIGN_IN) BrowserSession.clearGoogleCookies()
-            else initialCookie?.let(BrowserSession::installGoogleCookies)
-        }
+        // silently breaks account A. Both calls wait on the jar themselves.
+        if (mode == WebSessionMode.SIGN_IN) BrowserSession.clearGoogleCookies()
+        else initialCookie?.let { BrowserSession.installGoogleCookies(it) }
         // The client and its browser belong on the AWT thread — this
         // coroutine's own dispatcher is the Swing event loop.
         val client = app.createClient().also {
@@ -345,8 +343,9 @@ private suspend fun captureFrom(
     onCaptured: (CapturedSession) -> Unit,
     onUnavailable: () -> Unit,
 ) {
-    val cookies = withContext(Dispatchers.IO) { BrowserSession.readMusicCookies() }
+    val cookies = BrowserSession.readMusicCookies()
     if (cookies == null || !AuthStore.hasApiSid(cookies)) {
+        Log.w(TAG, "the jar holds no signing cookie yet")
         onUnavailable()
         return
     }
@@ -473,7 +472,12 @@ internal class BrowserHolder : CefMessageRouterHandler, CefDisplayHandler {
     }
 
     override fun onQueryCanceled(browser: CefBrowser, frame: CefFrame, queryId: Long) {
-        probe?.cancel()
+        // The router cancels a pending query when the frame that asked leaves
+        // — the page navigated under the probe. Answer empty rather than
+        // cancelling the deferred: a cancellation would take the capture
+        // coroutine down with it and leave the〔use this profile〕button
+        // stuck on "checking" until the dialog is closed by hand.
+        probe?.complete("")
         probe = null
     }
 
@@ -523,21 +527,21 @@ internal class BrowserHolder : CefMessageRouterHandler, CefDisplayHandler {
 }
 
 /**
- * The process-wide CefApp, started the first time a login window opens and
- * kept for every open after that.
+ * The process-wide CefApp, started the first time a login window opens or the
+ * PoToken browser is first needed, and kept for every open after that.
  *
  * Initialisation is blocking — on a cold install it downloads and unpacks
- * ~100MB of Chromium natives first — so it runs on IO and the dialog shows a
- * spinner until it answers. Everything is wrapped: a machine that cannot
- * download, unpack or start CEF gets a login window that says so and an app
- * that is otherwise untouched.
+ * ~100MB of Chromium natives first — so it runs on IO and callers wait. Everything
+ * is wrapped: a machine that cannot download, unpack or start CEF gets a login
+ * window that says so, PoTokens that answer null, and an app that is otherwise
+ * untouched.
  *
- * Windowed rendering (`windowless_rendering_enabled = false`) is the whole
- * reason this substrate was chosen over the cheaper offscreen ones: a
- * windowed browser has real OS keyboard and IME handling, which is what
- * typing a Google password with a Chinese input method needs. The cookie jar
- * lives beside the binaries in the same `cef/` folder — its persistence is
- * what lets a second sign-in skip the password.
+ * Offscreen rendering is enabled process-wide for the PoToken browser's sake;
+ * the sign-in browser is created per-browser with `osr = false` and stays a
+ * real windowed child — a windowed browser has real OS keyboard and IME
+ * handling, which is what typing a Google password with a Chinese input method
+ * needs. The cookie jar lives beside the binaries in the same `cef/` folder —
+ * its persistence is what lets a second sign-in skip the password.
  */
 internal object CefRuntime {
     private val mutex = Mutex()
@@ -553,6 +557,18 @@ internal object CefRuntime {
      * state quitting with the login window open used to produce.
      */
     private val holders = mutableListOf<BrowserHolder>()
+
+    /**
+     * Other sessions living under this CefApp — the PoToken browser today —
+     * closed through their own callbacks on the same shutdown pass as the
+     * login dialogs, before the app itself is asked to shut down.
+     */
+    private val extras = mutableListOf<() -> Unit>()
+
+    /** Registers a best-effort teardown for quit time, in registration order. */
+    internal fun onClose(action: () -> Unit) {
+        synchronized(extras) { extras += action }
+    }
 
     /** Why the last start-up failed, for the dialog's status line. */
     @Volatile var lastError: String? = null
@@ -577,6 +593,11 @@ internal object CefRuntime {
         }
     }
 
+    /** [app], or a failure carrying why CEF never started. */
+    suspend fun appOrThrow(): CefApp = app() ?: throw IllegalStateException(
+        lastError?.let { "CEF unavailable: $it" } ?: "CEF unavailable",
+    )
+
     private fun start(): CefApp? = runCatching {
         val builder = CefAppBuilder().apply {
             setInstallDir(AppFiles.dir("cef"))
@@ -588,7 +609,14 @@ internal object CefRuntime {
                 }
             })
             val settings = getCefSettings()
-            settings.windowless_rendering_enabled = false
+            // Offscreen rendering must be enabled process-wide for the PoToken
+            // browser to exist at all (it is never attached to any UI). The
+            // sign-in browser is still created per-browser with `osr = false`,
+            // so it remains a real windowed child: real OS keyboard and IME
+            // handling for typing a Google password with a Chinese input
+            // method, which is the whole reason this substrate was chosen over
+            // the cheaper offscreen ones.
+            settings.windowless_rendering_enabled = true
             settings.cache_path = AppFiles.dir("cef").absolutePath
             // Software rendering, on purpose. The login browser is forms and
             // text — it has no use for the GPU — and software is the rendering
@@ -620,6 +648,8 @@ internal object CefRuntime {
     fun shutdown() {
         val open = synchronized(holders) { holders.toList() }
         open.forEach { runCatching { it.close() } }
+        val extraTeardowns = synchronized(extras) { extras.toList() }
+        extraTeardowns.forEach { runCatching { it() } }
         runCatching { app?.dispose() }
         app = null
     }

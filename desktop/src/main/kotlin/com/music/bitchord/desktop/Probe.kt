@@ -8,6 +8,8 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.desktop.playback.AudioStats
+import com.music.bitchord.desktop.playback.LibVlc
 import com.music.bitchord.desktop.playback.VLC_BAND_CENTERS_HZ
 import com.music.bitchord.desktop.playback.VlcAudioPlayer
 import com.music.bitchord.desktop.playback.equalizerTuning
@@ -18,8 +20,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import org.jetbrains.compose.resources.getString
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import javax.sound.sampled.AudioFileFormat
+import javax.sound.sampled.AudioFormat
+import javax.sound.sampled.AudioInputStream
+import javax.sound.sampled.AudioSystem
 import kotlin.math.roundToInt
+import kotlin.system.exitProcess
 
 /**
  * Headless smoke test for the ported data layer: browse the home feed, search
@@ -32,11 +42,31 @@ import kotlin.math.roundToInt
  */
 fun main(args: Array<String>) {
     runBlocking { probe(args) }
+    // The CEF threads (and the resolver's scope) are not daemons: without this
+    // the JVM hangs around after the last line is printed, holding the `cef/`
+    // cache directory — and the next probe's CEF then fails to start at all
+    // (Chromium's one-instance-per-user-data-dir lock). The app has a real
+    // shutdown path for this; the probe's is a hard exit.
+    com.music.bitchord.auth.CefRuntime.shutdown()
+    exitProcess(0)
 }
 
 private suspend fun probe(args: Array<String>) {
-    val query = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "周杰伦 晴天"
+    val query = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: "陈奕迅 致明日的舞"
     InnerTubeXResolver.init()
+
+    // Speak as whoever the app is signed in as — the probe is the app's headless
+    // shadow, and every resolver verdict depends on the session. Without this a
+    // probe run reads as an anonymous stranger, which is exactly the identity
+    // YouTube's bot walls refuse first.
+    com.music.bitchord.auth.AuthStore().activeSession?.let { stored ->
+        com.music.bitchord.data.innertube.Innertube.cookie = stored.cookie
+        val profile = stored.profiles.firstOrNull { it.profileId == stored.activeProfileId }
+        com.music.bitchord.data.innertube.Innertube.selectChannel(
+            profile?.pageId, profile?.dataSyncId, profile?.authUser,
+        )
+        println("session restored: ${stored.email.ifBlank { stored.name }}")
+    }
 
     // Headless scan of the local music folders — the slice-11 probe. No
     // network, no window: walk, filter, read, print. `bitchord.probeLocalScan`
@@ -102,6 +132,71 @@ private suspend fun probe(args: Array<String>) {
             println("  matches track: ${found.matches(song.title, song.artist, song.albumName)}")
         }
         DebugLog.d("BitChord", "probeCanvas: $videoId -> ${found?.url ?: "none"}")
+        return
+    }
+
+    // The PoToken-minting probe. `bitchord.probePoToken` names a videoId: the
+    // hidden CEF browser boots BotGuard and mints for it, and the whole story —
+    // browser up, minter created, token bytes, elapsed — goes to stdout. This is
+    // the one probe that can prove the CEF BotGuard port before any playback
+    // depends on it, because the mint itself needs no GUI.
+    System.getProperty("bitchord.probePoToken")?.takeIf { it.isNotBlank() }?.let { videoId ->
+        println("── poToken mint: $videoId ────────────")
+        val started = System.currentTimeMillis()
+        try {
+            val provider = com.music.bitchord.data.innertube.potoken.PoTokenCefProvider
+            // The session's visitor data is what the mint binds to; the probe
+            // fetches one the same way the resolver's warm path does.
+            val visitor = com.music.bitchord.data.innertube.Innertube.ensureVisitorData()
+            println("visitorData: ${visitor?.take(12)}…")
+            val (streamingPot, playerPot) = provider.poToken(videoId, visitor.orEmpty())
+            println("streaming pot: ${streamingPot.take(16)}… (${streamingPot.length} chars)")
+            println("player pot:    ${playerPot.take(16)}… (${playerPot.length} chars)")
+            println("elapsed=${System.currentTimeMillis() - started}ms — MINT OK")
+        } catch (e: Exception) {
+            println("MINT FAILED after ${System.currentTimeMillis() - started}ms: ${e::class.simpleName}: ${e.message}")
+        }
+        return
+    }
+
+    // The bundled-libVLC probe. No network, no window: where libvlc actually
+    // came from (the app's own bundle, or the machine's installed VLC when
+    // the bundle is absent), the version it reports, and a synthetic WAV run
+    // through the real engine at volume zero — demuxer, decoder, audio
+    // output and event wiring, all from whatever libvlc the app resolved.
+    // The headless proof that the `syncLibVlc` bundle is a libvlc that plays
+    // before any window has to be opened to find out.
+    if (System.getProperty("bitchord.probeLibVlc") == "true") {
+        println("── libVLC bundle ─────────────────────")
+        println("bundle: ${LibVlc.bundledDir?.path ?: "(none — vlcj falls back to the installed VLC)"}")
+        val factory = LibVlc.newFactory("--quiet")
+        try {
+            println("jna.library.path: ${System.getProperty("jna.library.path") ?: "(unset)"}")
+            println("libvlc: ${factory.application().version()}")
+            val wav = File.createTempFile("bitchord-probe-", ".wav")
+            try {
+                writeSineWav(wav, seconds = 1.2)
+                val vlc = VlcAudioPlayer()
+                try {
+                    vlc.setVolume(0) // the beep nobody hears — the output path still runs
+                    val done = CountDownLatch(1)
+                    var stats: AudioStats? = null
+                    vlc.onAudioStats = { stats = it }
+                    vlc.onFinished = { done.countDown() }
+                    vlc.onError = { done.countDown() }
+                    vlc.play(wav.absolutePath)
+                    val finished = done.await(8, TimeUnit.SECONDS)
+                    println("sine wav: finished=$finished stats=$stats endpoints=${vlc.audioOutputDevices().size}")
+                    if (!finished) println("sine wav: TIMED OUT — libvlc never reported the end of media")
+                } finally {
+                    vlc.release()
+                }
+            } finally {
+                wav.delete()
+            }
+        } finally {
+            factory.release()
+        }
         return
     }
 
@@ -300,6 +395,28 @@ private suspend fun playForAWhile(url: String, headers: Map<String, String>) {
     }
     vlc.stop()
     vlc.release()
+}
+
+/**
+ * A 440 Hz sine, 16-bit mono at 44.1 kHz, written through the JDK's own WAV
+ * writer — a real container for the demuxer to open and the decoder to feed,
+ * at an amplitude the probe's volume zero makes a formality anyway.
+ */
+private fun writeSineWav(file: File, seconds: Double) {
+    val sampleRate = 44_100f
+    val format = AudioFormat(AudioFormat.Encoding.PCM_SIGNED, sampleRate, 16, 1, 2, sampleRate, false)
+    val frames = (sampleRate * seconds).toInt()
+    val pcm = ByteArray(frames * 2)
+    for (i in 0 until frames) {
+        val sample = (Math.sin(2.0 * Math.PI * 440.0 * i / sampleRate) * 2_000).toInt()
+        pcm[2 * i] = (sample and 0xFF).toByte()
+        pcm[2 * i + 1] = ((sample shr 8) and 0xFF).toByte()
+    }
+    AudioSystem.write(
+        AudioInputStream(java.io.ByteArrayInputStream(pcm), format, frames.toLong()),
+        AudioFileFormat.Type.WAVE,
+        file,
+    )
 }
 
 private fun List<SearchResult>.firstSong(): Song? =

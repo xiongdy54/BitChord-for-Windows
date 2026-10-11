@@ -16,7 +16,7 @@ import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
  */
 class VlcAudioPlayer : AudioEngine {
 
-    private val factory = MediaPlayerFactory("--no-video-title-show", "--quiet")
+    private val factory = LibVlc.newFactory("--no-video-title-show", "--quiet")
     private val player: MediaPlayer = factory.mediaPlayers().newMediaPlayer()
 
     override var onTime: ((Long) -> Unit)? = null

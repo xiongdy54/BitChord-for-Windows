@@ -5,24 +5,19 @@
 
 <img src="Logo.png" alt="BitChord app icon" width="200" />
 
-# BitChord
+# BitChord for Windows
 
-### Aesthetic YouTube Music Client
-
-<br/>
-
-[![Latest release](https://img.shields.io/github/v/release/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
-[![License](https://img.shields.io/github/license/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/kushagrasinghx/BitChord/total?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
+### Aesthetic YouTube Music client, built for the desktop
 
 <br/>
 
-[**Download**](#download) · [**Features**](#features) · [**Contributing**](#contributing) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
+[![Latest release](https://img.shields.io/github/v/release/xiongdy54/BitChord-for-Windows?style=for-the-badge&labelColor=0d1117)](https://github.com/xiongdy54/BitChord-for-Windows/releases)
+[![License](https://img.shields.io/github/license/xiongdy54/BitChord-for-Windows?style=for-the-badge&labelColor=0d1117)](https://github.com/xiongdy54/BitChord-for-Windows/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/xiongdy54/BitChord-for-Windows/total?style=for-the-badge&labelColor=0d1117)](https://github.com/xiongdy54/BitChord-for-Windows/releases)
 
 <br/>
 
-<a href="https://trendshift.io/repositories/177639?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-177639" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/177639/daily?language=Kotlin" alt="kushagrasinghx%2FBitChord | Trendshift" width="250" height="55"/></a>
-<a href="https://trendshift.io/repositories/177639?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-177639" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/177639/weekly?language=Kotlin" alt="kushagrasinghx%2FBitChord | Trendshift" width="250" height="55"/></a>
+[**Download**](#download) · [**Features**](#features) · [**Contributing**](#contributing) · [**Disclaimer**](#disclaimer)
 
 </div>
 
@@ -33,7 +28,14 @@
 
 <div align="center">
 
-<img src="Banner.png" alt="BitChord banner" width="100%" />
+<img src="docs/screenshots/search.png" alt="Searching YouTube Music in BitChord for Windows" width="49%" />
+<img src="docs/screenshots/player.png" alt="The now-playing screen, playing 陳奕迅 (Eason Chan) — 致明日的舞" width="49%" />
+
+</div>
+
+---
+
+<div align="center">
 
 <h1><a id="features"></a>Features</h1>
 
@@ -45,11 +47,9 @@
 - **Search, browse and play** anything available on YouTube Music.
 - **Hi-Res lossless audio** — FLAC/ALAC from a configured module source, with YouTube Music as fallback.
 - **Gapless playback with true crossfade**, adjustable 0–12s.
-- **Automix [Beta]** — DJ-style transitions with beat-matching and tempo-stretching.
 - **Offline downloads** — save tracks with embedded metadata.
 - **Local music library** integration.
-- **Background playback** via a proper foreground media session.
-- **Apple-like lyrics animation** — credit to [binimum](https://github.com/binimum/am-lyrics).
+- **Self-contained playback** — libVLC ships inside the installer; no VLC install required.
 
 #### Experience
 - **Animated album canvas** — motion artwork on the now-playing screen.
@@ -68,10 +68,11 @@
 
 #### Controls & Tweaks
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.
-- **Playback speed control** (0.5×–2.0×) and **skip silence**.
+- **Playback speed control** (0.5×–2.0×).
 - **Sleep timer** — fixed presets or "stop after this track".
-- **System equalizer** integration.
-- **Stats for nerds** — codec, bit depth, sample rate, and more on the now-playing screen.
+- **Ten-band equalizer** with presets and a drawn curve.
+- **Stats for nerds** — codec, bitrate, sample rate, and more on the now-playing screen.
+- **System media controls** — the Windows media overlay, media keys and taskbar buttons.
 
     </td>
   </tr>
@@ -85,7 +86,10 @@
 
 <h1><a id="download"></a>Download</h1>
 
-Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+Grab the latest installer from the [Releases](https://github.com/xiongdy54/BitChord-for-Windows/releases) page.
+
+- `BitChord-x.y.z.exe` / `.msi` — Windows 10 / 11 (x64), self-contained: bundles its own JRE **and libVLC**, so there is nothing else to install.
+- Google sign-in uses an embedded browser (CEF); its runtime is fetched automatically on first sign-in, which needs a network connection.
 
 </div>
 
@@ -98,23 +102,6 @@ Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx
 We welcome contributions to BitChord! Please review our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting a Pull Request.
 
 [**Contributing Guide**](CONTRIBUTING.md) · [**Code of Conduct**](CODE_OF_CONDUCT.md) · [**Maintainers**](MAINTAINERS.md) · [**Additional Docs**](ADDITIONAL.md)
-
-</div>
-
----
-
-<div align="center">
-
-<h1><a id="support"></a>Support</h1>
-
-BitChord is free and always will be — if it's earned a spot in your rotation, you can chip in here:
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kushagrasinghx)
-[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/kuxhagrasingh)
-
-<br/>
-<br/>
-<img src="upi_support.jpg" alt="UPI Support" width="250" />
 
 </div>
 

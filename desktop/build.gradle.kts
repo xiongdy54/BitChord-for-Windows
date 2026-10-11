@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.util.zip.ZipInputStream
 
 plugins {
     kotlin("jvm") version "2.4.10"
@@ -220,6 +221,105 @@ tasks.register<JavaExec>("probe") {
     // renders the curve model, samples it at libvlc's ten band centres and
     // prints the mapping table. See Probe.kt.
     (project.findProperty("probeEqualizer") as String?)?.let { jvmArgs("-Dbitchord.probeEqualizer=$it") }
+    // The PoToken-minting probe: -PprobePoToken=<videoId> boots the hidden CEF
+    // browser, runs BotGuard and mints, printing the verdict. See Probe.kt.
+    (project.findProperty("probePoToken") as String?)?.let { jvmArgs("-Dbitchord.probePoToken=$it") }
+    // The bundled-libVLC probe: -PprobeLibVlc=true prints where libvlc came
+    // from and plays a synthetic WAV through the real engine. See Probe.kt.
+    if (project.findProperty("probeLibVlc") == "true") jvmArgs("-Dbitchord.probeLibVlc=true")
+}
+
+// ---- Bundled libVLC --------------------------------------------------------
+// The player runs on the app's own copy of libVLC (LibVlc.kt), so a machine
+// that never installed VLC can play. The bundle is not committed: this task
+// materialises it from the official VLC win64 zip — pinned version, so every
+// build and every install ships the same decoder set — into
+// resources/windows-x64/vlc, which `appResourcesRootDir` below publishes as
+// an app resource for the packaged app and which dev runs reach through the
+// repo path. Only the audio-side plugin directories are kept: what the
+// player never asks for — the GUI, the video output chain, transcoding and
+// stream-out, service discovery, the browser plugins — stays out, at well
+// under half a VLC install. The prebuilt plugins.dat names the release
+// machine's paths and is dropped with the rest; libvlccore rescans its own
+// tree on first open.
+val libVlcVersion = "3.0.23"
+val libVlcBundleDir = layout.projectDirectory.dir("resources/windows-x64/vlc")
+
+val syncLibVlc by tasks.registering {
+    group = "build setup"
+    description = "Fetch the official libVLC $libVlcVersion win64 tree into resources/windows-x64/vlc."
+    inputs.property("libVlcVersion", libVlcVersion)
+    outputs.dir(libVlcBundleDir)
+    doLast {
+        val zipFile = layout.buildDirectory.file("tmp/libvlc/vlc-$libVlcVersion-win64.zip").get().asFile
+        if (!zipFile.isFile) {
+            zipFile.parentFile.mkdirs()
+            ant.invokeMethod(
+                "get",
+                mapOf(
+                    "src" to "https://download.videolan.org/pub/videolan/vlc/$libVlcVersion/win64/vlc-$libVlcVersion-win64.zip",
+                    "dest" to zipFile,
+                ),
+            )
+        }
+        // Audio-side plugins only — the directories the player's paths touch:
+        // HTTP and file access, demuxers, the decoder set (the avcodec family
+        // carries Opus/AAC/FLAC/E-AC-3), audio output and filters, tag
+        // reading, and libvlc's own misc plumbing.
+        val keepPluginDirs = setOf(
+            "access", "audio_filter", "audio_mixer", "audio_output", "codec",
+            "control", "demux", "keystore", "logger", "meta_engine", "misc",
+            "packetizer", "stream_extractor", "stream_filter",
+        )
+        val target = libVlcBundleDir.asFile
+        target.deleteRecursively()
+        target.mkdirs()
+        ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (!entry.isDirectory) {
+                    // Zip entries sit under the release's own version root
+                    // (vlc-3.0.23/…); strip it. Path traversal is not a
+                    // threat over a pinned HTTPS URL, but an entry name is
+                    // still data — refuse to walk out of the bundle.
+                    val rel = entry.name.substringAfter('/')
+                    if (!rel.startsWith("..")) {
+                        val keep = when {
+                            rel == "libvlc.dll" || rel == "libvlccore.dll" || rel == "COPYING.txt" -> true
+                            // The bluray access plugin rides as .jar files,
+                            // and the packager puts every jar under the
+                            // app-resources root onto the classpath — these
+                            // must never ride there. Blu-ray is not a thing
+                            // an audio player does, so the jars (and with
+                            // them any BD-J plugin) stay out entirely.
+                            rel.endsWith(".jar") -> false
+                            rel.startsWith("plugins/") -> rel.split('/')[1] in keepPluginDirs
+                            else -> false
+                        }
+                        if (keep) {
+                            val out = target.resolve(rel)
+                            out.parentFile.mkdirs()
+                            out.outputStream().use { zip.copyTo(it) }
+                        }
+                    }
+                }
+                zip.closeEntry()
+            }
+        }
+        target.resolve("LIBVLC-VERSION").writeText(libVlcVersion)
+    }
+}
+
+// Everything that puts a JVM on the wire with libvlc needs the bundle there
+// first: the dev run, the headless probe, and every packaging shape (the
+// distributable is the base they all assemble from). `prepareAppResources`
+// is compose's own consumer of the app-resources root — without the
+// dependency it would race the bundle's creation.
+tasks.matching {
+    it.name == "run" || it.name == "probe" || it.name == "createDistributable" ||
+        it.name == "prepareAppResources" || it.name.startsWith("package")
+}.configureEach {
+    dependsOn(syncLibVlc)
 }
 
 compose.desktop {
@@ -275,8 +375,13 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "BitChord"
-            packageVersion = "0.1.0"
+            packageVersion = "0.2.0"
             description = "BitChord for Windows"
+            // The bundled libVLC rides with the installer as an app resource —
+            // at runtime the packager names its directory through the
+            // `compose.application.resources.dir` property, the first place
+            // LibVlc.kt looks.
+            appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
             // The project's own mark, on the Start-menu entry and the EXE —
             // a real multi-size .ico (16..256), generated from the original
             // repo's own 512 mark. Logo.png here was the wide wordmark, and a

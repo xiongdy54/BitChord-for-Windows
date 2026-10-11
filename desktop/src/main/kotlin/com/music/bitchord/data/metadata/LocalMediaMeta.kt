@@ -196,7 +196,7 @@ object LocalMediaMeta {
              * refusing to run. `--quiet` keeps libvlc's banner off the log.
              */
             fun open(): Session = Session(
-                runCatching { MediaPlayerFactory("--quiet") }
+                runCatching { com.music.bitchord.desktop.playback.LibVlc.newFactory("--quiet") }
                     .onFailure { Log.w(TAG, "no libvlc for metadata parsing; filenames only: ${it.message}") }
                     .getOrNull(),
             )

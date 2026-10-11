@@ -103,7 +103,7 @@ import java.util.Locale
  * a hand on the keyboard — the job Probe does for the data layer, one level
  * up — which is also how the desktop build gets smoke-tested:
  *
- *   ./gradlew -p desktop run -Pbitchord.probeQuery="周杰伦 晴天" \
+ *   ./gradlew -p desktop run -Pbitchord.probeQuery="陈奕迅 致明日的舞" \
  *       -Pbitchord.probeAutoplay=true -Pbitchord.probeOpenPlayer=true -Pbitchord.autoExitMs=25000
  *
  * `probeOpenPlayer` opens the full-screen player as soon as there is a track, which is how
@@ -459,6 +459,27 @@ private fun applyWindowBackdrop(window: java.awt.Window, isDark: Boolean, transl
 }
 
 fun main() {
+    // Uncaught anything, kept. A thread that dies during the quit path — the
+    // EDT under a System.exit already in flight — can be cut off mid-print,
+    // which is how an exception once reached the log as a bare
+    // "Exception in thread" with neither name nor stack: stderr's write raced
+    // the halt and lost. The synchronous file write wins that race; DebugLog
+    // still gets the line (its ring is the in-app view), the file is the
+    // after-the-fact one, last crash only.
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        runCatching {
+            AppFiles.file("crash-latest.txt").writeText(
+                buildString {
+                    appendLine("thread: ${thread.name}")
+                    appendLine("at: ${java.time.LocalDateTime.now()}")
+                    appendLine(throwable.stackTraceToString())
+                },
+                java.nio.charset.StandardCharsets.UTF_8,
+            )
+        }
+        DebugLog.e("BitChord", "uncaught on ${thread.name}", throwable)
+    }
+
     // Before anything reads a string resource: the resource environment follows
     // the JVM default locale, which is what makes the English pass possible on
     // a Chinese machine. An explicit property — the scripted screenshot pass's
@@ -739,7 +760,45 @@ fun main() {
                 // anyway is reaped by the JVM's halt a line below.
                 CefRuntime.shutdown()
                 scope.cancel()
-                exitApplication()
+                // The scenes go before the windows do. ComposeWindow.dispose
+                // runs the AWT teardown first and disposes the compose scene
+                // second — and the scene's goodbye layout, reached through
+                // removeNotify → onComponentDetached → releaseFocus, measures
+                // a component that is already detached: a getLocationOnScreen
+                // on a hidden peer that throws, and the pair escaped every
+                // uncaught path as bare "Exception in thread" headers (the
+                // exit probe's noise, stack cut by the halt). Disposing each
+                // window's panel first — the very call ComposeWindow.dispose
+                // itself makes second — nulls the container, and removeNotify
+                // then finds nothing to measure. Windows that are not compose
+                // windows have no such field and simply skip the step.
+                for (awtWindow in java.awt.Window.getWindows()) {
+                    runCatching {
+                        val field = awtWindow.javaClass.getDeclaredField("composePanel")
+                        field.isAccessible = true
+                        field.get(awtWindow)?.let { panel ->
+                            // The panel class is internal to compose; the
+                            // dispose call goes through reflection for the
+                            // same reason the field does.
+                            val dispose = panel.javaClass.getMethod("dispose")
+                            dispose.isAccessible = true
+                            dispose.invoke(panel)
+                        }
+                    }
+                    runCatching { awtWindow.dispose() }
+                }
+                // Exit here, on this dispatch. The scene teardown above leaves
+                // compose's FlushCoroutineDispatcher one last task in flight —
+                // the effect job's unwind signal, thrown from its completion
+                // hook into a runner that is already gone — and it only fires
+                // if the event pump gets another cycle. Exiting on this
+                // dispatch means it never does. One bare "Exception in
+                // thread" line can still survive a quit: the hidden PoToken
+                // browser's offscreen GL layer (JOGL under JCEF) reports a
+                // callback exception from its own native side, outside every
+                // Java hook — cosmetic, and a question for the PoToken
+                // substrate, not for this path.
+                kotlin.system.exitProcess(0)
             }
         Window(
             onCloseRequest = quit,

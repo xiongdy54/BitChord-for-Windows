@@ -192,16 +192,16 @@ class AuthStore(
     /**
      * Signs out of YouTube Music entirely: registry and selection go together.
      *
-     * The browser keeps its own copy of the Google login, and a sign-out that
-     * leaves it in place is not one: the next sign-in is waved straight through
-     * as the account just signed out of, with no opportunity to choose another.
-     * See [BrowserSession]. Best effort — a browser that never started has no
-     * jar to clear, and that is a convenience loss, not a failure.
+     * The browser's own copy of the Google login is deliberately not cleared
+     * here: a sign-out that leaves it in place is not one — the next sign-in
+     * is waved straight through as the account just signed out of — but the
+     * jar's clear waits on the browser (see [BrowserSession]), and a store
+     * has no dispatcher to wait on. The account controller, which owns the
+     * flows around this call, launches it beside it.
      */
     fun signOut() {
         replaceSessions(emptyList())
         select("", null)
-        BrowserSession.clearGoogleCookies()
     }
 
     companion object {

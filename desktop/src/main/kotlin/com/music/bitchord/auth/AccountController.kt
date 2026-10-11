@@ -271,6 +271,13 @@ class AccountController(
             return
         }
         authStore.signOut()
+        // The login browser keeps its own copy of the Google login — the
+        // registry's half moved into [AuthStore.signOut]'s callers — and a
+        // sign-out that leaves it in place is not one: the next sign-in is
+        // waved straight through as the account just signed out of. The
+        // clear waits on the browser's jar, so it is launched, never inlined
+        // into a click handler.
+        scope.launch { BrowserSession.clearGoogleCookies() }
         Innertube.cookie = null
         // The mirror image: verdicts reached with a session in hand say nothing
         // about what an anonymous walk will be told, and the clients stood down
