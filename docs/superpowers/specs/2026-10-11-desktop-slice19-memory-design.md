@@ -61,3 +61,17 @@
 ## 6. 本切片不做
 
 ListeningStats/Replay(决策 9);更新包下载安装(决策 6);Canvas 登录与 SlidingPlayerDeck、OriginalVersion(切片 21);下载合集批量/暂停恢复/目录选择(切片 20)。
+
+## 7. 实施记录(2026-10-11 回填)
+
+**交付**:决策 1–8 全部落地。`SearchHistory`(对象 + `merged()` 纯函数,经 `AppSettings.internal val store` 写同文件同键 `search_history`,上游 20 条/忽略大小写去重语义逐字);SearchViewModel 换源 + `recordSearch()` 提交记录链(typeahead 轨 → 结果轨 → `q:` 原文兜底,entityType 沿上游用 TRACK);History 全链(NavState 目的地、侧栏全高行 + rail 行、Shell 分支、`HistoryPage` 无闩重取、`LibraryViewModel.refreshHistory`);主页货架(`signedIn` 钩子、`fetchRecentlyPlayed` prepend 发布、`recentlyPlayedLoading` 转真、`mergeShelves` 抽纯函数);`data/backup/Backup.kt`(BackupFile/PrefValue 同字段名、listening 恒空、导出 = `FileStore.snapshot()`(新只读面)滤 SECRETS/DEVICE_LOCAL、导入 = ~30 键 setter 链 + `acceptImported`(webdav 对)+ `SearchHistory.reload()`;About 组导出(SAVE 对话框)/导入(OPEN 对话框)两行);`data/AppUpdateChecker.kt`(fork URL、`isNewer`/`parseVersion` 逐字、available/checking 流;About 组"检查更新"行 + `UpdateAvailableDialog`——标题/正文/notes 预览/"打开发布页" `Desktop.browse`);语言热切换(Main.kt:`systemLocaleTag` 启动捕获、`localeTag` 派生、`remember(localeTag)` 组合内同步 `setDefault` + `key(localeTag)` 重建 Shell 子树;语言组"重启生效"注记删除);探针 `bitchord.probeLocaleSwitch`(内存写 flow,liquidGlass 纪律)+ `probeDestination=history`。
+
+**与设计的偏离**:
+
+1. **环境 API 不可达,`key()` 回归**:1.12.1 的 `ComposeEnvironment`/`ResourceEnvironment`/`getSystemEnvironment` 是 internal("This is internal API of the Compose gradle plugin"),响应式环境方案(无状态丢失)不可达;回到 `key(localeTag)` 重建。**组合内 `remember(localeTag) { setDefault }` 是刻意的脏**:首次实现的 `LaunchedEffect` 在子树重组*之后*才设 locale,重建的子树读到的还是旧语言(截图实证:切了等于没切);组合内同步设值才保证"先设 locale、后组合子树"的次序。
+2. **热切换重建会重启页面的首载 effect**:HomePage 的 LaunchedEffect(Unit) 重新 loadHome,feed 短暂回到骨架(证据截图里可见);导航栈/对话框/播放会话在提升的持有者里不受影响。记为已知行为——页面数据本就是"进页即取"的语义。
+3. **两个语言探针互斥**:`bitchord.locale` 只该管启动(它把 reactive tag 永久钉住),`probeLocaleSwitch` 是运行时切换——首跑截图把两个一起传,locale 探针锁死 tag,切换被吞(第二张截图仍是英文);正确跑法是不传 locale、靠系统默认启动(本机 zh)再切 en。记录在案,防再踩。
+
+**验证**:61 类 595 测试全绿(新增 6:mergeShelves 的 prepend 领座/同名顶掉/无新增恒等三表、SearchHistory merged 前移+截断+大小写、isNewer 数值点分/后缀规则两表)。**行为断言(实机,真实账号)**:`home:recent ok` 日志 + 主页截图 Recents 货架在座(真实听音数据);`history ok` 日志 + History 页截图(账号全量收听历史、最新序、侧栏"历史记录"选中);热切换对图:zh 启动(3s,全中文含新"历史记录"行)→ 探针切 en(8s,全英文)——同一会话,未重启。**视觉判读**:设置 About 组截图——导出/导入/检查更新三行 + 新副标题("将设置和搜索历史导出")。**人手验证待做**:备份往返(导出→改设置→导入→回来)、检查更新在 fork 有 release 时的对话框。
+
+**已知瑕疵**:热切换重建导致 feed 短暂骨架(偏离 2);`probeLocale` 与 `probeLocaleSwitch` 并传时前者胜(偏离 3,探针纪律);桌面备份的 `listening` 恒空,Android 备份的听歌月度数据在导入时被读过即丢(决策 9)。
