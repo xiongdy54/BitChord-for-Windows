@@ -75,3 +75,19 @@
 ## 6. 本切片不做
 
 QualityUpgrade 全家（`settledForLess`/`force`/`askByHand` 手工升级菜单行—— audition 接缝在桌面已备，等本切片 substrate 落地后独立成片）；`prefetchSubstitute` 读-ahead（桌面 prefetch 接缝 `PlayerController.onPrefetch` 另片）；SMB；一起听；Discord RPC/Scrobbling；per-connection 双音质档（桌面无 metered 概念，现状保留）；`upgrade_length_slack_seconds` 之外的隐藏设置。
+
+## 7. 实施记录（2026-10-11 回填）
+
+### 与设计的四处偏离
+
+1. **持久化容器**：设计写的是 `sources.json`，实施用了 `sources.properties`（`FileStore`）——与 settings/downloads 同一容器，JSON 列表原样存在键里，逐条容错解码的语义不变；FileStore 自带写穿，省掉一份自造的原子写。上游"列表先落、迁移标记后落"的次序被显式保留并有注释（FileStore 没有两键原子编辑，次序代替原子性）。
+2. **决定 8（搜索接入）撤销**：实施时核实上游 `MainViewModel.sourceResults`（:1986）**是从未被调用的死代码**——上游搜索实际也不 fan out 到源。桌面保持 YouTube-only 即为对齐，不搬死代码。
+3. **`requestForDownload` 的 HIGH 档映射**：上游 `DownloadQuality.HIGH.maxKbps == MAX_VALUE`，靠数值自然映射到 `StreamRequest.Best`；桌面切片 6 把 HIGH 钉在 256（YouTube 阶梯上限，`DownloadStoreTest` 锁定）。为保住两边的语义，桌面映射按档位名而非数值：HIGH 对源仍是"best you have"（与上游结果一致），YouTube 路径继续用自己的 256。
+4. **编辑器拆成 Panel + Dialog**：设置对话框之上的子对话框渲染在独立原生窗口里，截图管线看不到（`OutputDevicePanel` 的 KDoc 早已记过这课）。`SourceEditorDialog` 拆出 `SourceEditorPanel`，探针走内联渲染。
+
+### 验证结果
+
+- **单元测试全绿**（全套含存量）：新增 `SourcesTest`（24 用例：trackKey 往返、StreamFormat 三态、permits 四档、init 播种/迁移、reorder/duplicate 规范化、request 派生、worthSwapping/isBetter/beatsYouTubeAac、bestAcross 竞速与弃腿、qualityTier 自由文本、malformed 双 origin、ModuleIndex 类目扫描）+ `AddonAndModuleTest`（12 用例：JDK HttpServer 上的 addon manifest/search/stream 协议、健康三态、行内 streamURL 兜底、normalizeBase、**QuickJS 模块全链路**——Windows 原生 DLL 加载、fetch 绑定走真实 localhost HTTP、searchTracks/getTrackStreamUrl 往返、Spine 模板字面量预处理、错误以 JSON 落地不炸调用方）。
+- **数据层探针**：`-PprobeDestination=sources` / `=sourceeditor`（新增两处探针目的地）截图两组，见 `.shots/slice16/`——来源组（JioSaavn 警告行、YouTube"始终开启"行、添加插件行、容差滑杆 3s）与编辑器（URL 字段 + 测试/保存/关闭，禁用态正确）。
+- **反向验证**：无源时（seeded YouTube 唯一启用）`canSubstituteForYouTube()` 为 false，resolveUrl 阶梯短路为原四段路径——存量播放测试未动一行全部通过，即此路径的字证据。
+
