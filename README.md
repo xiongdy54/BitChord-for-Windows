@@ -130,8 +130,13 @@ You need a **JDK 21** toolchain.
 # run it straight from source
 ./gradlew -p desktop run
 
-# or produce the installer
+# or produce the stock MSI/EXE
 ./gradlew -p desktop packageDistributionForCurrentOS
+
+# or produce the release installer with the finish-page options
+# (needs Inno Setup 6; ISCC.exe on PATH)
+./gradlew -p desktop createDistributable
+ISCC desktop/package/BitChord.iss
 ```
 
 </div>

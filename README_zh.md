@@ -130,8 +130,13 @@
 # 直接从源码运行
 ./gradlew -p desktop run
 
-# 或生成安装包
+# 或生成 Compose 自带的 MSI/EXE
 ./gradlew -p desktop packageDistributionForCurrentOS
+
+# 或生成带完成页选项的发布安装包
+# （需要 Inno Setup 6，命令行里有 ISCC.exe）
+./gradlew -p desktop createDistributable
+ISCC desktop/package/BitChord.iss
 ```
 
 </div>

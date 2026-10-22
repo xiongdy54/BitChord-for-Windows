@@ -9,5 +9,5 @@ package com.music.bitchord
  */
 object BuildConfig {
     const val FLAVOR = "prod"
-    const val VERSION_NAME = "0.1.0-desktop"
+    const val VERSION_NAME = "0.2.1"
 }

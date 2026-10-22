@@ -375,7 +375,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "BitChord"
-            packageVersion = "0.2.0"
+            packageVersion = "0.2.1"
             description = "BitChord for Windows"
             // The bundled libVLC rides with the installer as an app resource —
             // at runtime the packager names its directory through the
