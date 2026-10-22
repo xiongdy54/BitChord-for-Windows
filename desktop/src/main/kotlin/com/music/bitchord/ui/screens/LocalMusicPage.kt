@@ -849,6 +849,10 @@ private fun ArtistsTab(
         placeholder = Icons.Rounded.Person,
         circle = true,
         onClick = { entry -> onArtistClick(entry.key, entry.value) },
+        // An artist has no art of its own on disk — the first track's
+        // embedded cover stands for it, resolved through the same seam the
+        // song rows use, so a local artist lights up like a remote one.
+        artSong = { it.value.firstOrNull() },
     )
 }
 
@@ -878,6 +882,9 @@ private fun AlbumsTab(
         placeholder = Icons.Rounded.Album,
         circle = false,
         onClick = { entry -> onAlbumClick(entry.first, entry.second) },
+        // The album's cover, out of its own first track — same seam, same
+        // reason as the artist's.
+        artSong = { it.second.firstOrNull() },
     )
 }
 
@@ -901,6 +908,8 @@ private fun <T> CollectionListOrGrid(
     placeholder: ImageVector,
     circle: Boolean,
     onClick: (T) -> Unit,
+    /** A track whose embedded art stands for the collection, where there is one. */
+    artSong: (T) -> Song?,
 ) {
     if (rows.isEmpty()) {
         if (emptyMessage != null) {
@@ -930,6 +939,7 @@ private fun <T> CollectionListOrGrid(
                     thumbnailUrl = thumbnailUrl(entry),
                     placeholder = placeholder,
                     onClick = { onClick(entry) },
+                    artSong = artSong(entry),
                 )
             }
         }
@@ -945,6 +955,7 @@ private fun <T> CollectionListOrGrid(
                     placeholder = placeholder,
                     circle = circle,
                     onClick = { onClick(entry) },
+                    artSong = artSong(entry),
                 )
             }
             item { Spacer(Modifier.height(80.dp)) }
@@ -1051,6 +1062,8 @@ private fun CollectionRow(
     placeholder: ImageVector,
     circle: Boolean,
     onClick: () -> Unit,
+    /** A track whose embedded art stands for the collection, where there is one. */
+    artSong: Song? = null,
 ) {
     val shape = if (circle) CircleShape else RoundedCornerShape(8.dp)
     Row(
@@ -1060,7 +1073,7 @@ private fun CollectionRow(
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CollectionArtwork(url = thumbnailUrl, placeholder = placeholder, shape = shape, size = 48.dp)
+        CollectionArtwork(url = thumbnailUrl, placeholder = placeholder, shape = shape, size = 48.dp, artSong = artSong)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -1094,6 +1107,8 @@ private fun CollectionGridCard(
     placeholder: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** A track whose embedded art stands for the collection, where there is one. */
+    artSong: Song? = null,
 ) {
     Column(
         modifier = modifier
@@ -1116,9 +1131,13 @@ private fun CollectionGridCard(
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(44.dp),
             )
-            if (thumbnailUrl != null) {
+            // The collection's own cover: its own thumbnail where it has one
+            // (a remote artist's), else the embedded art of the track that
+            // stands for it — the same seam the song rows resolve through.
+            val art = rememberRemoteArtworkUrl(artSong) ?: thumbnailUrl
+            if (art != null) {
                 AsyncImage(
-                    model = thumbnailUrl.artworkAt(CARD_ART_PX),
+                    model = art.artworkAt(CARD_ART_PX),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -1148,7 +1167,14 @@ private fun CollectionGridCard(
 }
 
 @Composable
-private fun CollectionArtwork(url: String?, placeholder: ImageVector, shape: Shape, size: Dp) {
+private fun CollectionArtwork(
+    url: String?,
+    placeholder: ImageVector,
+    shape: Shape,
+    size: Dp,
+    /** A track whose embedded art stands for the collection, where there is one. */
+    artSong: Song? = null,
+) {
     Box(
         modifier = Modifier
             .size(size)
@@ -1162,9 +1188,12 @@ private fun CollectionArtwork(url: String?, placeholder: ImageVector, shape: Sha
             tint = MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.size(size * 0.54f),
         )
-        if (url != null) {
+        // Same resolution as the grid card's: the row's own thumbnail, else
+        // the embedded art of the track standing for it.
+        val art = rememberRemoteArtworkUrl(artSong) ?: url
+        if (art != null) {
             AsyncImage(
-                model = url.artworkAt(ROW_ART_PX),
+                model = art.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

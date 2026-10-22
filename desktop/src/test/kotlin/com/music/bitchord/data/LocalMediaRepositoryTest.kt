@@ -201,6 +201,125 @@ class LocalMediaRepositoryTest {
         assertTrue(song.localDateAddedSeconds != null || song.localDateModifiedSeconds != null)
     }
 
+    // ---- the metadata index -------------------------------------------------------------
+
+    private fun write(root: java.nio.file.Path, name: String, body: String = "x") =
+        java.nio.file.Files.writeString(root.resolve(name), body)
+
+    @Test
+    fun `an unchanged file is not read again`() {
+        val root = tempDir("scan-cache-hit")
+        write(root, "Artist - One.mp3")
+        write(root, "Artist - Two.mp3")
+        var reads = 0
+        val first = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), emptyMap()) { path ->
+                reads++
+                LocalMediaMeta.Info("Tagged", "Artist", "Album", 90_000L)
+            }
+        }
+        assertEquals(2, reads)
+        assertEquals(2, first.songs.size)
+        assertEquals(2, first.entries.size)
+
+        var rereads = 0
+        val second = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), first.entries) {
+                rereads++
+                error("an unchanged file must come from the index")
+            }
+        }
+        assertEquals(0, rereads)
+        assertEquals(first.songs.map { it.videoId }, second.songs.map { it.videoId })
+        assertEquals(first.entries, second.entries)
+    }
+
+    @Test
+    fun `a changed size or modification time is read again`() {
+        val root = tempDir("scan-cache-invalid")
+        val file = root.resolve("Artist - Title.mp3").toFile()
+        file.writeText("short")
+        var reads = 0
+        val reader: suspend (String) -> LocalMediaMeta.Info = {
+            reads++
+            LocalMediaMeta.Info("Tagged", "Artist", "Album", 90_000L)
+        }
+        val first = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), emptyMap(), reader)
+        }
+
+        // Same path, different bytes: the size alone invalidates it.
+        file.writeText("a much longer body")
+        var sizeReads = 0
+        kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), first.entries) {
+                sizeReads++
+                LocalMediaMeta.Info("Retagged", "Artist", "Album", 90_000L)
+            }
+        }
+        assertEquals(1, sizeReads)
+
+        // Same size, moved clock: the modification time invalidates it.
+        val second = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), emptyMap(), reader)
+        }
+        val before = file.lastModified()
+        file.setLastModified(before + 5_000)
+        var timeReads = 0
+        kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), second.entries) {
+                timeReads++
+                LocalMediaMeta.Info("Moved", "Artist", "Album", 90_000L)
+            }
+        }
+        assertEquals(1, timeReads)
+    }
+
+    @Test
+    fun `a filtered or unreadable file is cached too, so it is not parsed again`() {
+        val root = tempDir("scan-cache-filtered")
+        write(root, "short.mp3")
+        var reads = 0
+        val first = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), emptyMap()) {
+                reads++
+                LocalMediaMeta.Info(null, null, null, 10_000L)
+            }
+        }
+        assertEquals(1, reads)
+        // Under the 30-second gate: no row, but still an index entry.
+        assertTrue(first.songs.isEmpty())
+        assertEquals(1, first.entries.size)
+
+        var rereads = 0
+        val second = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), first.entries) {
+                rereads++
+                null
+            }
+        }
+        assertEquals(0, rereads)
+        assertTrue(second.songs.isEmpty())
+    }
+
+    @Test
+    fun `a deleted file drops out of the index`() {
+        val root = tempDir("scan-cache-prune")
+        write(root, "keep.mp3")
+        write(root, "gone.mp3")
+        val first = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), emptyMap(), readNothing)
+        }
+        assertEquals(2, first.entries.size)
+
+        java.nio.file.Files.delete(root.resolve("gone.mp3"))
+        val second = kotlinx.coroutines.runBlocking {
+            LocalMediaRepository.scanCached(listOf(root.toString()), first.entries, readNothing)
+        }
+        assertEquals(1, second.entries.size)
+        assertTrue(second.entries.keys.single().endsWith("keep.mp3"))
+    }
+
     // ---- the sort ----------------------------------------------------------------------
 
     private fun song(title: String, added: Long? = null, modified: Long? = null) =

@@ -4,13 +4,16 @@
 // segments, the same 30-second threshold, and (like the WebDAV BFS) the same 10k cap.
 // `getDownloadedSongs` is not ported — the desktop Downloads page (slice 6) reads its own
 // record directly. Upstream's shape is kept: no background infrastructure, no persistence,
-// scan on page entry.
+// scan on page entry. The desktop's one deviation is the metadata index: the folder is still
+// walked on every entry, but a file whose size and modification time are unchanged reuses the
+// reader answer in [LocalMediaIndex] instead of being parsed by libvlc again.
 //
 // The id convention is upstream's, transposed: a local song's `videoId` **is** the address
 // of the file (upstream: the content URI string, L283/L408; here: the absolute path).
 package com.music.bitchord.data
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.metadata.LocalMediaIndex
 import com.music.bitchord.data.metadata.LocalMediaMeta
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -19,11 +22,13 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.Locale
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 object LocalMediaRepository {
@@ -54,9 +59,9 @@ object LocalMediaRepository {
     )
 
     /**
-     * The device's local music, as [Song] rows. A scan-and-forget read: nothing
-     * is persisted, nothing cached, exactly like upstream's page-entry scan —
-     * the page re-asks every time it is opened and the disk is the answer.
+     * The device's local music, as [Song] rows. The folder is walked on every
+     * page entry — the disk is still the answer — but the per-file reader runs
+     * only for what the index has not seen at this size and modification time.
      *
      * Metadata comes through [LocalMediaMeta]: the filename split first, vlcj
      * for what the name could not say. A file whose tags cannot be read is
@@ -65,13 +70,40 @@ object LocalMediaRepository {
      * wrong duration excludes a real track and an unknown one does not.
      */
     suspend fun getLocalMusic(): List<Song> = withContext(Dispatchers.IO) {
-        val session = LocalMediaMeta.Session.open()
+        val cached = LocalMediaIndex.load()
+        val session = AtomicReference<LocalMediaMeta.Session?>(null)
+        val sessionLock = Mutex()
         try {
-            scan(AppSettings.localMusicFolders.value) { session.read(it) }
+            val result = scanCached(AppSettings.localMusicFolders.value, cached) { path ->
+                // Opened on the first miss, not before: a fully indexed library
+                // never pays libvlc's native start-up at all. The lock is not
+                // incidental — the scan asks for every file at once, and a
+                // bare `session ?: open()` let several workers open their own
+                // factory before the first assignment landed. Native factory
+                // start-up is not re-entrant; most parses then came back empty.
+                val active = session.get() ?: sessionLock.withLock {
+                    session.get() ?: LocalMediaMeta.Session.open().also(session::set)
+                }
+                active.read(path)
+            }
+            // Nothing moved and nothing was pruned: leave the file alone. A
+            // session without a factory means libvlc is absent — writing its
+            // filename-only answers would freeze the index until every file
+            // changed, so the old entries stay and the next run retries.
+            val opened = session.get()
+            val readable = opened == null || opened.available
+            if (readable && result.entries != cached) LocalMediaIndex.save(result.entries)
+            result.songs
         } finally {
-            session.close()
+            session.get()?.close()
         }
     }
+
+    /** The scan and the index it would replace, so one read of the disk serves both. */
+    internal data class ScanResult(
+        val songs: List<Song>,
+        val entries: Map<String, LocalMediaIndex.Entry>,
+    )
 
     /**
      * The walk itself, with the metadata read injected so the filter and the
@@ -83,13 +115,53 @@ object LocalMediaRepository {
     suspend fun scan(
         folders: List<String>,
         readMeta: suspend (String) -> LocalMediaMeta.Info?,
-    ): List<Song> = coroutineScope {
+    ): List<Song> = scanCached(folders, emptyMap(), readMeta).songs
+
+    /**
+     * [scan] with the index in hand. A candidate whose size and modification
+     * time match its [cached] entry skips [readMeta]; every candidate that
+     * survives the walk is written back — including the ones the duration
+     * gate or an unreadable tag later drops, because the next scan should not
+     * open them again either.
+     *
+     * The attributes are read once, here, and carry both the cache validation
+     * and the row's sort timestamps.
+     */
+    internal suspend fun scanCached(
+        folders: List<String>,
+        cached: Map<String, LocalMediaIndex.Entry>,
+        readMeta: suspend (String) -> LocalMediaMeta.Info?,
+    ): ScanResult = coroutineScope {
         val candidates = candidatesFor(folders)
         candidates.map { file ->
             async {
-                buildSong(file, readMeta(file.absolutePath))
+                val path = file.absolutePath
+                val facts = fileFacts(file)
+                val cachedEntry = facts?.let { current ->
+                    cached[path]?.takeIf {
+                        it.size == current.size && it.modifiedMs == current.modifiedMs
+                    }
+                }
+                val info = cachedEntry?.toInfo() ?: readMeta(path)
+                val song = buildSong(file, info, facts)
+                val entry = facts?.let { current ->
+                    path to LocalMediaIndex.Entry(
+                        size = current.size,
+                        modifiedMs = current.modifiedMs,
+                        title = info?.title,
+                        artist = info?.artist,
+                        album = info?.album,
+                        durationMs = info?.durationMs,
+                    )
+                }
+                song to entry
             }
-        }.awaitAll().filterNotNull()
+        }.awaitAll().let { results ->
+            ScanResult(
+                songs = results.mapNotNull { it.first },
+                entries = results.mapNotNull { it.second }.toMap(),
+            )
+        }
     }
 
     /**
@@ -152,6 +224,7 @@ object LocalMediaRepository {
     private suspend fun buildSong(
         file: File,
         info: LocalMediaMeta.Info?,
+        facts: FileFacts?,
     ): Song? {
         val path = file.absolutePath
         // The duration gate, applied only when a duration is actually known.
@@ -172,8 +245,6 @@ object LocalMediaRepository {
             ?: info?.artist?.cleanTag()
             ?: "Unknown Artist"
 
-        val dates = fileTimestamps(file)
-
         return Song(
             videoId = path,
             title = title,
@@ -183,8 +254,8 @@ object LocalMediaRepository {
             albumName = info?.album?.cleanTag(),
             localUri = path,
             localPath = path,
-            localDateAddedSeconds = dates.first,
-            localDateModifiedSeconds = dates.second,
+            localDateAddedSeconds = facts?.addedSeconds,
+            localDateModifiedSeconds = facts?.modifiedSeconds,
         )
     }
 
@@ -192,21 +263,33 @@ object LocalMediaRepository {
         takeUnless { it.isNullOrBlank() || it.equals("<unknown>", ignoreCase = true) }
 
     /**
-     * MediaStore's DATE_ADDED/DATE_MODIFIED pair, from the filesystem's own
-     * attributes: creation time for added (the closest thing a file has to
-     * "when it arrived"), modification time for modified. A filesystem that
-     * answers neither leaves both null rather than one faked from the other.
+     * MediaStore's DATE_ADDED/DATE_MODIFIED pair plus the two values the index
+     * validates against, from one filesystem read. Creation time stands for
+     * added (the closest thing a file has to "when it arrived"), modification
+     * time for modified. A filesystem that answers neither leaves both null
+     * rather than one faked from the other; a file whose attributes cannot be
+     * read is not indexed, since its identity could not be checked later.
      */
-    private fun fileTimestamps(file: File): Pair<Long?, Long?> = runCatching {
+    private data class FileFacts(
+        val size: Long,
+        val modifiedMs: Long,
+        val addedSeconds: Long?,
+        val modifiedSeconds: Long?,
+    )
+
+    private fun fileFacts(file: File): FileFacts? = runCatching {
         val attrs: BasicFileAttributes = Files.readAttributes(
             file.toPath(),
             BasicFileAttributes::class.java,
         )
-        Pair(
-            attrs.creationTime().toMillis().takeIf { it > 0 }?.div(1_000),
-            attrs.lastModifiedTime().toMillis().takeIf { it > 0 }?.div(1_000),
+        val modifiedMs = attrs.lastModifiedTime().toMillis()
+        FileFacts(
+            size = attrs.size(),
+            modifiedMs = modifiedMs,
+            addedSeconds = attrs.creationTime().toMillis().takeIf { it > 0 }?.div(1_000),
+            modifiedSeconds = modifiedMs.takeIf { it > 0 }?.div(1_000),
         )
-    }.getOrElse { Pair(null, null) }
+    }.getOrElse { null }
 
     /**
      * The folder-prefix filter, upstream's [isInSelectedFolder] with the SAF

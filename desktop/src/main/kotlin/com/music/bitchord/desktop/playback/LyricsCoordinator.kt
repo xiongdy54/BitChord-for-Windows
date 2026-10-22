@@ -126,18 +126,17 @@ class LyricsCoordinator(
         _lyrics.value = null
         _lyricsSource.value = null
         lyricsJob?.cancel()
-        if (sources.isEmpty()) {
-            // Switched off, or every source unticked. Nothing to look up, and
-            // nothing to say about it — the player drops the lyric strip
-            // rather than reporting a track with no lyrics.
-            _lyricsChecked.value = true
-            return
-        }
         _lyricsChecked.value = false
         lyricsJob = scope.launch {
             // The file first, and without the duration gate: see above. What the
             // file records is the lyrics, not which of the services they came
             // from months ago — so there is no source to name either.
+            //
+            // Ahead of the sources gate rather than behind it: the lyrics
+            // inside the file are not a network answer, and turning every
+            // source off — or the synced-lyrics switch itself — must not turn
+            // off what the track carries. A local file's own words are the
+            // one lookup that needs no server and no setting.
             if (localUri != null) {
                 EmbeddedLyrics.forFile(localUri)?.let { embedded ->
                     _lyrics.value = embedded
@@ -145,6 +144,14 @@ class LyricsCoordinator(
                     _lyricsChecked.value = true
                     return@launch
                 }
+            }
+            if (sources.isEmpty()) {
+                // Switched off, or every source unticked — and the file had
+                // nothing to say. Nothing to look up, and nothing to say
+                // about it: the player drops the lyric strip rather than
+                // reporting a track with no lyrics.
+                _lyricsChecked.value = true
+                return@launch
             }
             if (durationMs <= 0L) {
                 // Duration arrives a beat after the track does; wait for it.

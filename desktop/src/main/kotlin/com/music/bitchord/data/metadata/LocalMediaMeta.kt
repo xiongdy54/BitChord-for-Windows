@@ -88,6 +88,12 @@ object LocalMediaMeta {
         private val factory: MediaPlayerFactory?,
     ) {
         /**
+         * Whether libvlc answered the open at all. A null-factory session
+         * still returns filename-shaped empty answers; the scan must know the
+         * difference before it writes those into a persistent index.
+         */
+        val available: Boolean get() = factory != null
+        /**
          * The coroutine semaphore, not `java.util.concurrent`'s — the acquire
          * here suspends rather than parks its thread, and the difference is
          * the whole reason this object exists in this shape: a scan asks for
@@ -107,8 +113,8 @@ object LocalMediaMeta {
          * its rows through the same seam tests inject fakes into), so the
          * precedence rules live in exactly one place.
          */
-        suspend fun read(path: String): Info = withContext(Dispatchers.IO) {
-            parse(path) ?: Info(null, null, null, null)
+        suspend fun read(path: String): Info? = withContext(Dispatchers.IO) {
+            parse(path)
         }
 
         /**

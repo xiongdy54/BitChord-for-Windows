@@ -33,9 +33,22 @@ import java.io.InputStream
  * so it is the fallback rather than the exception. Preferring the first is what
  * keeps a downloaded song lighting up word by word instead of a line at a time.
  *
- * Never throws. A file that isn't one of the three containers, or is one and
+ * Never throws. A file that isn't one of the containers, or is one and
  * has no lyrics in it, is a null — the caller falls back to the network, which
  * is exactly what it did before this existed.
+ *
+ * ### The local library
+ *
+ * The download path writes three containers — M4A, FLAC, WebM — but a local
+ * folder is the user's own, and the two most common tags in it are an ID3v2
+ * `USLT` in an MP3 and a `LYRICS` comment in an Ogg. Both are read here too,
+ * because "the file already knows the words" is the whole point and an MP3
+ * is not a second-class citizen for it.
+ *
+ * A tag that carries plain text — no `[mm:ss.xx]` stamps — is not thrown away
+ * either: those come back as unsynced lines, the shape [Genius] answers in,
+ * because verses worth reading are worth reading whether or not anyone timed
+ * them. See [forFile].
  *
  * ### Offline packages
  *
@@ -78,7 +91,21 @@ object EmbeddedLyrics {
                 ?: return@withContext null
             // The same last pass the network sources get, so a downloaded track
             // and a streamed one draw their backing vocals the same way.
-            LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
+            //
+            // Stamped lines where there are any — and where there are none,
+            // the text as unsynced lines rather than nothing. The stamp
+            // filter in [LrcLib.parseLrc] is right for a database answer,
+            // which is always timed; a tag written by a tagger usually is
+            // not, and dropping the words for that hid lyrics the file
+            // plainly carried. A file that has stamps but no words in them
+            // is an instrumental break, and stays nothing.
+            val stamped = LrcLib.parseLrc(raw)
+            val lines = when {
+                stamped.any { it.text.isNotBlank() } -> stamped
+                !LRC_STAMP.containsMatchIn(raw) -> plainLines(raw)
+                else -> emptyList()
+            }
+            lines.takeIf { it.any { it.text.isNotBlank() } }
                 ?.withBackgroundVocals()
         }
 
@@ -87,6 +114,37 @@ object EmbeddedLyrics {
         sidecar(file.absolutePath)
             ?: file.takeIf(File::exists)?.inputStream()
                 ?.use { fromBytes(it.readAtMost(MAX_TAG_BYTES)) }
+
+    /**
+     * [raw] as unsynced lines — the shape [Genius.textToLyricLines] answers
+     * in, so a tag with no timestamps reads like a plain-text source rather
+     * than like nothing at all. Blank runs collapse to one gap and the ends
+     * are trimmed, which is what keeps a verse from opening on a break.
+     *
+     * Every line sits at zero: nothing timed them, and inventing times would
+     * have the sweep light up lines the singer never reached. The lyric view
+     * already knows how to draw an unsynced sheet — it draws Genius's the
+     * same way.
+     */
+    private fun plainLines(raw: String): List<LyricLine> {
+        val result = mutableListOf<LyricLine>()
+        var lastWasGap = false
+        for (rawLine in raw.lines()) {
+            val line = rawLine.trim()
+            if (line.isEmpty()) {
+                if (!lastWasGap && result.isNotEmpty()) {
+                    result.add(LyricLine(timeMs = 0L, text = ""))
+                    lastWasGap = true
+                }
+            } else {
+                result.add(LyricLine(timeMs = 0L, text = line))
+                lastWasGap = false
+            }
+        }
+        while (result.isNotEmpty() && result.first().isGap) result.removeAt(0)
+        while (result.isNotEmpty() && result.last().isGap) result.removeAt(result.lastIndex)
+        return result
+    }
 
     /**
      * The `lyrics.lrc` written next to the offline package playlist at [path].
@@ -115,17 +173,22 @@ object EmbeddedLyrics {
     }
 
     /**
-     * The raw LRC text in [head], whichever of the three containers it is.
+     * The raw LRC text in [head], whichever of the containers it is.
      *
      * Split from [read] so the parsing can be tested against bytes a tagger
      * just produced, without a device or a `Context` in the way — the round
      * trip is the only thing that proves a reader and a writer agree.
+     *
+     * Five containers, not three: the download path's own (MP4, FLAC,
+     * Matroska) plus the two a local folder is full of (ID3v2, Ogg).
      */
     internal fun fromBytes(head: ByteArray): String? {
         val found = when {
             head.startsWith(FLAC_MAGIC) -> flac(head)
             head.startsWith(MATROSKA_MAGIC) -> matroska(head)
             head.isMp4() -> mp4(head)
+            head.startsWith(ID3_MAGIC) -> id3(head)
+            head.startsWith(OGG_MAGIC) -> ogg(head)
             else -> null
         }
         return found?.takeIf { it.isNotBlank() }
@@ -216,6 +279,161 @@ object EmbeddedLyrics {
         // `data` box holds, and decoding a JPEG as a string is not a lyric.
         if (readU32(bytes, dataAt + 4).toInt() != 1) return null
         return String(bytes, dataAt + 12, start + size - (dataAt + 12), Charsets.UTF_8)
+    }
+
+    // ---- ID3v2 (MP3) ----------------------------------------------------------
+
+    /**
+     * The `USLT` frame's text — `ULT` on a v2.2 tag, whose frame ids are three
+     * characters. The field every tagger writes plain lyrics to and every
+     * other player reads; a tagger that times them writes LRC text into it,
+     * which [LrcLib.parseLrc] then times the same way it times a database
+     * answer.
+     *
+     * Walked frame by frame off the tag's own size, the way the MP3 half of
+     * `EmbeddedArt` walks it for a cover: the size in the header is the only
+     * thing that says where the frames stop, padding ends the walk, and a
+     * frame whose size cannot be trusted ends it too rather than reading
+     * audio as a tag.
+     */
+    private fun id3(bytes: ByteArray): String? {
+        val version = bytes[3].toInt() and 0xFF
+        if (version !in 2..4) return null
+        var tagSize = syncsafe(bytes, 6)
+        if (tagSize <= 0 || tagSize > MAX_TAG_BYTES) return null
+        // The tag cannot outrun the bytes actually read, whatever it claims.
+        tagSize = tagSize.coerceAtMost(bytes.size - 10)
+        if (tagSize <= 0) return null
+        val lyricsId = if (version == 2) "ULT" else "USLT"
+        val idLen = if (version == 2) 3 else 4
+        val headLen = if (version == 2) 6 else 10
+        // An extended header declares its own size, and both conventions for
+        // what that size counts ship in the wild — the same four candidates
+        // the MP3 art walk tries, first one that lands on a frame id wins.
+        var pos = 0
+        if (bytes[5].toInt() and 0x40 != 0 && bytes.size >= 14) {
+            val declared = if (version == 4) syncsafe(bytes, 10) else readU32(bytes, 10).toInt()
+            pos = listOf(declared, declared - 4, 6, 10)
+                .firstOrNull { it in 0..tagSize && framesStart(bytes, 10 + it, version) }
+                ?: return null
+        }
+        while (pos + headLen <= tagSize) {
+            val at = 10 + pos
+            val id = bytes.decodeToString(at, at + idLen)
+            if (id.all { it == '\u0000' }) break
+            val size = when (version) {
+                2 -> u24(bytes, at + 3).toInt()
+                4 -> syncsafe(bytes, at + 4)
+                else -> readU32(bytes, at + 4).toInt()
+            }
+            if (size <= 0 || pos + headLen + size > tagSize) break
+            if (id == lyricsId) return usltText(bytes, at + headLen, size, version)
+            if (!id.all { it.isLetterOrDigit() }) break
+            pos += headLen + size
+        }
+        return null
+    }
+
+    /** Whether [at] looks like the first frame of a tag rather than its middle. */
+    private fun framesStart(bytes: ByteArray, at: Int, version: Int): Boolean {
+        if (at < 0 || at + 4 > bytes.size) return false
+        if (bytes.copyOfRange(at, minOf(at + 4, bytes.size)).all { it == 0.toByte() }) return true
+        val idLen = if (version == 2) 3 else 4
+        if (at + idLen > bytes.size) return false
+        return bytes.decodeToString(at, at + idLen).all { it.isLetterOrDigit() }
+    }
+
+    /**
+     * The lyrics out of a `USLT`/`ULT` frame's payload: encoding, language,
+     * a content descriptor, then the text. The language and the descriptor
+     * carry nothing a reader wants, and the descriptor is empty often enough
+     * that the terminator is the whole of it.
+     *
+     * The language field is v2.3's addition — a v2.2 `ULT` goes straight
+     * from the encoding byte to the descriptor.
+     */
+    private fun usltText(bytes: ByteArray, at: Int, size: Int, version: Int): String? {
+        if (size < 5) return null
+        val encoding = bytes[at].toInt() and 0xFF
+        val end = at + size
+        // UTF-16 terminates on a double null; everything else on a single one.
+        val unit = if (encoding == 1 || encoding == 2) 2 else 1
+        var pos = at + 1 + if (version == 2) 0 else 3
+        while (pos + unit <= end) {
+            val zero = unit == 1 || bytes[pos + 1].toInt() == 0
+            if (bytes[pos].toInt() == 0 && zero) {
+                pos += unit
+                break
+            }
+            pos += unit
+        }
+        if (pos >= end) return null
+        val body = bytes.copyOfRange(pos, end)
+        if (body.isEmpty()) return null
+        return when (encoding) {
+            0 -> body.toString(Charsets.ISO_8859_1)
+            1 -> body.toString(Charsets.UTF_16) // BOM-marked
+            2 -> body.toString(Charsets.UTF_16BE)
+            3 -> body.toString(Charsets.UTF_8)
+            else -> body.toString(Charsets.ISO_8859_1)
+        }
+    }
+
+    // ---- Ogg Vorbis / Opus ----------------------------------------------------
+
+    /**
+     * The `LYRICS` comment out of the comment header — the same field, in the
+     * same VORBIS_COMMENT layout, that a FLAC carries. Ogg's is a packet
+     * rather than a metadata block, so the first pages are walked to it:
+     * identification first, the comment header second, and a packet that
+     * names itself (`\x03vorbis`, `OpusTags`) is the one this wants.
+     *
+     * Pages are walked rather than assumed at an offset because the comment
+     * header is not required to sit in the second page, only early — and a
+     * packet spanning pages is assembled before it is read, the way the Ogg
+     * art walk assembles one.
+     */
+    private fun ogg(bytes: ByteArray): String? {
+        var at = 0
+        var pages = 0
+        var packet = ByteArray(0)
+        while (pages < 16 && at + 27 <= bytes.size) {
+            pages++
+            if (bytes[at] != OGG_MAGIC[0] || bytes[at + 1] != OGG_MAGIC[1] ||
+                bytes[at + 2] != OGG_MAGIC[2] || bytes[at + 3] != OGG_MAGIC[3]
+            ) {
+                return null
+            }
+            val continued = bytes[at + 5].toInt() and 0x01 != 0
+            val segCount = bytes[at + 26].toInt() and 0xFF
+            val tableAt = at + 27
+            if (tableAt + segCount > bytes.size) return null
+            var bodyLen = 0
+            for (i in 0 until segCount) bodyLen += bytes[tableAt + i].toInt() and 0xFF
+            val bodyAt = tableAt + segCount
+            if (bodyAt + bodyLen > bytes.size) return null
+            val body = bytes.copyOfRange(bodyAt, bodyAt + bodyLen)
+            packet = if (continued) packet + body else body
+            at = bodyAt + bodyLen
+            // A segment table ending short of 255 closes the packet.
+            val endsHere = segCount == 0 || bytes[tableAt + segCount - 1].toInt() and 0xFF < 255
+            if (endsHere) {
+                if (packet.size > 8 && packet[0].toInt() == 0x03 &&
+                    packet.copyOfRange(1, 7).decodeToString() == "vorbis"
+                ) {
+                    return vorbisComment(packet, 7, packet.size)
+                }
+                if (packet.size > 8 && packet.copyOfRange(0, 8).decodeToString() == "OpusTags") {
+                    return vorbisComment(packet, 8, packet.size)
+                }
+                packet = ByteArray(0)
+                // Past the fourth page and no comment header: the file has
+                // nothing to say here, and the walk stops rather than
+                // reading audio for the rest of the song.
+                if (pages > 4) return null
+            }
+        }
+        return null
     }
 
     // ---- FLAC ---------------------------------------------------------------
@@ -383,11 +601,36 @@ object EmbeddedLyrics {
         return v
     }
 
+    /** The 24-bit big-endian at [off] — an ID3v2.2 frame's size field. */
+    private fun u24(b: ByteArray, off: Int): Long =
+        ((b[off].toLong() and 0xFF) shl 16) or
+            ((b[off + 1].toLong() and 0xFF) shl 8) or
+            (b[off + 2].toLong() and 0xFF)
+
+    /**
+     * The syncsafe integer at [off] — seven bits a byte, the size encoding
+     * ID3v2.4 states and the tag header always uses.
+     */
+    private fun syncsafe(b: ByteArray, off: Int): Int {
+        if (off + 4 > b.size) return -1
+        return ((b[off].toInt() and 0x7F) shl 21) or ((b[off + 1].toInt() and 0x7F) shl 14) or
+            ((b[off + 2].toInt() and 0x7F) shl 7) or (b[off + 3].toInt() and 0x7F)
+    }
+
     private const val FLAC_VORBIS_COMMENT = 4
     private val FLAC_MAGIC = "fLaC".toByteArray(Charsets.US_ASCII)
     private val MATROSKA_MAGIC = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())
+    private val ID3_MAGIC = "ID3".toByteArray(Charsets.US_ASCII)
+    private val OGG_MAGIC = "OggS".toByteArray(Charsets.US_ASCII)
     private val DATA_ATOM = "data".toByteArray(Charsets.ISO_8859_1)
     private val LYR_ATOM = byteArrayOf(0xA9.toByte()) + "lyr".toByteArray(Charsets.ISO_8859_1)
     private val ID_TAGNAME = byteArrayOf(0x45, 0xA3.toByte())
     private val ID_TAGSTRING = byteArrayOf(0x44, 0x87.toByte())
+
+    /**
+     * An `[mm:ss.xx]` stamp anywhere in the text — what says a tag holds
+     * timed lyrics rather than plain ones, so the plain-text path can tell
+     * "no stamps" apart from "stamps, but no words".
+     */
+    private val LRC_STAMP = Regex("""\[\d+:\d+(\.\d+)?(?:-\d+)?]""")
 }

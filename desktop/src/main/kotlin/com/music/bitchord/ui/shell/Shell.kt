@@ -61,6 +61,7 @@ import com.music.bitchord.desktop.resources.local_music
 import com.music.bitchord.desktop.resources.recently_added
 import com.music.bitchord.desktop.resources.songs
 import com.music.bitchord.ui.components.DownloadManagerPanel
+import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.DetailPages
 import com.music.bitchord.ui.ExploreViewModel
 import com.music.bitchord.ui.HomeViewModel
@@ -250,10 +251,16 @@ fun Shell(
         // below it — the undecorated window has no title bar of its own, so
         // this row *is* the top of the frame: drag area, transport, and the
         // window's three buttons at its end.
+        //
+        // The now-playing art resolves through the same seam the player and
+        // the song rows use: the track's own thumbnail where it has one,
+        // else the picture embedded in the file — a local track's cover is
+        // in its tags, and the mini player is where it shows most often.
+        val toolbarArt = rememberRemoteArtworkUrl(song)
         Toolbar(
             songTitle = song?.title,
             songArtist = song?.artist,
-            songThumbnailUrl = song?.thumbnailUrl,
+            songThumbnailUrl = toolbarArt,
             isPlaying = snapshot.isPlaying,
             status = status,
             shuffleEnabled = shuffle,

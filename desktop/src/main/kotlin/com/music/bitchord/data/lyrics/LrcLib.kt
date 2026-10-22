@@ -198,7 +198,7 @@ object LrcLib {
         return minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs
     }
 
-    private val STAMP = Regex("""\[(\d{1,2}):(\d{2})[.:](\d{2,3})]""")
+    private val STAMP = Regex("""\[(\d{1,2}):(\d{2})[.:](\d{2,3})(?:-\d+)?]""")
     private val WORD_STAMP = Regex("""<(\d{1,3}):(\d{2})[.:](\d{2,3})>""")
     private val NOISE = Regex(
         """\((?:from|feat\.?|official|lyrical|video|audio|remix)[^)]*\)|\[[^]]*]|""" +

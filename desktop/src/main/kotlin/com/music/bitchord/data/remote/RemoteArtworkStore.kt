@@ -88,7 +88,11 @@ object RemoteArtworkStore {
                 file.outputStream().use { it.write(picture.bytes) }
                 evict(dir)
             }.getOrNull() ?: return@withContext null
-            file.toURI().toString()
+            // `File.toURI()` spells the path `file:/C:/…` — one slash after the
+            // scheme — and Coil's Uri parser cannot name a fetcher for that
+            // shape. `Path.toUri()` spells the same file `file:///C:/…`, which
+            // Coil reads; the difference is the whole local-cover bug.
+            file.toPath().toUri().toString()
         }
 
     /** A local scan row's address is the absolute path itself — no scheme on it. */
@@ -102,7 +106,7 @@ object RemoteArtworkStore {
         val match = dir.listFiles { _, name -> name.startsWith("${cacheKey(key)}.") }
             ?.filter { it.isFile && it.length() > 0 }
             ?.maxByOrNull { it.lastModified() }
-        return match?.let { it.toURI().toString() }
+        return match?.let { it.toPath().toUri().toString() }
     }
 
     private fun extensionFor(mime: String): String = when (mime.lowercase()) {
